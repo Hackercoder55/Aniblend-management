@@ -111,19 +111,29 @@ function formatDate(d?: Date): string {
   })
 }
 
-/** Parse "DD MMM YYYY" or "DD MMM YY" into a Date */
+/** Parse "DD MMM YYYY" or "DD MMM YY" into a Date (local midnight, cross-browser safe) */
 function parseDate(s: string): Date {
   if (!s) return new Date(0)
-  // Try native parse first
-  const native = new Date(s)
-  if (!isNaN(native.getTime())) return native
-  // Manual: "20 Feb 26" -> "20 Feb 2026"
+  const MONTHS: Record<string, number> = {
+    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
+  }
   const parts = s.trim().split(' ')
   if (parts.length === 3) {
-    const yr = parts[2].length === 2 ? '20' + parts[2] : parts[2]
-    return new Date(`${parts[0]} ${parts[1]} ${yr}`)
+    const day = parseInt(parts[0], 10)
+    const mon = MONTHS[parts[1]]
+    const yr = parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2], 10)
+    if (!isNaN(day) && mon !== undefined && !isNaN(yr)) {
+      return new Date(yr, mon, day) // local midnight — no timezone shift
+    }
   }
-  return new Date(0)
+  // ISO fallback: "2026-02-21" → local midnight via T00:00:00
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s.trim())) {
+    const [y, m, d] = s.trim().split('-').map(Number)
+    return new Date(y, m - 1, d)
+  }
+  const native = new Date(s)
+  return isNaN(native.getTime()) ? new Date(0) : native
 }
 
 /** Extract duration from Project_ID: "NUMBER_DURATION_CHANNEL" → "80 sec" */
@@ -332,8 +342,9 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
     .slice(0, 5)
 
   const approvedList = projects.filter(p => p.Status === 'Approved')
+  const uniqueProjectCount = new Set(projects.map(p => p.Project_ID)).size
   const stats = [
-    { label: 'Total Projects', value: projects.length, icon: '🗂️', color: '#374151', bg: '#f9fafb' },
+    { label: 'Total Projects', value: uniqueProjectCount, icon: '🗂️', color: '#374151', bg: '#f9fafb' },
     { label: 'Active Projects', value: activeProjectsList.length, icon: '🎬', color: '#667eea', bg: '#f0f0ff' },
     { label: 'Approved Today', value: approvedTodayList.length, icon: '✅', color: '#10b981', bg: '#ecfdf5' },
     { label: 'Working Animators', value: workingAnimatorsList.length, icon: '👥', color: '#f59e0b', bg: '#fffbeb' },
@@ -472,6 +483,177 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
 
 
 // ─── Quick Assign Modal ───────────────────────────────────────────────────────
+
+// ─── Group Assign Modal ───────────────────────────────────────────────────────
+function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
+  projects: Project[]; animators: Animator[]; onClose: () => void; onSuccess: (msg: string) => void
+}) {
+  const [projSearch, setProjSearch] = useState('')
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [animSearch, setAnimSearch] = useState('')
+  const [selectedAnimators, setSelectedAnimators] = useState<Animator[]>([])
+  const [leadName, setLeadName] = useState('')
+  const [assigning, setAssigning] = useState(false)
+  const [error, setError] = useState('')
+
+  const matchProj = (p: Project) => !projSearch ||
+    p.Project_ID.toLowerCase().includes(projSearch.toLowerCase()) ||
+    (p.Project_title || '').toLowerCase().includes(projSearch.toLowerCase())
+  const displayedProjects = projSearch ? projects.filter(matchProj) : projects.slice(0, 80)
+  const filteredAnims = animators.filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
+
+  const toggleAnimator = (a: Animator) => {
+    setSelectedAnimators(prev =>
+      prev.find(x => x.Employee_ID === a.Employee_ID)
+        ? prev.filter(x => x.Employee_ID !== a.Employee_ID)
+        : [...prev, a]
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedProject) { setError('Select a project first.'); return }
+    if (selectedAnimators.length < 1) { setError('Select at least one animator.'); return }
+    setAssigning(true); setError('')
+    const duration = extractDuration(selectedProject.Project_ID) || selectedProject.Duration || null
+    let ok = 0; let failMsg = ''
+    for (const animator of selectedAnimators) {
+      const { error: err } = await supabase.from('projects').insert({
+        Project_ID: selectedProject.Project_ID,
+        Project_title: selectedProject.Project_title || null,
+        Project_link: selectedProject.Project_link || null,
+        Duration: duration,
+        Animator: animator.Name,
+        Employee_ID: animator.Employee_ID,
+        Discord_ID: animator.Discord_ID || null,
+        Discord_Username: animator.Discord_Username || null,
+        Lead: leadName || selectedProject.Lead || null,
+        Status: 'Pending',
+        'Date Assigned': formatDate(),
+        Thread_ID: null,
+        WIP: false,
+      })
+      if (!err) {
+        await supabase.from('animators').update({ 'Current video': (animator['Current video'] || 0) + 1 }).eq('Employee_ID', animator.Employee_ID)
+        ok++
+      } else { failMsg = err.message }
+    }
+    if (ok > 0) {
+      onSuccess(`Group workspace: ${ok} animator${ok > 1 ? 's' : ''} assigned to "${selectedProject.Project_title || selectedProject.Project_ID}"`)
+      onClose()
+    } else { setError(`Failed: ${failMsg}`); setAssigning(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="font-bold text-gray-800 text-lg">👥 Group Assign</h3>
+            <p className="text-xs text-gray-400 mt-0.5">Pick one project + multiple animators → creates one row per animator</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex-1 overflow-hidden flex min-h-0">
+          {/* LEFT — project picker */}
+          <div className="w-1/2 border-r border-gray-100 flex flex-col overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-gray-100 flex-shrink-0">
+              <input type="text" value={projSearch} onChange={e => setProjSearch(e.target.value)}
+                placeholder="Search project ID or title…"
+                className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-800" />
+            </div>
+            <p className="px-4 py-2 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100 flex-shrink-0">
+              Select Project ({displayedProjects.length} shown)
+            </p>
+            <div className="overflow-y-auto p-2 space-y-1 flex-1">
+              {displayedProjects.length === 0
+                ? <p className="text-xs text-gray-400 text-center py-6">No projects found</p>
+                : displayedProjects.map(p => (
+                  <button key={p.Project_ID + p.Animator} type="button" onClick={() => setSelectedProject(p)}
+                    className="w-full text-left p-2.5 rounded-lg text-xs transition-all border"
+                    style={{ borderColor: selectedProject?.Project_ID === p.Project_ID ? '#667eea' : 'transparent', backgroundColor: selectedProject?.Project_ID === p.Project_ID ? '#f0f0ff' : 'transparent' }}>
+                    <p className="font-mono text-gray-400">{p.Project_ID}</p>
+                    <p className="font-medium text-gray-800 truncate mt-0.5">{p.Project_title || '—'}</p>
+                    {p.Animator && <p className="text-gray-400 mt-0.5">Currently: {p.Animator}</p>}
+                  </button>
+                ))}
+            </div>
+          </div>
+
+          {/* RIGHT — animators multi-select + lead */}
+          <div className="w-1/2 flex flex-col overflow-hidden">
+            {selectedProject && (
+              <div className="mx-4 mt-4 p-3 bg-indigo-50 rounded-xl text-xs border border-indigo-100 flex-shrink-0">
+                <p className="font-semibold text-indigo-800 truncate">{selectedProject.Project_title || selectedProject.Project_ID}</p>
+                <p className="font-mono text-indigo-400 mt-0.5">{selectedProject.Project_ID}</p>
+              </div>
+            )}
+            <div className="px-4 pt-4 pb-2 flex-shrink-0">
+              <p className="text-xs font-semibold text-gray-700 mb-1.5">
+                Animators <span className="text-indigo-500 font-bold">{selectedAnimators.length > 0 ? `(${selectedAnimators.length} selected)` : '(select multiple)'}</span>
+              </p>
+              <input type="text" value={animSearch} onChange={e => setAnimSearch(e.target.value)}
+                placeholder="Search animator…"
+                className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-800 mb-2" />
+              <div className="border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: '200px' }}>
+                {filteredAnims.map(a => {
+                  const checked = !!selectedAnimators.find(x => x.Employee_ID === a.Employee_ID)
+                  const load = a['Current video'] || 0
+                  const entries = parseNotes(a['Interview notes'])
+                  const avg = avgRating(entries)
+                  return (
+                    <button key={a.Employee_ID} type="button" onClick={() => toggleAnimator(a)}
+                      className="w-full text-left px-3 py-2.5 flex items-center gap-2.5 border-b border-gray-50 last:border-0 transition-all"
+                      style={{ backgroundColor: checked ? '#f0f0ff' : 'transparent' }}>
+                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border-2 transition-all`}
+                        style={{ borderColor: checked ? '#667eea' : '#d1d5db', backgroundColor: checked ? '#667eea' : 'transparent' }}>
+                        {checked && <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                      </div>
+                      <span className="flex-1 text-sm font-medium text-gray-800 truncate">{a.Name}</span>
+                      <span className="flex items-center gap-1.5 flex-shrink-0">
+                        {avg !== null && (
+                          <span className="text-xs font-bold px-1 py-0.5 rounded-full"
+                            style={{ backgroundColor: avg >= 7 ? '#dcfce7' : avg >= 5 ? '#fef9c3' : '#fee2e2', color: avg >= 7 ? '#15803d' : avg >= 5 ? '#854d0e' : '#b91c1c' }}>
+                            ⭐{avg}
+                          </span>
+                        )}
+                        <span className="text-xs" style={{ color: load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444' }}>{load}▪</span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            {selectedAnimators.length > 0 && (
+              <div className="px-4 pb-1 flex gap-1 flex-wrap flex-shrink-0">
+                {selectedAnimators.map(a => (
+                  <span key={a.Employee_ID} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full flex items-center gap-1">
+                    {a.Name}
+                    <button type="button" onClick={() => toggleAnimator(a)} className="text-indigo-400 hover:text-indigo-700">✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="px-4 pb-4 mt-2 space-y-2 flex-shrink-0">
+              <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)}
+                placeholder="Lead name…"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+              {error && <p className="text-xs text-red-500 bg-red-50 p-2 rounded-lg">{error}</p>}
+              <button type="submit" disabled={assigning || !selectedProject || selectedAnimators.length === 0}
+                className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                {assigning ? 'Creating…' : `Create Group Workspace (${selectedAnimators.length} animator${selectedAnimators.length !== 1 ? 's' : ''})`}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
   projects: Project[]; animators: Animator[]; onClose: () => void; onSuccess: (msg: string) => void
@@ -682,6 +864,7 @@ function AssignTab({ projects, animators, onRefresh }: {
 }) {
   const { toasts, addToast, dismiss } = useToast()
   const [showQuickAssign, setShowQuickAssign] = useState(false)
+  const [showGroupAssign, setShowGroupAssign] = useState(false)
 
   // Per-animator assign modal state
   const [assignModal, setAssignModal] = useState<Animator | null>(null)
@@ -701,9 +884,9 @@ function AssignTab({ projects, animators, onRefresh }: {
   // When searching: scan ALL projects so nothing is missed; no search = show unassigned only
   const filteredUnassigned = projectSearch
     ? projects.filter(p =>
-        p.Project_ID.toLowerCase().includes(projectSearch.toLowerCase()) ||
-        (p.Project_title || '').toLowerCase().includes(projectSearch.toLowerCase())
-      )
+      p.Project_ID.toLowerCase().includes(projectSearch.toLowerCase()) ||
+      (p.Project_title || '').toLowerCase().includes(projectSearch.toLowerCase())
+    )
     : unassignedProjects
 
   const sortedAnimators = [...animators]
@@ -801,6 +984,16 @@ function AssignTab({ projects, animators, onRefresh }: {
           projects={projects}
           animators={animators}
           onClose={() => setShowQuickAssign(false)}
+          onSuccess={(msg) => { addToast(msg); onRefresh() }}
+        />
+      )}
+
+      {/* Group Assign Modal */}
+      {showGroupAssign && (
+        <GroupAssignModal
+          projects={projects}
+          animators={animators}
+          onClose={() => setShowGroupAssign(false)}
           onSuccess={(msg) => { addToast(msg); onRefresh() }}
         />
       )}
@@ -930,14 +1123,24 @@ function AssignTab({ projects, animators, onRefresh }: {
           <h3 className="font-semibold text-gray-800">All Animators</h3>
           <p className="text-sm text-gray-400 mt-0.5">{unassignedProjects.length} unassigned projects · {animators.length} animators</p>
         </div>
-        <button onClick={() => setShowQuickAssign(true)}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm"
-          style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          Quick Assign
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowGroupAssign(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm"
+            style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Group Assign
+          </button>
+          <button onClick={() => setShowQuickAssign(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            Quick Assign
+          </button>
+        </div>
       </div>
 
       {/* Animators list */}
@@ -1017,7 +1220,9 @@ function AssignTab({ projects, animators, onRefresh }: {
 
 // ─── Projects Tab ──────────────────────────────────────────────────────────────
 
-function ProjectsTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
+function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRefresh: () => void; user: DashboardUser }) {
+  const { toasts, addToast, dismiss } = useToast()
+  const isHead = user.role === 'head'
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [animatorFilter, setAnimatorFilter] = useState('')
@@ -1036,9 +1241,22 @@ function ProjectsTab({ projects, onRefresh }: { projects: Project[]; onRefresh: 
     const matchLead = !leadFilter || (p.Lead || '').toLowerCase().includes(leadFilter.toLowerCase())
     let matchDate = true
     if (dateFrom || dateTo) {
-      const d = parseDate(p['Date Assigned']).getTime()
-      if (dateFrom && d < new Date(dateFrom).getTime()) matchDate = false
-      if (dateTo && d > new Date(dateTo).getTime() + 86400000) matchDate = false
+      const d = parseDate(p['Date Assigned'])
+      if (!p['Date Assigned'] || d.getTime() === 0) {
+        matchDate = false // exclude items with no date when filter is active
+      } else {
+        if (dateFrom) {
+          // Parse ISO date as local midnight to avoid UTC shift
+          const [fy, fm, fd] = dateFrom.split('-').map(Number)
+          const from = new Date(fy, fm - 1, fd, 0, 0, 0, 0)
+          if (d < from) matchDate = false
+        }
+        if (dateTo) {
+          const [ty, tm, td] = dateTo.split('-').map(Number)
+          const to = new Date(ty, tm - 1, td, 23, 59, 59, 999)
+          if (d > to) matchDate = false
+        }
+      }
     }
     return matchSearch && matchStatus && matchAnimator && matchLead && matchDate
   }).sort((a, b) => {
@@ -1048,9 +1266,14 @@ function ProjectsTab({ projects, onRefresh }: { projects: Project[]; onRefresh: 
 
   const handleApprove = async (project: Project) => {
     setApproving(project.Project_ID)
-    const { error } = await supabase.from('projects').update({
-      Status: 'Approved', 'Date Approved': formatDate(),
+    // Use both Project_ID + Animator to be specific (handles duplicate Project_IDs for group workspaces)
+    let query = supabase.from('projects').update({
+      Status: 'Approved',
+      'Date Approved': formatDate(),
+      Approved_Date: formatDate(),
     }).eq('Project_ID', project.Project_ID)
+    if (project.Animator) query = query.eq('Animator', project.Animator)
+    const { error } = await query
     if (!error) {
       if (project.Employee_ID) {
         const { data: anim } = await supabase.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
@@ -1060,7 +1283,10 @@ function ProjectsTab({ projects, onRefresh }: { projects: Project[]; onRefresh: 
             .eq('Employee_ID', project.Employee_ID)
         }
       }
+      addToast(`✅ Approved: ${project.Project_title || project.Project_ID}`)
       onRefresh()
+    } else {
+      addToast(`❌ Approve failed: ${error.message}`, 'error')
     }
     setApproving(null)
   }
@@ -1069,6 +1295,7 @@ function ProjectsTab({ projects, onRefresh }: { projects: Project[]; onRefresh: 
 
   return (
     <div className="space-y-4">
+      <Toast toasts={toasts} onDismiss={dismiss} />
       {/* Filters */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -1134,7 +1361,7 @@ function ProjectsTab({ projects, onRefresh }: { projects: Project[]; onRefresh: 
                   <td className="px-4 py-3 text-gray-500 text-xs">{p['Date Assigned'] || '—'}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
                   <td className="px-4 py-3">
-                    {p.Status === 'Review' && (
+                    {p.Status === 'Review' && !isHead && (
                       <button onClick={() => handleApprove(p)} disabled={approving === p.Project_ID}
                         className="px-3 py-1 rounded-lg text-xs font-medium text-white"
                         style={{ backgroundColor: '#10b981' }}>
@@ -1481,6 +1708,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [selectedAnimator, setSelectedAnimator] = useState<Animator | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
+  const [sortOrder, setSortOrder] = useState<'none' | 'az' | 'za'>('none')
   const isHead = user.role === 'head'
 
   const filtered = animators
@@ -1490,6 +1718,8 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       const bDep = (b.Role || '').toLowerCase().includes('depart')
       if (aDep && !bDep) return 1
       if (!aDep && bDep) return -1
+      if (sortOrder === 'az') return a.Name.localeCompare(b.Name)
+      if (sortOrder === 'za') return b.Name.localeCompare(a.Name)
       return 0
     })
 
@@ -1502,14 +1732,24 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       )}
       {showAddModal && <AddAnimatorModal onClose={() => setShowAddModal(false)} onRefresh={onRefresh} />}
 
-      {/* Search + Add */}
-      <div className="flex gap-3 items-center">
-        <div className="relative flex-1">
+      {/* Search + Sort + Add */}
+      <div className="flex gap-3 items-center flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input type="text" placeholder="Search by name or ID..." value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none text-gray-800 shadow-sm" />
+        </div>
+        {/* Sort buttons */}
+        <div className="flex gap-2">
+          {([{ key: 'none', label: 'Default' }, { key: 'az', label: 'A→Z' }, { key: 'za', label: 'Z→A' }] as const).map(s => (
+            <button key={s.key} onClick={() => setSortOrder(s.key)}
+              className="px-3 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
+              style={{ backgroundColor: sortOrder === s.key ? '#667eea' : '#f1f5f9', color: sortOrder === s.key ? 'white' : '#64748b' }}>
+              {s.label}
+            </button>
+          ))}
         </div>
         {!isHead && (
           <button onClick={() => setShowAddModal(true)}
@@ -2137,22 +2377,91 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
 // ─── Analytics Tab ────────────────────────────────────────────────────────────
 
 function AnalyticsTab({ projects, animators }: { projects: Project[]; animators: Animator[] }) {
-  // Daily trend (last 30 days) — supports both date formats
-  const trend: { label: string; assigned: number; approved: number }[] = []
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i)
-    const full = formatDate(d)
-    const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-    trend.push({
-      label,
-      assigned: projects.filter(p => p['Date Assigned'] === full).length,
-      approved: projects.filter(p => p['Date Approved'] === full).length,
-    })
+  // Generate last 13 months as filter options
+  const monthOptions = (() => {
+    const opts: string[] = []
+    const now = new Date()
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0])
+
+  // Helper: parse "X days" or "X" → integer
+  const parseDays = (dur: string): number => {
+    if (!dur) return 0
+    const n = parseInt(dur.replace(/\D.*$/, ''), 10)
+    return isNaN(n) ? 0 : n
   }
 
-  // Status breakdown
+  // Helper: check if a "DD MMM YYYY" date string is within a "MMM YYYY" month
+  const inMonth = (dateStr: string, month: string) =>
+    !!dateStr && !!month && dateStr.includes(month)
+
+  // Deduplicate by Project_ID (first occurrence wins) for all stats
+  const dedupMap = new Map<string, Project>()
+  projects.forEach(p => { if (!dedupMap.has(p.Project_ID)) dedupMap.set(p.Project_ID, p) })
+  const dedupedAll: Project[] = Array.from(dedupMap.values())
+
+  // Filtered sets based on selected month
+  const filteredByAssigned = selectedMonth
+    ? dedupedAll.filter(p => inMonth(p['Date Assigned'], selectedMonth))
+    : dedupedAll
+  const filteredByApproved = selectedMonth
+    ? dedupedAll.filter(p => inMonth(p['Date Approved'], selectedMonth))
+    : dedupedAll
+
+  // Stat counts (deduped + filtered)
+  const totalProjects = filteredByAssigned.length
+  const inProgress = filteredByAssigned.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status)).length
+  const approved = filteredByApproved.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
+  const unassigned = filteredByAssigned.filter(p => p.Status === 'Pending').length
+  const changesRequested = filteredByAssigned.filter(p => p.Status === 'Changes Requested').length
+
+  // Duration stats (filtered approved, parsed as days)
+  const durationThisMonth = filteredByApproved
+    .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
+    .reduce((s, p) => s + parseDays(p.Duration), 0)
+
+  // Lifetime stats (all deduped, unfiltered)
+  const lifetimeTotal = dedupedAll.length
+  const lifetimeApproved = dedupedAll.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
+  const lifetimeDuration = dedupedAll
+    .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
+    .reduce((s, p) => s + parseDays(p.Duration), 0)
+
+  // Daily Work Trend — deduplicated per day, filtered to selected month or last 30 days
+  const trend: { label: string; assigned: number; approved: number }[] = []
+  if (selectedMonth) {
+    const MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 }
+    const [mon, yr] = selectedMonth.split(' ')
+    const monthIdx = MONTHS[mon]
+    const year = parseInt(yr, 10)
+    const daysInMonth = new Date(year, monthIdx + 1, 0).getDate()
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(year, monthIdx, day)
+      const full = formatDate(d)
+      const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+      const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
+      const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
+      trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
+    }
+  } else {
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i)
+      const full = formatDate(d)
+      const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+      const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
+      const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
+      trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
+    }
+  }
+
+  // Status breakdown (deduped all)
   const statusMap: Record<string, number> = {}
-  projects.forEach(p => { statusMap[p.Status] = (statusMap[p.Status] || 0) + 1 })
+  dedupedAll.forEach(p => { statusMap[p.Status] = (statusMap[p.Status] || 0) + 1 })
   const statusData = Object.entries(statusMap).map(([name, value]) => ({ name, value }))
 
   // Workload distribution
@@ -2160,16 +2469,9 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     name: a.Name, current: a['Current video'] || 0, total: a['Total video'] || 0,
   })).filter(a => a.total > 0).slice(0, 10)
 
-  // Deduplicate projects by Project_ID before computing channel stats
-  const seenProjIds = new Set<string>()
-  const dedupedProjects: Project[] = []
-  projects.forEach(p => {
-    if (!seenProjIds.has(p.Project_ID)) { seenProjIds.add(p.Project_ID); dedupedProjects.push(p) }
-  })
-
-  // Channel-wise analytics (on deduped projects)
+  // Channel-wise analytics (deduped all)
   const channelMap: Record<string, { total: number; inProgress: number; completed: number; totalDuration: number; completedDuration: number; completedCount: number }> = {}
-  dedupedProjects.forEach(p => {
+  dedupedAll.forEach(p => {
     const ch = extractChannel(p.Project_ID)
     if (!channelMap[ch]) channelMap[ch] = { total: 0, inProgress: 0, completed: 0, totalDuration: 0, completedDuration: 0, completedCount: 0 }
     channelMap[ch].total++
@@ -2186,24 +2488,35 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     .sort((a, b) => b[1].total - a[1].total)
     .map(([name, v]) => ({ name: name.toUpperCase(), ...v, avgDuration: v.completedCount > 0 ? Math.round(v.completedDuration / v.completedCount) : 0 }))
 
-  // Avg duration stat cards
-  const now = new Date()
-  const monthLabel = now.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
-  const thisMonthCompleted = dedupedProjects.filter(p => p.Status === 'Approved' && p['Date Approved'] && p['Date Approved'].includes(monthLabel))
-  const thisMonthDurTotal = thisMonthCompleted.reduce((s, p) => s + parseDurationSec(p.Duration, p.Project_ID), 0)
-  const allCompleted = dedupedProjects.filter(p => p.Status === 'Approved')
-  const allDurTotal = allCompleted.reduce((s, p) => s + parseDurationSec(p.Duration, p.Project_ID), 0)
-
   const PIE_COLORS = ['#667eea', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
 
   return (
     <div className="space-y-6">
-      {/* Summary */}
+      {/* Month Filter */}
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-semibold text-gray-700">📅 Filter by Month:</span>
+        <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none bg-white">
+          <option value="">All Time</option>
+          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        {selectedMonth && (
+          <button onClick={() => setSelectedMonth('')}
+            className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded-lg hover:bg-gray-100">
+            Clear ✕
+          </button>
+        )}
+        <span className="text-xs text-gray-400 ml-auto">
+          {selectedMonth ? `Showing data for ${selectedMonth}` : 'Showing all-time data'}
+        </span>
+      </div>
+
+      {/* Summary row 1 */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: 'Total Projects', value: projects.length, color: '#667eea' },
-          { label: 'Approved', value: projects.filter(p => p.Status === 'Approved').length, color: '#10b981' },
-          { label: 'In Progress', value: projects.filter(p => ['Active', 'Pending', 'Review'].includes(p.Status)).length, color: '#f59e0b' },
+          { label: 'Total Projects', value: totalProjects, color: '#667eea' },
+          { label: 'Approved', value: approved, color: '#10b981' },
+          { label: 'In Progress', value: inProgress, color: '#f59e0b' },
           { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
@@ -2213,31 +2526,11 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
         ))}
       </div>
 
-      {/* Extra metrics */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {/* Summary row 2 */}
+      <div className="grid grid-cols-2 gap-4">
         {[
-          {
-            label: 'Completion Rate',
-            value: projects.length > 0 ? `${Math.round(projects.filter(p => p.Status === 'Approved').length / projects.length * 100)}%` : '—',
-            color: '#10b981',
-          },
-          {
-            label: 'Avg Animator Load',
-            value: animators.length > 0
-              ? (animators.reduce((s, a) => s + (a['Current video'] || 0), 0) / animators.length).toFixed(1)
-              : '—',
-            color: '#f59e0b',
-          },
-          {
-            label: 'Pending Approval',
-            value: projects.filter(p => p.Status === 'Review').length,
-            color: '#6d28d9',
-          },
-          {
-            label: 'Changes Requested',
-            value: projects.filter(p => p.Status === 'Changes Requested').length,
-            color: '#ef4444',
-          },
+          { label: 'Unassigned', value: unassigned, color: '#6d28d9' },
+          { label: 'Changes Requested', value: changesRequested, color: '#ef4444' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
             <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
@@ -2246,11 +2539,21 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
         ))}
       </div>
 
-      {/* Duration stat cards */}
+      {/* Duration cards */}
       <div className="grid grid-cols-2 gap-4">
         {[
-          { label: 'Total Duration This Month', value: thisMonthDurTotal > 0 ? formatSec(thisMonthDurTotal) : '—', sub: `${thisMonthCompleted.length} approved`, color: '#06b6d4' },
-          { label: 'Total Duration Overall', value: allDurTotal > 0 ? formatSec(allDurTotal) : '—', sub: `${allCompleted.length} approved total`, color: '#8b5cf6' },
+          {
+            label: selectedMonth ? `Total Duration (${selectedMonth})` : 'Total Duration This Month',
+            value: durationThisMonth > 0 ? `${durationThisMonth} days` : '—',
+            sub: `approved projects${selectedMonth ? ` in ${selectedMonth}` : ''}`,
+            color: '#06b6d4',
+          },
+          {
+            label: 'Total Duration Overall',
+            value: lifetimeDuration > 0 ? `${lifetimeDuration} days` : '—',
+            sub: `${lifetimeApproved} approved total`,
+            color: '#8b5cf6',
+          },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
             <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
@@ -2260,9 +2563,11 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
         ))}
       </div>
 
-      {/* Line Chart */}
+      {/* Daily Work Trend */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Daily Work Trend (Last 30 Days)</h3>
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">
+          Daily Work Trend {selectedMonth ? `— ${selectedMonth}` : '(Last 30 Days)'}
+        </h3>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={trend} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -2273,6 +2578,25 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
             <Line type="monotone" dataKey="approved" name="Approved" stroke="#10b981" strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
+      </div>
+
+      {/* Lifetime Report */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+        <h3 className="text-lg font-semibold text-gray-800 mb-1">📋 Lifetime Report</h3>
+        <p className="text-xs text-gray-400 mb-4">All-time totals — not affected by the month filter</p>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[
+            { label: 'Total Projects (Ever)', value: lifetimeTotal, color: '#667eea' },
+            { label: 'Total Approved (Ever)', value: lifetimeApproved, color: '#10b981' },
+            { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
+            { label: 'Total Duration (Ever)', value: lifetimeDuration > 0 ? `${lifetimeDuration} days` : '—', color: '#06b6d4' },
+          ].map(s => (
+            <div key={s.label} className="bg-gray-50 rounded-xl p-4 text-center border border-gray-100">
+              <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
+              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Channel-wise Analytics */}
@@ -2294,7 +2618,6 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
                 <Bar dataKey="completed" name="Completed" fill="#10b981" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-            {/* Channel table */}
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -2311,12 +2634,8 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
                       <td className="px-3 py-2 text-gray-600">{ch.total}</td>
                       <td className="px-3 py-2"><span className="text-amber-600 font-medium">{ch.inProgress}</span></td>
                       <td className="px-3 py-2"><span className="text-green-600 font-medium">{ch.completed}</span></td>
-                      <td className="px-3 py-2">
-                        <span className="text-indigo-600 font-medium">{formatSec(ch.totalDuration)}</span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="text-cyan-600 font-medium">{ch.avgDuration > 0 ? formatSec(ch.avgDuration) : '—'}</span>
-                      </td>
+                      <td className="px-3 py-2"><span className="text-indigo-600 font-medium">{formatSec(ch.totalDuration)}</span></td>
+                      <td className="px-3 py-2"><span className="text-cyan-600 font-medium">{ch.avgDuration > 0 ? formatSec(ch.avgDuration) : '—'}</span></td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 bg-gray-100 rounded-full h-1.5">
@@ -2406,7 +2725,7 @@ function NotesTab({ user }: { user: DashboardUser }) {
   const saveQuickNote = async () => {
     if (!quickNote.trim()) return
     setSavingQuick(true)
-    await supabase.from('notes').insert({
+    const { error } = await supabase.from('notes').insert({
       content: quickNote.trim(),
       created_by: user.full_name || user.email,
       assigned_to: null,
@@ -2414,8 +2733,13 @@ function NotesTab({ user }: { user: DashboardUser }) {
       is_done: false,
       priority: 'low',
     })
-    setQuickNote('')
-    await loadData()
+    if (!error) {
+      setQuickNote('')
+      await loadData()
+    } else {
+      setRlsError(error.message)
+      setTimeout(() => setRlsError(''), 4000)
+    }
     setSavingQuick(false)
   }
 
@@ -2471,12 +2795,18 @@ function NotesTab({ user }: { user: DashboardUser }) {
             <textarea
               value={quickNote}
               onChange={e => setQuickNote(e.target.value)}
-              onBlur={saveQuickNote}
               rows={3}
-              placeholder="Write a quick note… (auto-saves when you click away)"
+              placeholder="Write a quick note…"
               className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 focus:outline-none resize-none"
             />
-            {savingQuick && <p className="text-xs text-gray-400 mt-1">Saving…</p>}
+            <div className="flex items-center gap-2 mt-2">
+              <button onClick={saveQuickNote} disabled={savingQuick || !quickNote.trim()}
+                className="px-4 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                {savingQuick ? 'Saving…' : 'Save Note'}
+              </button>
+              {savingQuick && <p className="text-xs text-gray-400">Saving…</p>}
+            </div>
             {myNotes.length > 0 && (
               <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
                 {myNotes.map(n => (
@@ -2598,9 +2928,290 @@ function NotesTab({ user }: { user: DashboardUser }) {
   )
 }
 
+// ─── Budget Tracker Tab ──────────────────────────────────────────────────────
+
+interface BudgetEntry {
+  id: string
+  month: string
+  total_minutes: number
+  created_at: string
+}
+interface BudgetPayment {
+  id: string
+  budget_id: string
+  payment_date: string
+  minutes_used: number
+  amount: number
+  note: string
+  created_at: string
+}
+
+function BudgetTrackerTab() {
+  const [budgets, setBudgets] = useState<BudgetEntry[]>([])
+  const [payments, setPayments] = useState<BudgetPayment[]>([])
+  const [selectedBudget, setSelectedBudget] = useState<BudgetEntry | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [showPaymentForm, setShowPaymentForm] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [newMonth, setNewMonth] = useState('')
+  const [newMinutes, setNewMinutes] = useState('')
+  const [payDate, setPayDate] = useState('')
+  const [payMinutes, setPayMinutes] = useState('')
+  const [payAmount, setPayAmount] = useState('')
+  const [payNote, setPayNote] = useState('')
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+
+  const loadBudgets = async () => {
+    setLoading(true)
+    const { data } = await supabase.from('budget_entries').select('*').order('created_at', { ascending: false })
+    setBudgets((data as BudgetEntry[]) || [])
+    setLoading(false)
+  }
+  const loadPayments = async (budgetId: string) => {
+    const { data } = await supabase.from('budget_payments').select('*').eq('budget_id', budgetId).order('created_at', { ascending: false })
+    setPayments((data as BudgetPayment[]) || [])
+  }
+
+  useEffect(() => { loadBudgets() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (selectedBudget) loadPayments(selectedBudget.id)
+    else setPayments([])
+  }, [selectedBudget]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleCreateBudget = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newMonth.trim() || !newMinutes) return
+    setSaving(true); setMsg('')
+    const { error } = await supabase.from('budget_entries').insert({ month: newMonth.trim(), total_minutes: parseInt(newMinutes, 10) })
+    if (!error) { setMsg('✅ Budget created!'); setNewMonth(''); setNewMinutes(''); setShowCreateForm(false); await loadBudgets() }
+    else setMsg('❌ ' + error.message)
+    setSaving(false); setTimeout(() => setMsg(''), 3000)
+  }
+
+  const handleAddPayment = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedBudget || !payMinutes) return
+    setSaving(true); setMsg('')
+    const { error } = await supabase.from('budget_payments').insert({
+      budget_id: selectedBudget.id,
+      payment_date: payDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      minutes_used: parseInt(payMinutes, 10),
+      amount: parseFloat(payAmount) || 0,
+      note: payNote.trim() || null,
+    })
+    if (!error) { setPayDate(''); setPayMinutes(''); setPayAmount(''); setPayNote(''); setShowPaymentForm(false); await loadPayments(selectedBudget.id) }
+    else setMsg('❌ ' + error.message)
+    setSaving(false); setTimeout(() => setMsg(''), 3000)
+  }
+
+  const handleDeletePayment = async (id: string) => {
+    setDeleteId(id)
+    await supabase.from('budget_payments').delete().eq('id', id)
+    setPayments(prev => prev.filter(p => p.id !== id))
+    setDeleteId(null)
+  }
+
+  const usedMinutes = payments.reduce((s, p) => s + (p.minutes_used || 0), 0)
+  const remainingMinutes = selectedBudget ? selectedBudget.total_minutes - usedMinutes : 0
+  const progress = selectedBudget ? Math.min(100, Math.round((usedMinutes / selectedBudget.total_minutes) * 100)) : 0
+
+  return (
+    <div className="space-y-6">
+      {msg && (
+        <div className={`rounded-xl p-3 text-sm font-medium ${msg.startsWith('✅') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {msg}
+        </div>
+      )}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-gray-800">Budget Tracker</h3>
+          <p className="text-sm text-gray-400 mt-0.5">Manage monthly minute budgets</p>
+        </div>
+        <button onClick={() => setShowCreateForm(v => !v)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white"
+          style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+          New Budget
+        </button>
+      </div>
+
+      {showCreateForm && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <h4 className="font-semibold text-gray-800 mb-4">Create New Monthly Budget</h4>
+          <form onSubmit={handleCreateBudget} className="flex flex-col sm:flex-row gap-3">
+            <input type="text" value={newMonth} onChange={e => setNewMonth(e.target.value)} required
+              placeholder="Month (e.g. Feb 2026)"
+              className="flex-1 px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+            <input type="number" value={newMinutes} onChange={e => setNewMinutes(e.target.value)} required min={1}
+              placeholder="Total minutes (e.g. 500)"
+              className="w-full sm:w-48 px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+            <button type="submit" disabled={saving}
+              className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
+              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+            <button type="button" onClick={() => setShowCreateForm(false)}
+              className="px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">Cancel</button>
+          </form>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-1">
+          <h4 className="font-semibold text-gray-700 mb-3 text-sm">Monthly Budgets</h4>
+          {loading ? (
+            <p className="text-xs text-gray-400 py-6 text-center">Loading…</p>
+          ) : budgets.length === 0 ? (
+            <div className="bg-white rounded-2xl p-8 text-center border border-gray-100 shadow-sm">
+              <p className="text-2xl mb-2">💰</p>
+              <p className="text-sm text-gray-400">No budgets yet. Create one!</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {budgets.map(b => (
+                <button key={b.id} onClick={() => setSelectedBudget(b)}
+                  className="w-full text-left p-4 rounded-2xl border-2 bg-white shadow-sm transition-all"
+                  style={{ borderColor: selectedBudget?.id === b.id ? '#667eea' : '#f1f5f9', backgroundColor: selectedBudget?.id === b.id ? '#f8f7ff' : 'white' }}>
+                  <p className="font-semibold text-gray-800">{b.month}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{b.total_minutes} min budgeted</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="lg:col-span-2">
+          {!selectedBudget ? (
+            <div className="bg-white rounded-2xl p-12 text-center border border-gray-100 shadow-sm h-full flex flex-col items-center justify-center">
+              <p className="text-3xl mb-2">👈</p>
+              <p className="text-sm text-gray-400">Select a budget to view details</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h4 className="font-bold text-gray-800 text-lg">{selectedBudget.month}</h4>
+                    <p className="text-xs text-gray-400 mt-0.5">Monthly Budget</p>
+                  </div>
+                  <button onClick={() => setShowPaymentForm(v => !v)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
+                    style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+                    + Add Payment
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {[
+                    { label: 'Total Budget', value: `${selectedBudget.total_minutes} min`, color: '#667eea' },
+                    { label: 'Used', value: `${usedMinutes} min`, color: '#f59e0b' },
+                    { label: 'Remaining', value: `${remainingMinutes} min`, color: remainingMinutes < 0 ? '#ef4444' : '#10b981' },
+                  ].map(s => (
+                    <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
+                      <p className="text-xl font-bold" style={{ color: s.color }}>{s.value}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>Budget Consumed</span>
+                    <span className="font-semibold" style={{ color: progress >= 100 ? '#ef4444' : progress >= 80 ? '#f59e0b' : '#10b981' }}>{progress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-3">
+                    <div className="h-3 rounded-full transition-all" style={{
+                      width: `${progress}%`,
+                      background: progress >= 100 ? '#ef4444' : progress >= 80 ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : 'linear-gradient(90deg,#667eea,#10b981)'
+                    }} />
+                  </div>
+                </div>
+              </div>
+
+              {showPaymentForm && (
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                  <h5 className="font-semibold text-gray-800 mb-4">Add Payment Entry</h5>
+                  <form onSubmit={handleAddPayment} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                        <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Minutes Used <span className="text-red-400">*</span></label>
+                        <input type="number" value={payMinutes} onChange={e => setPayMinutes(e.target.value)} required min={1}
+                          placeholder="e.g. 120"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Amount Received</label>
+                        <input type="number" value={payAmount} onChange={e => setPayAmount(e.target.value)} step="0.01" min={0}
+                          placeholder="e.g. 5000"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional)</label>
+                        <input type="text" value={payNote} onChange={e => setPayNote(e.target.value)}
+                          placeholder="e.g. Phase 1 payment"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={saving}
+                        className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
+                        style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                        {saving ? 'Saving…' : 'Save Payment'}
+                      </button>
+                      <button type="button" onClick={() => setShowPaymentForm(false)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <h5 className="font-semibold text-gray-800 text-sm">Payment Entries</h5>
+                  <span className="text-xs text-gray-400">{payments.length} entries</span>
+                </div>
+                {payments.length === 0 ? (
+                  <div className="py-10 text-center text-gray-400 text-sm">No payments yet</div>
+                ) : (
+                  <div className="divide-y divide-gray-50">
+                    {payments.map(pay => (
+                      <div key={pay.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-gray-800">{pay.minutes_used} min</span>
+                            {pay.amount > 0 && <span className="text-xs text-green-700 font-medium bg-green-50 px-2 py-0.5 rounded-full">₹{pay.amount}</span>}
+                            {pay.note && <span className="text-xs text-gray-500 truncate">{pay.note}</span>}
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">{pay.payment_date || '—'}</p>
+                        </div>
+                        <button onClick={() => handleDeletePayment(pay.id)} disabled={deleteId === pay.id}
+                          className="text-gray-300 hover:text-red-400 flex-shrink-0 p-1 disabled:opacity-50"
+                          title="Delete">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'notes'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'notes' | 'budget'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -2612,6 +3223,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payments', label: 'Payments', icon: '💳', managerOnly: true },
   { id: 'notes', label: 'Notes', icon: '📝' },
+  { id: 'budget', label: 'Budget Tracker', icon: '💰' },
 ]
 
 export default function ManagerDashboard() {
@@ -2750,13 +3362,14 @@ export default function ManagerDashboard() {
             <>
               {activeTab === 'overview' && <OverviewTab projects={projects} animators={animators} />}
               {activeTab === 'assign' && <AssignTab projects={projects} animators={animators} onRefresh={fetchData} />}
-              {activeTab === 'bank' && <ProjectsTab projects={projects} onRefresh={fetchData} />}
+              {activeTab === 'bank' && <ProjectsTab projects={projects} onRefresh={fetchData} user={user} />}
               {activeTab === 'team' && <TeamTab animators={animators} projects={projects} user={user} onRefresh={fetchData} />}
               {activeTab === 'create' && <CreateProjectTab onRefresh={fetchData} projects={projects} />}
               {activeTab === 'submissions' && <FormSubmissionsTab animators={animators} userRole={user.role} userLead={user.full_name} />}
               {activeTab === 'analytics' && <AnalyticsTab projects={projects} animators={animators} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
+              {activeTab === 'budget' && <BudgetTrackerTab />}
             </>
           )}
         </div>
