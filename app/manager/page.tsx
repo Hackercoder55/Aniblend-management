@@ -2988,9 +2988,17 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     )
   )
 
-  // Parse duration as integer days
-  const parseDays = (dur: string) => { const n = parseInt((dur || '').replace(/\D.*$/, ''), 10); return isNaN(n) ? 0 : n }
-  const paidDurationTotal = paidProjects.reduce((s, p) => s + parseDays(p.Duration), 0)
+  // Extract minutes from 2nd segment of Project_ID (e.g. "2020_80_plip" → 80)
+  const getMinutes = (id: string) => {
+    const parts = (id || '').split('_')
+    const n = parseInt(parts[1] || '0', 10)
+    return isNaN(n) ? 0 : n
+  }
+  const sumMinutes = (list: Project[]) => list.reduce((s, p) => s + getMinutes(p.Project_ID), 0)
+
+  const inProgressMinutes = sumMinutes(inProgressProjects)
+  const approvedMinutes = sumMinutes(approvedProjects)
+  const paidMinutes = sumMinutes(paidProjects)
 
   // ── Mark as Paid ──
   const handleMarkPaid = async (project: Project) => {
@@ -3104,7 +3112,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
                   <div className="flex items-center gap-3 mb-3">
                     <h4 className="font-bold text-gray-800">{month}</h4>
                     <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
-                      {projs.length} projects · {projs.reduce((s, p) => s + parseDays(p.Duration), 0)} days
+                      {projs.length} projects · {sumMinutes(projs)} min
                     </span>
                   </div>
                   <table className="w-full text-sm">
@@ -3143,7 +3151,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           <div className="flex items-center gap-2 px-1">
             <span className="text-base font-bold text-gray-800">🔄 In Progress</span>
             <span className="text-xs bg-amber-100 text-amber-700 font-semibold px-2 py-0.5 rounded-full">
-              {inProgressProjects.length}
+              {inProgressMinutes} min
             </span>
           </div>
           <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
@@ -3162,7 +3170,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           <div className="flex items-center gap-2 px-1 flex-wrap">
             <span className="text-base font-bold text-gray-800">✅ Approved</span>
             <span className="text-xs bg-green-100 text-green-700 font-semibold px-2 py-0.5 rounded-full">
-              {approvedProjects.length}
+              {approvedMinutes} min
             </span>
             <select value={approvedMonth} onChange={e => setApprovedMonth(e.target.value)}
               className="ml-auto px-2 py-1 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
@@ -3186,7 +3194,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           <div className="flex items-center gap-2 px-1 flex-wrap">
             <span className="text-base font-bold text-gray-800">💰 Client Paid</span>
             <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
-              {paidProjects.length}
+              {paidMinutes} min
             </span>
             <select value={paidMonth} onChange={e => setPaidMonth(e.target.value)}
               className="px-2 py-1 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
@@ -3202,12 +3210,12 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           {paidMonth && paidProjects.length > 0 && (
             <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex gap-4 text-center">
               <div className="flex-1">
-                <p className="text-xl font-bold text-indigo-600">{paidProjects.length}</p>
-                <p className="text-xs text-indigo-400">Projects Paid</p>
+                <p className="text-xl font-bold text-indigo-600">{paidMinutes} min</p>
+                <p className="text-xs text-indigo-400">Total Minutes Paid</p>
               </div>
               <div className="flex-1">
-                <p className="text-xl font-bold text-indigo-600">{paidDurationTotal} days</p>
-                <p className="text-xs text-indigo-400">Total Duration</p>
+                <p className="text-xl font-bold text-indigo-600">{paidProjects.length}</p>
+                <p className="text-xs text-indigo-400">Projects</p>
               </div>
             </div>
           )}
