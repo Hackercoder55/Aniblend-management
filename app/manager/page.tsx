@@ -2946,6 +2946,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
   const [approvedMonth, setApprovedMonth] = useState(monthOptions[0])
   const [paidMonth, setPaidMonth] = useState(monthOptions[0])
+  const [channelFilter, setChannelFilter] = useState('all')
   const [markingId, setMarkingId] = useState<string | null>(null)
   const [showReport, setShowReport] = useState(false)
   const [msg, setMsg] = useState('')
@@ -2966,27 +2967,37 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   const inMonth = (dateStr: string, month: string) =>
     !!dateStr && !!month && dateStr.includes(month)
 
-  // ── Column 1: In Progress (no month filter) ──
-  const inProgressProjects = dedup(
+  // ── Channel helper (3rd segment of Project_ID: e.g. "2020_80_plip" → "plip") ──
+  const getChannel = (id: string) => (id || '').split('_')[2]?.toLowerCase() || ''
+  const byChannel = (list: Project[]) =>
+    channelFilter === 'all' ? list : list.filter(p => getChannel(p.Project_ID) === channelFilter)
+
+  // Detect all distinct channels from the full project list
+  const availableChannels = Array.from(
+    new Set(projects.map(p => getChannel(p.Project_ID)).filter(Boolean))
+  ).sort()
+
+
+  const inProgressProjects = byChannel(dedup(
     projects.filter(p => ['Pending', 'Active', 'Review', 'Changes Requested'].includes(p.Status))
-  )
+  ))
 
   // ── Column 2: Approved (filter by Date Approved month, not yet client paid) ──
-  const approvedProjects = dedup(
+  const approvedProjects = byChannel(dedup(
     projects.filter(p =>
       p.Status === 'Approved' &&
       p.Payment_Status !== 'Client Paid' &&
       (approvedMonth ? inMonth(p['Date Approved'], approvedMonth) : true)
     )
-  )
+  ))
 
   // ── Column 3: Paid (filter by client_paid_date month) ──
-  const paidProjects = dedup(
+  const paidProjects = byChannel(dedup(
     projects.filter(p =>
       p.Payment_Status === 'Client Paid' &&
       (paidMonth ? inMonth(p.client_paid_date, paidMonth) : true)
     )
-  )
+  ))
 
   // Extract minutes from 2nd segment of Project_ID (e.g. "2020_80_plip" → 80)
   const getMinutes = (id: string) => {
@@ -3142,6 +3153,22 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           </div>
         </div>
       )}
+
+      {/* Channel filter pill bar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-semibold text-gray-500 mr-1">Channel:</span>
+        {['all', ...availableChannels].map(ch => (
+          <button key={ch} onClick={() => setChannelFilter(ch)}
+            className="px-3 py-1 rounded-full text-xs font-semibold border transition-all capitalize"
+            style={{
+              backgroundColor: channelFilter === ch ? '#667eea' : 'white',
+              color: channelFilter === ch ? 'white' : '#64748b',
+              borderColor: channelFilter === ch ? '#667eea' : '#e2e8f0',
+            }}>
+            {ch === 'all' ? '🌐 All' : ch}
+          </button>
+        ))}
+      </div>
 
       {/* 3-column Kanban */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
