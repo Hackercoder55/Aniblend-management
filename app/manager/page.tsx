@@ -324,7 +324,7 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
   const activeProjectsList = projects.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status))
   const approvedTodayList = projects.filter(p => p['Date Approved'] === today)
   const workingAnimatorsList = animators.filter(a => (a['Current video'] || 0) > 0)
-  const highWorkloadList = animators.filter(a => (a['Current video'] || 0) >= 2)
+  const pendingProjectsList = projects.filter(p => p.Status === 'Pending')
 
   const days: { label: string; assigned: number; approved: number }[] = []
   for (let i = 13; i >= 0; i--) {
@@ -350,7 +350,7 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
     { label: 'Active Projects', value: activeProjectsList.length, icon: '🎬', color: '#667eea', bg: '#f0f0ff' },
     { label: 'Approved Today', value: approvedTodayList.length, icon: '✅', color: '#10b981', bg: '#ecfdf5' },
     { label: 'Working Animators', value: workingAnimatorsList.length, icon: '👥', color: '#f59e0b', bg: '#fffbeb' },
-    { label: 'High Workload', value: highWorkloadList.length, icon: '⚡', color: '#ef4444', bg: '#fef2f2' },
+    { label: 'Pending Projects', value: pendingProjectsList.length, icon: '⏳', color: '#ef4444', bg: '#fef2f2' },
   ]
 
   const panelData: Record<string, React.ReactNode> = {
@@ -397,14 +397,14 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
               <td className="px-3 py-2 font-bold text-amber-600">{a['Current video'] || 0}</td>
             </tr>))}</tbody></table></>
     ),
-    'High Workload': (
-      <><p className="text-xs text-gray-400 mb-3">Animators with 2+ active projects</p>
-        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Name', 'Employee ID', 'Current Videos'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-          <tbody>{highWorkloadList.length === 0 ? <tr><td colSpan={3} className="text-center py-6 text-gray-400">No high-workload animators</td></tr> : highWorkloadList.map((a, i) => (
+    'Pending Projects': (
+      <><p className="text-xs text-gray-400 mb-3">Projects waiting to be assigned</p>
+        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Project ID', 'Title', 'Status'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
+          <tbody>{pendingProjectsList.length === 0 ? <tr><td colSpan={3} className="text-center py-6 text-gray-400">No pending projects</td></tr> : pendingProjectsList.map((p, i) => (
             <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-              <td className="px-3 py-2 text-xs font-medium text-gray-800">{a.Name}</td>
-              <td className="px-3 py-2 font-mono text-xs text-gray-500">{a.Employee_ID}</td>
-              <td className="px-3 py-2 font-bold text-red-500">{a['Current video'] || 0}</td>
+              <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
+              <td className="px-3 py-2 text-xs font-medium text-gray-800 max-w-[130px] truncate">{p.Project_title || '—'}</td>
+              <td className="px-3 py-2"><StatusBadge status={p.Status} /></td>
             </tr>))}</tbody></table></>
     ),
   }
@@ -2062,7 +2062,7 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
     setLoading(true)
     const { data } = await supabase.from('form_submissions').select('*').order('created_at', { ascending: false })
     let rows = (data as FormSubmission[]) || []
-    if (userRole === 'head' && userLead) rows = rows.filter(r => r.lead_name === userLead)
+    // Head should see all forms just like Manager, so we don't filter by lead_name for Head here
     setSubmissions(rows)
     setLoading(false)
   }
@@ -2456,9 +2456,6 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   const totalProjects = filteredByAssigned.length
   const inProgress = filteredByAssigned.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status)).length
   const approved = filteredByApproved.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
-  const unassigned = filteredByAssigned.filter(p => p.Status === 'Pending').length
-  const changesRequested = filteredByAssigned.filter(p => p.Status === 'Changes Requested').length
-
   // Duration stats (filtered approved, parsed as days)
   const durationThisMonth = filteredByApproved
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
@@ -2557,19 +2554,6 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
           { label: 'Approved', value: approved, color: '#10b981' },
           { label: 'In Progress', value: inProgress, color: '#f59e0b' },
           { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
-            <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
-            <p className="text-xs text-gray-500 mt-1">{s.label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Summary row 2 */}
-      <div className="grid grid-cols-2 gap-4">
-        {[
-          { label: 'Unassigned', value: unassigned, color: '#6d28d9' },
-          { label: 'Changes Requested', value: changesRequested, color: '#ef4444' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
             <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
