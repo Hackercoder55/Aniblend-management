@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -27,7 +27,9 @@ interface Project {
   Thread_ID: string
   Discord_ID: string
   Discord_Username: string
+  Discord_Username2?: string
   WIP: boolean
+  client_paid_date: string
 }
 
 interface Animator {
@@ -2928,286 +2930,304 @@ function NotesTab({ user }: { user: DashboardUser }) {
   )
 }
 
-// ─── Budget Tracker Tab ──────────────────────────────────────────────────────
+// ─── Budget Tracker Tab (Project Payment Kanban) ────────────────────────────
 
-interface BudgetEntry {
-  id: string
-  month: string
-  total_minutes: number
-  created_at: string
-}
-interface BudgetPayment {
-  id: string
-  budget_id: string
-  payment_date: string
-  minutes_used: number
-  amount: number
-  note: string
-  created_at: string
-}
+function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
+  // Month filter options (last 13 months)
+  const monthOptions = (() => {
+    const opts: string[] = []
+    const now = new Date()
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
 
-function BudgetTrackerTab() {
-  const [budgets, setBudgets] = useState<BudgetEntry[]>([])
-  const [payments, setPayments] = useState<BudgetPayment[]>([])
-  const [selectedBudget, setSelectedBudget] = useState<BudgetEntry | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [showCreateForm, setShowCreateForm] = useState(false)
-  const [showPaymentForm, setShowPaymentForm] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [approvedMonth, setApprovedMonth] = useState(monthOptions[0])
+  const [paidMonth, setPaidMonth] = useState(monthOptions[0])
+  const [markingId, setMarkingId] = useState<string | null>(null)
+  const [showReport, setShowReport] = useState(false)
   const [msg, setMsg] = useState('')
-  const [newMonth, setNewMonth] = useState('')
-  const [newMinutes, setNewMinutes] = useState('')
-  const [payDate, setPayDate] = useState('')
-  const [payMinutes, setPayMinutes] = useState('')
-  const [payAmount, setPayAmount] = useState('')
-  const [payNote, setPayNote] = useState('')
-  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [msgType, setMsgType] = useState<'success' | 'error'>('success')
 
-  const loadBudgets = async () => {
-    setLoading(true)
-    const { data } = await supabase.from('budget_entries').select('*').order('created_at', { ascending: false })
-    setBudgets((data as BudgetEntry[]) || [])
-    setLoading(false)
-  }
-  const loadPayments = async (budgetId: string) => {
-    const { data } = await supabase.from('budget_payments').select('*').eq('budget_id', budgetId).order('created_at', { ascending: false })
-    setPayments((data as BudgetPayment[]) || [])
+  const toast = (text: string, type: 'success' | 'error' = 'success') => {
+    setMsg(text); setMsgType(type)
+    setTimeout(() => setMsg(''), 4000)
   }
 
-  useEffect(() => { loadBudgets() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (selectedBudget) loadPayments(selectedBudget.id)
-    else setPayments([])
-  }, [selectedBudget]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleCreateBudget = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newMonth.trim() || !newMinutes) return
-    setSaving(true); setMsg('')
-    const { error } = await supabase.from('budget_entries').insert({ month: newMonth.trim(), total_minutes: parseInt(newMinutes, 10) })
-    if (!error) { setMsg('✅ Budget created!'); setNewMonth(''); setNewMinutes(''); setShowCreateForm(false); await loadBudgets() }
-    else setMsg('❌ ' + error.message)
-    setSaving(false); setTimeout(() => setMsg(''), 3000)
+  // ── Deduplication helper ──
+  const dedup = (list: Project[]): Project[] => {
+    const seen = new Map<string, Project>()
+    list.forEach(p => { if (!seen.has(p.Project_ID)) seen.set(p.Project_ID, p) })
+    return Array.from(seen.values())
   }
 
-  const handleAddPayment = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedBudget || !payMinutes) return
-    setSaving(true); setMsg('')
-    const { error } = await supabase.from('budget_payments').insert({
-      budget_id: selectedBudget.id,
-      payment_date: payDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      minutes_used: parseInt(payMinutes, 10),
-      amount: parseFloat(payAmount) || 0,
-      note: payNote.trim() || null,
+  const inMonth = (dateStr: string, month: string) =>
+    !!dateStr && !!month && dateStr.includes(month)
+
+  // ── Column 1: In Progress (no month filter) ──
+  const inProgressProjects = dedup(
+    projects.filter(p => ['Pending', 'Active', 'Review', 'Changes Requested'].includes(p.Status))
+  )
+
+  // ── Column 2: Approved (filter by Date Approved month, not yet client paid) ──
+  const approvedProjects = dedup(
+    projects.filter(p =>
+      p.Status === 'Approved' &&
+      p.Payment_Status !== 'Client Paid' &&
+      (approvedMonth ? inMonth(p['Date Approved'], approvedMonth) : true)
+    )
+  )
+
+  // ── Column 3: Paid (filter by client_paid_date month) ──
+  const paidProjects = dedup(
+    projects.filter(p =>
+      p.Payment_Status === 'Client Paid' &&
+      (paidMonth ? inMonth(p.client_paid_date, paidMonth) : true)
+    )
+  )
+
+  // Parse duration as integer days
+  const parseDays = (dur: string) => { const n = parseInt((dur || '').replace(/\D.*$/, ''), 10); return isNaN(n) ? 0 : n }
+  const paidDurationTotal = paidProjects.reduce((s, p) => s + parseDays(p.Duration), 0)
+
+  // ── Mark as Paid ──
+  const handleMarkPaid = async (project: Project) => {
+    setMarkingId(project.Project_ID)
+    const today = formatDate()
+    const { error } = await supabase
+      .from('projects')
+      .update({ Payment_Status: 'Client Paid', client_paid_date: today })
+      .eq('Project_ID', project.Project_ID)
+    if (error) {
+      toast('Failed to mark as paid: ' + error.message, 'error')
+    } else {
+      toast(`${project.Project_ID} marked as Client Paid ✅`, 'success')
+      await onRefresh()
+    }
+    setMarkingId(null)
+  }
+
+  // ── Report: all paid projects grouped by month ──
+  const reportData = (() => {
+    const allPaid = dedup(projects.filter(p => p.Payment_Status === 'Client Paid'))
+    const groups: Record<string, Project[]> = {}
+    allPaid.forEach(p => {
+      const key = p.client_paid_date
+        ? p.client_paid_date.replace(/^\d{2} /, '').replace(/\s\d{4}$/, m => m) // keep "MMM YYYY"
+        : 'Unknown'
+      // Extract "MMM YYYY" from "DD MMM YYYY"
+      const parts = (p.client_paid_date || '').split(' ')
+      const monthKey = parts.length >= 3 ? `${parts[1]} ${parts[2]}` : 'Unknown'
+      if (!groups[monthKey]) groups[monthKey] = []
+      groups[monthKey].push(p)
     })
-    if (!error) { setPayDate(''); setPayMinutes(''); setPayAmount(''); setPayNote(''); setShowPaymentForm(false); await loadPayments(selectedBudget.id) }
-    else setMsg('❌ ' + error.message)
-    setSaving(false); setTimeout(() => setMsg(''), 3000)
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]))
+  })()
+
+  // ── Status badge helper ──
+  const statusColor: Record<string, string> = {
+    Pending: '#94a3b8', Active: '#3b82f6', Review: '#f59e0b',
+    'Changes Requested': '#ef4444', Approved: '#10b981',
   }
 
-  const handleDeletePayment = async (id: string) => {
-    setDeleteId(id)
-    await supabase.from('budget_payments').delete().eq('id', id)
-    setPayments(prev => prev.filter(p => p.id !== id))
-    setDeleteId(null)
-  }
-
-  const usedMinutes = payments.reduce((s, p) => s + (p.minutes_used || 0), 0)
-  const remainingMinutes = selectedBudget ? selectedBudget.total_minutes - usedMinutes : 0
-  const progress = selectedBudget ? Math.min(100, Math.round((usedMinutes / selectedBudget.total_minutes) * 100)) : 0
+  const ProjectCard = ({
+    project, showApproved = false, showPaid = false, showMarkPaid = false,
+  }: {
+    project: Project; showApproved?: boolean; showPaid?: boolean; showMarkPaid?: boolean
+  }) => (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-mono text-gray-400 truncate">{project.Project_ID}</p>
+          <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate">{project.Project_title || '—'}</p>
+        </div>
+        <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 text-white"
+          style={{ backgroundColor: statusColor[project.Status] || '#94a3b8' }}>
+          {project.Status}
+        </span>
+      </div>
+      <div className="space-y-1 text-xs text-gray-500">
+        <p>🎬 {project.Animator || '—'}</p>
+        {project.Duration && <p>⏱ {project.Duration}</p>}
+        {showApproved && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
+        {showPaid && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
+      </div>
+      {showMarkPaid && (
+        <button
+          onClick={() => handleMarkPaid(project)}
+          disabled={markingId === project.Project_ID}
+          className="mt-3 w-full py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-opacity"
+          style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+          {markingId === project.Project_ID ? 'Marking…' : '💳 Mark as Paid'}
+        </button>
+      )}
+    </div>
+  )
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {msg && (
-        <div className={`rounded-xl p-3 text-sm font-medium ${msg.startsWith('✅') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+        <div className={`fixed bottom-5 right-5 z-50 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-lg transition-all ${msgType === 'success' ? 'bg-green-500' : 'bg-red-500'
+          }`}>
           {msg}
         </div>
       )}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-800">Budget Tracker</h3>
-          <p className="text-sm text-gray-400 mt-0.5">Manage monthly minute budgets</p>
-        </div>
-        <button onClick={() => setShowCreateForm(v => !v)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white"
-          style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          New Budget
-        </button>
-      </div>
 
-      {showCreateForm && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <h4 className="font-semibold text-gray-800 mb-4">Create New Monthly Budget</h4>
-          <form onSubmit={handleCreateBudget} className="flex flex-col sm:flex-row gap-3">
-            <input type="text" value={newMonth} onChange={e => setNewMonth(e.target.value)} required
-              placeholder="Month (e.g. Feb 2026)"
-              className="flex-1 px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-            <input type="number" value={newMinutes} onChange={e => setNewMinutes(e.target.value)} required min={1}
-              placeholder="Total minutes (e.g. 500)"
-              className="w-full sm:w-48 px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-            <button type="submit" disabled={saving}
-              className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
-              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-              {saving ? 'Creating…' : 'Create'}
-            </button>
-            <button type="button" onClick={() => setShowCreateForm(false)}
-              className="px-4 py-2.5 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">Cancel</button>
-          </form>
+      {/* Report Modal */}
+      {showReport && (
+        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-800 text-lg">📋 Payment Report</h3>
+                <p className="text-xs text-gray-400 mt-0.5">All client-paid projects grouped by month</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => window.print()}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
+                  style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                  🖨 Print / Save PDF
+                </button>
+                <button onClick={() => setShowReport(false)}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1 p-5 space-y-6">
+              {reportData.length === 0 ? (
+                <p className="text-center text-gray-400 py-12">No paid projects yet</p>
+              ) : reportData.map(([month, projs]) => (
+                <div key={month}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <h4 className="font-bold text-gray-800">{month}</h4>
+                    <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
+                      {projs.length} projects · {projs.reduce((s, p) => s + parseDays(p.Duration), 0)} days
+                    </span>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        {['Project ID', 'Title', 'Animator', 'Duration', 'Approved', 'Paid Date'].map(h => (
+                          <th key={h} className="text-left px-2 py-1.5 text-xs font-medium text-gray-500 uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {projs.map(p => (
+                        <tr key={p.Project_ID} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="px-2 py-2 font-mono text-xs text-gray-600">{p.Project_ID}</td>
+                          <td className="px-2 py-2 text-gray-800 max-w-[120px] truncate">{p.Project_title || '—'}</td>
+                          <td className="px-2 py-2 text-gray-600">{p.Animator || '—'}</td>
+                          <td className="px-2 py-2 text-gray-600">{p.Duration || '—'}</td>
+                          <td className="px-2 py-2 text-gray-600">{p['Date Approved'] || '—'}</td>
+                          <td className="px-2 py-2 text-gray-600">{p.client_paid_date || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
-          <h4 className="font-semibold text-gray-700 mb-3 text-sm">Monthly Budgets</h4>
-          {loading ? (
-            <p className="text-xs text-gray-400 py-6 text-center">Loading…</p>
-          ) : budgets.length === 0 ? (
-            <div className="bg-white rounded-2xl p-8 text-center border border-gray-100 shadow-sm">
-              <p className="text-2xl mb-2">💰</p>
-              <p className="text-sm text-gray-400">No budgets yet. Create one!</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {budgets.map(b => (
-                <button key={b.id} onClick={() => setSelectedBudget(b)}
-                  className="w-full text-left p-4 rounded-2xl border-2 bg-white shadow-sm transition-all"
-                  style={{ borderColor: selectedBudget?.id === b.id ? '#667eea' : '#f1f5f9', backgroundColor: selectedBudget?.id === b.id ? '#f8f7ff' : 'white' }}>
-                  <p className="font-semibold text-gray-800">{b.month}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">{b.total_minutes} min budgeted</p>
-                </button>
-              ))}
-            </div>
-          )}
+      {/* 3-column Kanban */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+
+        {/* ── Column 1: In Progress ── */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 px-1">
+            <span className="text-base font-bold text-gray-800">🔄 In Progress</span>
+            <span className="text-xs bg-amber-100 text-amber-700 font-semibold px-2 py-0.5 rounded-full">
+              {inProgressProjects.length}
+            </span>
+          </div>
+          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+            {inProgressProjects.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
+                No in-progress projects
+              </div>
+            ) : inProgressProjects.map(p => (
+              <ProjectCard key={p.Project_ID} project={p} />
+            ))}
+          </div>
         </div>
 
-        <div className="lg:col-span-2">
-          {!selectedBudget ? (
-            <div className="bg-white rounded-2xl p-12 text-center border border-gray-100 shadow-sm h-full flex flex-col items-center justify-center">
-              <p className="text-3xl mb-2">👈</p>
-              <p className="text-sm text-gray-400">Select a budget to view details</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h4 className="font-bold text-gray-800 text-lg">{selectedBudget.month}</h4>
-                    <p className="text-xs text-gray-400 mt-0.5">Monthly Budget</p>
-                  </div>
-                  <button onClick={() => setShowPaymentForm(v => !v)}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
-                    style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-                    + Add Payment
-                  </button>
-                </div>
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  {[
-                    { label: 'Total Budget', value: `${selectedBudget.total_minutes} min`, color: '#667eea' },
-                    { label: 'Used', value: `${usedMinutes} min`, color: '#f59e0b' },
-                    { label: 'Remaining', value: `${remainingMinutes} min`, color: remainingMinutes < 0 ? '#ef4444' : '#10b981' },
-                  ].map(s => (
-                    <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
-                      <p className="text-xl font-bold" style={{ color: s.color }}>{s.value}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>Budget Consumed</span>
-                    <span className="font-semibold" style={{ color: progress >= 100 ? '#ef4444' : progress >= 80 ? '#f59e0b' : '#10b981' }}>{progress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-100 rounded-full h-3">
-                    <div className="h-3 rounded-full transition-all" style={{
-                      width: `${progress}%`,
-                      background: progress >= 100 ? '#ef4444' : progress >= 80 ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : 'linear-gradient(90deg,#667eea,#10b981)'
-                    }} />
-                  </div>
-                </div>
+        {/* ── Column 2: Approved ── */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 px-1 flex-wrap">
+            <span className="text-base font-bold text-gray-800">✅ Approved</span>
+            <span className="text-xs bg-green-100 text-green-700 font-semibold px-2 py-0.5 rounded-full">
+              {approvedProjects.length}
+            </span>
+            <select value={approvedMonth} onChange={e => setApprovedMonth(e.target.value)}
+              className="ml-auto px-2 py-1 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
+              <option value="">All Time</option>
+              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+            {approvedProjects.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
+                No approved projects {approvedMonth ? `in ${approvedMonth}` : ''}
               </div>
+            ) : approvedProjects.map(p => (
+              <ProjectCard key={p.Project_ID} project={p} showApproved showMarkPaid />
+            ))}
+          </div>
+        </div>
 
-              {showPaymentForm && (
-                <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-                  <h5 className="font-semibold text-gray-800 mb-4">Add Payment Entry</h5>
-                  <form onSubmit={handleAddPayment} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
-                        <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Minutes Used <span className="text-red-400">*</span></label>
-                        <input type="number" value={payMinutes} onChange={e => setPayMinutes(e.target.value)} required min={1}
-                          placeholder="e.g. 120"
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Amount Received</label>
-                        <input type="number" value={payAmount} onChange={e => setPayAmount(e.target.value)} step="0.01" min={0}
-                          placeholder="e.g. 5000"
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional)</label>
-                        <input type="text" value={payNote} onChange={e => setPayNote(e.target.value)}
-                          placeholder="e.g. Phase 1 payment"
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="submit" disabled={saving}
-                        className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
-                        style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                        {saving ? 'Saving…' : 'Save Payment'}
-                      </button>
-                      <button type="button" onClick={() => setShowPaymentForm(false)}
-                        className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">Cancel</button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-                  <h5 className="font-semibold text-gray-800 text-sm">Payment Entries</h5>
-                  <span className="text-xs text-gray-400">{payments.length} entries</span>
-                </div>
-                {payments.length === 0 ? (
-                  <div className="py-10 text-center text-gray-400 text-sm">No payments yet</div>
-                ) : (
-                  <div className="divide-y divide-gray-50">
-                    {payments.map(pay => (
-                      <div key={pay.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-semibold text-gray-800">{pay.minutes_used} min</span>
-                            {pay.amount > 0 && <span className="text-xs text-green-700 font-medium bg-green-50 px-2 py-0.5 rounded-full">₹{pay.amount}</span>}
-                            {pay.note && <span className="text-xs text-gray-500 truncate">{pay.note}</span>}
-                          </div>
-                          <p className="text-xs text-gray-400 mt-0.5">{pay.payment_date || '—'}</p>
-                        </div>
-                        <button onClick={() => handleDeletePayment(pay.id)} disabled={deleteId === pay.id}
-                          className="text-gray-300 hover:text-red-400 flex-shrink-0 p-1 disabled:opacity-50"
-                          title="Delete">
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+        {/* ── Column 3: Paid ── */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 px-1 flex-wrap">
+            <span className="text-base font-bold text-gray-800">💰 Client Paid</span>
+            <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
+              {paidProjects.length}
+            </span>
+            <select value={paidMonth} onChange={e => setPaidMonth(e.target.value)}
+              className="px-2 py-1 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
+              <option value="">All Time</option>
+              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <button onClick={() => setShowReport(true)}
+              className="ml-auto px-3 py-1 rounded-lg text-xs font-semibold text-white"
+              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+              📋 Report
+            </button>
+          </div>
+          {paidMonth && paidProjects.length > 0 && (
+            <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex gap-4 text-center">
+              <div className="flex-1">
+                <p className="text-xl font-bold text-indigo-600">{paidProjects.length}</p>
+                <p className="text-xs text-indigo-400">Projects Paid</p>
+              </div>
+              <div className="flex-1">
+                <p className="text-xl font-bold text-indigo-600">{paidDurationTotal} days</p>
+                <p className="text-xs text-indigo-400">Total Duration</p>
               </div>
             </div>
           )}
+          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+            {paidProjects.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
+                No paid projects {paidMonth ? `in ${paidMonth}` : ''}
+              </div>
+            ) : paidProjects.map(p => (
+              <ProjectCard key={p.Project_ID} project={p} showApproved showPaid />
+            ))}
+          </div>
         </div>
       </div>
     </div>
   )
 }
+
+
+
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
@@ -3369,7 +3389,7 @@ export default function ManagerDashboard() {
               {activeTab === 'analytics' && <AnalyticsTab projects={projects} animators={animators} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
-              {activeTab === 'budget' && <BudgetTrackerTab />}
+              {activeTab === 'budget' && <BudgetTrackerTab projects={projects} onRefresh={fetchData} />}
             </>
           )}
         </div>
