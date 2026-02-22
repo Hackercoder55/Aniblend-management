@@ -27,9 +27,10 @@ interface Project {
   Thread_ID: string
   Discord_ID: string
   Discord_Username: string
-  Discord_Username2?: string
   WIP: boolean
   client_paid_date: string
+  Priority?: string
+  Head_Comment?: string
 }
 
 interface Animator {
@@ -1258,6 +1259,8 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
 
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [newStatus, setNewStatus] = useState<string>('')
+  const [newPriority, setNewPriority] = useState<string>('Low')
+  const [newComment, setNewComment] = useState<string>('')
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
 
@@ -1321,12 +1324,16 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   }
 
   const handleSaveStatus = async (project: Project) => {
-    if (newStatus === project.Status) {
+    if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '')) {
       setEditingProjectId(null)
       return
     }
     setIsUpdating(true)
     let payload: any = { Status: newStatus }
+    if (isHead) {
+      payload['Priority'] = newPriority
+      payload['Head_Comment'] = newComment
+    }
     if (newStatus === 'Approved') {
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
@@ -1352,8 +1359,28 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
 
   const handleDeleteProject = async (project: Project) => {
     setIsUpdating(true)
+
+    const empId = project.Employee_ID
+    const isActiveStatus = ['Pending', 'Active', 'Review', 'Changes Requested'].includes(project.Status)
+
     const { error } = await supabase.from('projects').delete().eq('Project_ID', project.Project_ID)
     if (!error) {
+      if (empId) {
+        // Decrement counts for the animator
+        const { data: oldAnim } = await supabase.from('animators').select('*').eq('Employee_ID', empId).single()
+        if (oldAnim) {
+          const updates: any = {}
+          if (oldAnim['Total video'] && oldAnim['Total video'] > 0) {
+            updates['Total video'] = oldAnim['Total video'] - 1
+          }
+          if (isActiveStatus) {
+            updates['Current video'] = Math.max(0, (oldAnim['Current video'] || 1) - 1)
+          }
+          if (Object.keys(updates).length > 0) {
+            await supabase.from('animators').update(updates).eq('Employee_ID', empId)
+          }
+        }
+      }
       addToast(`✅ Deleted project ${project.Project_ID}`)
       onRefresh()
     } else {
@@ -1415,7 +1442,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Lead', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -1431,7 +1458,40 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     {p.Project_link ? <a href={p.Project_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 hover:underline font-medium">Link</a> : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
-                  <td className="px-4 py-3 text-gray-600 text-xs">{p.Lead || '—'}</td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID && isHead ? (
+                      <select
+                        value={newPriority}
+                        onChange={e => setNewPriority(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[80px]"
+                      >
+                        {['Low', 'Medium', 'High', 'Urgent', 'Concern'].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
+                        style={{
+                          backgroundColor: p.Priority === 'Urgent' ? '#fee2e2' : p.Priority === 'High' ? '#fed7aa' : p.Priority === 'Medium' ? '#fef08a' : p.Priority === 'Concern' ? '#e0e7ff' : '#f1f5f9',
+                          color: p.Priority === 'Urgent' ? '#b91c1c' : p.Priority === 'High' ? '#c2410c' : p.Priority === 'Medium' ? '#a16207' : p.Priority === 'Concern' ? '#4338ca' : '#64748b'
+                        }}>
+                        {p.Priority || 'Low'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID && isHead ? (
+                      <input
+                        type="text"
+                        value={newComment}
+                        onChange={e => setNewComment(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
+                        placeholder="Add comment..."
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.Head_Comment || ''}>
+                        {p.Head_Comment || '—'}
+                      </p>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {editingProjectId === p.Project_ID ? (
                       <select
@@ -1461,7 +1521,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                         </>
                       ) : (
                         <>
-                          <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
+                          <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setNewPriority(p.Priority || 'Low'); setNewComment(p.Head_Comment || ''); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
                           <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
                           {p.Status === 'Review' && !isHead && (
                             <button onClick={() => handleApprove(p)} disabled={approving === p.Project_ID}
