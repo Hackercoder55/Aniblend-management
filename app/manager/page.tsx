@@ -2499,7 +2499,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     const year = parseInt(yr, 10)
     const daysInMonth = new Date(year, monthIdx + 1, 0).getDate()
 
-    // Calculate run rate
+    // Calculate run rate based on stages for remaining days
     const now = new Date()
     const isCurrentMonth = now.getFullYear() === year && now.getMonth() === monthIdx
     let daysPassed = daysInMonth
@@ -2508,11 +2508,33 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     } else if (year > now.getFullYear() || (year === now.getFullYear() && monthIdx > now.getMonth())) {
       daysPassed = 0
     }
+    const remainingDays = daysInMonth - daysPassed
 
+    // Stage-based velocity weights (higher means closer to approval)
+    const weights = { 'Changes Requested': 0.8, 'Review': 0.6, 'Active': 0.4, 'Pending': 0.2 }
+    let pipelineValue = 0
+    let pipelineMins = 0
+    filteredByAssigned.forEach(p => {
+      if (weights[p.Status as keyof typeof weights]) {
+        const w = weights[p.Status as keyof typeof weights]
+        pipelineValue += w
+        pipelineMins += (parseDays(p.Duration) / 60) * w
+      }
+    })
+
+    // Base rate from already approved
     runRate = daysPassed > 0 ? (approved / daysPassed) : 0
     runRateMins = daysPassed > 0 ? (durationThisMonth / daysPassed / 60) : 0
-    projectedTotal = Math.round(runRate * daysInMonth)
-    projectedMinsTotal = Math.round(runRateMins * daysInMonth)
+
+    // Adjusted rate for the future includes pipeline clearing
+    const futureRate = remainingDays > 0 ? runRate + (pipelineValue / remainingDays) : runRate
+    const futureRateMins = remainingDays > 0 ? runRateMins + (pipelineMins / remainingDays) : runRateMins
+
+    projectedTotal = approved + Math.round(futureRate * remainingDays)
+    projectedMinsTotal = Math.round((durationThisMonth / 60) + (futureRateMins * remainingDays))
+
+    let cumulativeApproved = 0
+    let cumulativeMins = 0
 
     for (let day = 1; day <= daysInMonth; day++) {
       const d = new Date(year, monthIdx, day)
@@ -2520,16 +2542,42 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
       const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
+
+      let projVideos = undefined
+      let projMins = undefined
+
+      if (isCurrentMonth && day > daysPassed) {
+        // Future prediction
+        cumulativeApproved += futureRate
+        cumulativeMins += futureRateMins
+        projVideos = parseFloat(cumulativeApproved.toFixed(1))
+        projMins = parseFloat(cumulativeMins.toFixed(1))
+      } else if (!isCurrentMonth || day <= daysPassed) {
+        // Past true data (build cumulative base)
+        cumulativeApproved += approvedIds.size
+        // Approximation for past mins:
+        const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDays(p.Duration), 0) / 60
+        cumulativeMins += dayMins
+
+        if (day === daysPassed) {
+          // Anchor the prediction line to the last real day
+          projVideos = parseFloat(cumulativeApproved.toFixed(1))
+          projMins = parseFloat(cumulativeMins.toFixed(1))
+        }
+      }
+
       trend.push({
         label,
         assigned: assignedIds.size,
         approved: approvedIds.size,
-        projected: parseFloat(runRate.toFixed(1)),
-        projectedMins: parseFloat(runRateMins.toFixed(1))
+        projected: projVideos,
+        projectedMins: projMins
       })
     }
   } else {
+    // Last 30 days logic (simplified future projection not typically used here, but keeping structure)
     let last30Approved = 0
+    let last30Mins = 0
     for (let i = 29; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i)
       const full = formatDate(d)
@@ -2537,15 +2585,25 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
       last30Approved += approvedIds.size
+
+      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDays(p.Duration), 0) / 60
+      last30Mins += dayMins
+
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
     }
+
+    // For "All time", we'll just show a flat line of the 30d avg for context, as "future" is undefined
     runRate = last30Approved / 30
-    runRateMins = (durationThisMonth / 30) / 60 // Approximate using month duration
+    runRateMins = last30Mins / 30
     projectedTotal = Math.round(runRate * 30)
     projectedMinsTotal = Math.round(runRateMins * 30)
+    let curAcc = 0
+    let curMins = 0
     trend.forEach(t => {
-      t.projected = parseFloat(runRate.toFixed(1))
-      t.projectedMins = parseFloat(runRateMins.toFixed(1))
+      curAcc += runRate
+      curMins += runRateMins
+      t.projected = parseFloat(curAcc.toFixed(1))
+      t.projectedMins = parseFloat(curMins.toFixed(1))
     })
   }
 
