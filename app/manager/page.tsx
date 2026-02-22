@@ -1254,8 +1254,6 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [leadFilter, setLeadFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'priority'>('newest')
   const [approving, setApproving] = useState<string | null>(null)
 
