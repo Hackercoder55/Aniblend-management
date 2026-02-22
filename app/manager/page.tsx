@@ -1822,11 +1822,23 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-gray-50 rounded-xl p-3 text-center">
                   <p className="text-2xl font-bold" style={{ color: loadColor }}>{load}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Current</p>
+                  <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Active Videos</p>
+                  {(() => {
+                    const durationSec = projects
+                      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status))
+                      .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
+                    return durationSec > 0 ? <p className="text-xs font-semibold text-indigo-600 mt-1">{formatSec(durationSec).replace('m', ' min').replace('s', ' sec')}</p> : null
+                  })()}
                 </div>
                 <div className="bg-gray-50 rounded-xl p-3 text-center">
                   <p className="text-2xl font-bold text-gray-700">{a['Total video'] || 0}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">Total</p>
+                  <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total Videos</p>
+                  {(() => {
+                    const durationSec = projects
+                      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+                      .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
+                    return durationSec > 0 ? <p className="text-xs font-semibold text-green-600 mt-1">{formatSec(durationSec).replace('m', ' min').replace('s', ' sec')}</p> : null
+                  })()}
                 </div>
               </div>
 
