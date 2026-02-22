@@ -923,11 +923,27 @@ function AssignTab({ projects, animators, onRefresh }: {
       Duration: duration || project.Duration,
     }
     if (clearThread) updateData.Thread_ID = null
+
+    // Track old animator to decrement their count
+    const oldAnimatorId = project.Employee_ID && project.Employee_ID !== animator.Employee_ID ? project.Employee_ID : null
+
     const { error } = await supabase.from('projects').update(updateData).eq('Project_ID', project.Project_ID)
     if (!error) {
+      // Increment new animator
       await supabase.from('animators')
         .update({ 'Current video': (animator['Current video'] || 0) + 1 })
         .eq('Employee_ID', animator.Employee_ID)
+
+      // Decrement old animator if changed
+      if (oldAnimatorId) {
+        const { data: oldAnim } = await supabase.from('animators').select('*').eq('Employee_ID', oldAnimatorId).single()
+        if (oldAnim) {
+          await supabase.from('animators')
+            .update({ 'Current video': Math.max(0, (oldAnim['Current video'] || 1) - 1) })
+            .eq('Employee_ID', oldAnimatorId)
+        }
+      }
+
       addToast(`Assigned "${project.Project_title || project.Project_ID}" to ${animator.Name}`)
       setAssignModal(null); setThreadConflict(null)
       onRefresh()
@@ -1485,6 +1501,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
   const [savingNote, setSavingNote] = useState(false)
   const [noteMsg, setNoteMsg] = useState('')
   const [activeSection, setActiveSection] = useState<'projects' | 'notes'>('projects')
+  const [unassigningId, setUnassigningId] = useState<string | null>(null)
 
   // Match by Employee_ID (solo) OR Animator name containing this animator (group workspace)
   const matchesAnim = (p: Project) =>
@@ -1537,6 +1554,31 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
     await supabase.from('animators').delete().eq('Employee_ID', animator.Employee_ID)
 
     setDeboarding(false); onRefresh(); onClose()
+  }
+
+  const handleUnassignProject = async (project: Project) => {
+    setUnassigningId(project.Project_ID)
+    const { error } = await supabase.from('projects').update({
+      Employee_ID: null,
+      Animator: null,
+      Discord_ID: null,
+      Discord_Username: null,
+      Status: 'Pending',
+      Thread_ID: null,
+      'Date Assigned': null
+    }).eq('Project_ID', project.Project_ID)
+
+    if (!error) {
+      // Decrement the animator's current video count
+      const { data: currentAnim } = await supabase.from('animators').select('*').eq('Employee_ID', animator.Employee_ID).single()
+      if (currentAnim) {
+        await supabase.from('animators')
+          .update({ 'Current video': Math.max(0, (currentAnim['Current video'] || 1) - 1) })
+          .eq('Employee_ID', animator.Employee_ID)
+      }
+      onRefresh()
+    }
+    setUnassigningId(null)
   }
 
   return (
@@ -1611,7 +1653,18 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
                         <p className="text-sm font-medium text-gray-800 truncate">{p.Project_title || p.Project_ID}</p>
                         <p className="text-xs text-gray-400 mt-0.5">Assigned: {p['Date Assigned'] || '—'}{p.Duration ? ` · ${p.Duration}` : ''}</p>
                       </div>
-                      <StatusBadge status={p.Status} />
+                      <div className="flex flex-col items-end gap-2">
+                        <StatusBadge status={p.Status} />
+                        {isHead || (
+                          <button
+                            onClick={() => handleUnassignProject(p)}
+                            disabled={unassigningId === p.Project_ID}
+                            className="text-[10px] font-medium text-red-500 hover:text-red-700 transition-colors disabled:opacity-50"
+                          >
+                            {unassigningId === p.Project_ID ? 'Removing...' : 'Unassign'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}</div>
                 }
@@ -2148,6 +2201,7 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
   const [statusFilter, setStatusFilter] = useState('All')
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
   const [editStatus, setEditStatus] = useState('')
   const [editFeedback, setEditFeedback] = useState('')
   const [saving, setSaving] = useState(false)
@@ -2188,6 +2242,19 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
       setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: editStatus, feedback: editFeedback } : s))
       setTimeout(() => { setEditingId(null); setSaveMsg('') }, 800)
     } else setSaveMsg('Failed')
+    setSaving(false)
+  }
+
+  const handleDelete = async (id: number) => {
+    setSaving(true)
+    const { error } = await supabase.from('form_submissions').delete().eq('id', id)
+    if (!error) {
+      setSubmissions(prev => prev.filter(s => s.id !== id))
+      setDeletingId(null)
+      setEditingId(null)
+    } else {
+      setSaveMsg(`Delete failed: ${error.message}`)
+    }
     setSaving(false)
   }
 
@@ -2280,11 +2347,24 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
                               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 bg-white focus:outline-none resize-none" />
                           </div>
                           <div className="flex items-end gap-2 flex-shrink-0">
-                            <button onClick={() => handleSave(s.id)} disabled={saving}
-                              className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
-                              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                              {saving ? '...' : 'Save'}
-                            </button>
+                            {deletingId === s.id ? (
+                              <>
+                                <button onClick={() => handleDelete(s.id)} disabled={saving} className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60">Confirm Delete</button>
+                                <button onClick={() => setDeletingId(null)} disabled={saving} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 disabled:opacity-60">Cancel</button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => handleSave(s.id)} disabled={saving}
+                                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"
+                                  style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                                  {saving ? '...' : 'Save'}
+                                </button>
+                                <button onClick={() => setDeletingId(s.id)} disabled={saving}
+                                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-60">
+                                  Delete
+                                </button>
+                              </>
+                            )}
                             {saveMsg && <span className="text-xs font-medium" style={{ color: saveMsg === 'Saved!' ? '#10b981' : '#ef4444' }}>{saveMsg}</span>}
                           </div>
                         </div>
