@@ -1254,7 +1254,9 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [leadFilter, setLeadFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'priority'>('newest')
   const [approving, setApproving] = useState<string | null>(null)
 
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
@@ -1263,6 +1265,14 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [newComment, setNewComment] = useState<string>('')
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
+
+  const PRIORITY_RANK: Record<string, number> = {
+    'Urgent': 5,
+    'Concern': 4,
+    'High': 3,
+    'Medium': 2,
+    'Low': 1
+  }
 
   const filtered = projects.filter(p => {
     const matchSearch = !search ||
@@ -1292,6 +1302,13 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     }
     return matchSearch && matchStatus && matchAnimator && matchLead && matchDate
   }).sort((a, b) => {
+    if (sortOrder === 'priority') {
+      const rankA = PRIORITY_RANK[a.Priority || 'Low'] || 0
+      const rankB = PRIORITY_RANK[b.Priority || 'Low'] || 0
+      if (rankA !== rankB) return rankB - rankA // Highest first
+      // Fallback to newest date if priorities match
+      return parseDate(b['Date Assigned']).getTime() - parseDate(a['Date Assigned']).getTime()
+    }
     const diff = parseDate(b['Date Assigned']).getTime() - parseDate(a['Date Assigned']).getTime()
     return sortOrder === 'newest' ? diff : -diff
   })
@@ -1413,6 +1430,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
               className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 focus:outline-none" />
           </div>
           <div className="flex gap-2 ml-auto">
+            <button onClick={() => setSortOrder('priority')}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+              style={{ backgroundColor: sortOrder === 'priority' ? '#667eea' : '#f1f5f9', color: sortOrder === 'priority' ? 'white' : '#64748b' }}>
+              High Priority
+            </button>
             <button onClick={() => setSortOrder('newest')}
               className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
               style={{ backgroundColor: sortOrder === 'newest' ? '#667eea' : '#f1f5f9', color: sortOrder === 'newest' ? 'white' : '#64748b' }}>
