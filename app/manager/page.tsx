@@ -1330,10 +1330,8 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     }
     setIsUpdating(true)
     let payload: any = { Status: newStatus }
-    if (isHead) {
-      payload['Priority'] = newPriority
-      payload['Head_Comment'] = newComment
-    }
+    payload['Priority'] = newPriority
+    payload['Head_Comment'] = newComment
     if (newStatus === 'Approved') {
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
@@ -1459,7 +1457,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID && isHead ? (
+                    {editingProjectId === p.Project_ID ? (
                       <select
                         value={newPriority}
                         onChange={e => setNewPriority(e.target.value)}
@@ -1478,7 +1476,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID && isHead ? (
+                    {editingProjectId === p.Project_ID ? (
                       <input
                         type="text"
                         value={newComment}
