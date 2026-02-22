@@ -2491,6 +2491,8 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   let runRateMins = 0
   let projectedTotal = 0
   let projectedMinsTotal = 0
+  let next7Total = 0
+  let next7MinsTotal = 0
 
   if (selectedMonth) {
     const MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 }
@@ -2530,11 +2532,8 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     const futureRate = remainingDays > 0 ? runRate + (pipelineValue / remainingDays) : runRate
     const futureRateMins = remainingDays > 0 ? runRateMins + (pipelineMins / remainingDays) : runRateMins
 
-    projectedTotal = approved + Math.round(futureRate * remainingDays)
-    projectedMinsTotal = Math.round((durationThisMonth / 60) + (futureRateMins * remainingDays))
-
-    let cumulativeApproved = 0
-    let cumulativeMins = 0
+    projectedTotal = Math.round(futureRate * remainingDays)
+    projectedMinsTotal = Math.round(futureRateMins * remainingDays)
 
     for (let day = 1; day <= daysInMonth; day++) {
       const d = new Date(year, monthIdx, day)
@@ -2547,23 +2546,13 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       let projMins = undefined
 
       if (isCurrentMonth && day > daysPassed) {
-        // Future prediction
-        cumulativeApproved += futureRate
-        cumulativeMins += futureRateMins
-        projVideos = parseFloat(cumulativeApproved.toFixed(1))
-        projMins = parseFloat(cumulativeMins.toFixed(1))
+        // Future prediction per day
+        projVideos = parseFloat(futureRate.toFixed(1))
+        projMins = parseFloat(futureRateMins.toFixed(1))
       } else if (!isCurrentMonth || day <= daysPassed) {
-        // Past true data (build cumulative base)
-        cumulativeApproved += approvedIds.size
-        // Approximation for past mins:
-        const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDays(p.Duration), 0) / 60
-        cumulativeMins += dayMins
-
-        if (day === daysPassed) {
-          // Anchor the prediction line to the last real day
-          projVideos = parseFloat(cumulativeApproved.toFixed(1))
-          projMins = parseFloat(cumulativeMins.toFixed(1))
-        }
+        // Past run rate context
+        projVideos = parseFloat(runRate.toFixed(1))
+        projMins = parseFloat(runRateMins.toFixed(1))
       }
 
       trend.push({
@@ -2592,18 +2581,34 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
     }
 
-    // For "All time", we'll just show a flat line of the 30d avg for context, as "future" is undefined
+    // Pipeline value
+    const weights = { 'Changes Requested': 0.8, 'Review': 0.6, 'Active': 0.4, 'Pending': 0.2 }
+    let pipelineValue = 0
+    let pipelineMins = 0
+    filteredByAssigned.forEach(p => {
+      if (weights[p.Status as keyof typeof weights]) {
+        const w = weights[p.Status as keyof typeof weights]
+        pipelineValue += w
+        pipelineMins += (parseDays(p.Duration) / 60) * w
+      }
+    })
+
+    // For "All time", projection is based on next 30 days
     runRate = last30Approved / 30
     runRateMins = last30Mins / 30
-    projectedTotal = Math.round(runRate * 30)
-    projectedMinsTotal = Math.round(runRateMins * 30)
-    let curAcc = 0
-    let curMins = 0
+
+    const futureRate = runRate + (pipelineValue / 30)
+    const futureRateMins = runRateMins + (pipelineMins / 30)
+
+    projectedTotal = Math.round(futureRate * 30)
+    projectedMinsTotal = Math.round(futureRateMins * 30)
+
+    next7Total = Math.round(futureRate * 7)
+    next7MinsTotal = Math.round(futureRateMins * 7)
+
     trend.forEach(t => {
-      curAcc += runRate
-      curMins += runRateMins
-      t.projected = parseFloat(curAcc.toFixed(1))
-      t.projectedMins = parseFloat(curMins.toFixed(1))
+      t.projected = parseFloat(runRate.toFixed(1))
+      t.projectedMins = parseFloat(runRateMins.toFixed(1))
     })
   }
 
@@ -2668,7 +2673,14 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
           { label: 'Total Projects', value: totalProjects, color: '#667eea', sub: null },
           { label: 'Approved', value: approved, color: '#10b981', sub: null },
           { label: 'In Progress', value: inProgress, color: '#f59e0b', sub: null },
-          { label: selectedMonth ? 'Projected (EoM)' : 'Projected (30d)', value: projectedTotal, color: '#3b82f6', sub: `${projectedMinsTotal} mins` },
+          {
+            label: selectedMonth ? 'Projected (Remaining)' : 'Projected (Next 30d)',
+            value: projectedTotal,
+            color: '#3b82f6',
+            sub: selectedMonth
+              ? `${projectedMinsTotal} mins`
+              : `${projectedMinsTotal} mins | Next 7d: ${next7Total} (${next7MinsTotal}m)`
+          },
           { label: 'Total Animators', value: animators.length, color: '#8b5cf6', sub: null },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
