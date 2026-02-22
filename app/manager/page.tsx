@@ -1529,6 +1529,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
                   : <div className="space-y-2">{activeProjects.map((p, i) => (
                     <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50">
                       <div className="flex-1 min-w-0">
+                        <p className="font-mono text-[10px] text-indigo-500 mb-0.5">{p.Project_ID}</p>
                         <p className="text-sm font-medium text-gray-800 truncate">{p.Project_title || p.Project_ID}</p>
                         <p className="text-xs text-gray-400 mt-0.5">Assigned: {p['Date Assigned'] || '—'}{p.Duration ? ` · ${p.Duration}` : ''}</p>
                       </div>
@@ -1544,6 +1545,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
                     {allProjects.map((p, i) => (
                       <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100">
                         <div className="flex-1 min-w-0">
+                          <p className="font-mono text-[10px] text-indigo-500 mb-0.5">{p.Project_ID}</p>
                           <p className="text-sm font-medium text-gray-800 truncate">{p.Project_title || p.Project_ID}</p>
                           <p className="text-xs text-gray-400 mt-0.5">{p['Date Assigned'] || '—'}</p>
                         </div>
