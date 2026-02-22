@@ -2486,30 +2486,52 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     .reduce((s, p) => s + parseDays(p.Duration), 0)
 
   // Daily Work Trend — deduplicated per day, filtered to selected month or last 30 days
-  const trend: { label: string; assigned: number; approved: number }[] = []
+  const trend: { label: string; assigned: number; approved: number; projected?: number }[] = []
+  let runRate = 0
+  let projectedTotal = 0
+
   if (selectedMonth) {
     const MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 }
     const [mon, yr] = selectedMonth.split(' ')
     const monthIdx = MONTHS[mon]
     const year = parseInt(yr, 10)
     const daysInMonth = new Date(year, monthIdx + 1, 0).getDate()
+
+    // Calculate run rate
+    const now = new Date()
+    const isCurrentMonth = now.getFullYear() === year && now.getMonth() === monthIdx
+    let daysPassed = daysInMonth
+    if (isCurrentMonth) {
+      daysPassed = now.getDate()
+    } else if (year > now.getFullYear() || (year === now.getFullYear() && monthIdx > now.getMonth())) {
+      daysPassed = 0
+    }
+
+    runRate = daysPassed > 0 ? (approved / daysPassed) : 0
+    projectedTotal = Math.round(runRate * daysInMonth)
+
     for (let day = 1; day <= daysInMonth; day++) {
       const d = new Date(year, monthIdx, day)
       const full = formatDate(d)
       const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
       const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
-      trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
+      trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size, projected: parseFloat(runRate.toFixed(1)) })
     }
   } else {
+    let last30Approved = 0
     for (let i = 29; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i)
       const full = formatDate(d)
       const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
       const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
+      last30Approved += approvedIds.size
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
     }
+    runRate = last30Approved / 30
+    projectedTotal = Math.round(runRate * 30)
+    trend.forEach(t => t.projected = parseFloat(runRate.toFixed(1)))
   }
 
   // Status breakdown (deduped all)
@@ -2565,11 +2587,12 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       </div>
 
       {/* Summary row 1 */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {[
           { label: 'Total Projects', value: totalProjects, color: '#667eea' },
           { label: 'Approved', value: approved, color: '#10b981' },
           { label: 'In Progress', value: inProgress, color: '#f59e0b' },
+          { label: selectedMonth ? 'Projected (EoM)' : 'Projected (30d)', value: projectedTotal, color: '#3b82f6' },
           { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
@@ -2616,6 +2639,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
             <Tooltip /><Legend />
             <Line type="monotone" dataKey="assigned" name="Assigned" stroke="#667eea" strokeWidth={2} dot={false} />
             <Line type="monotone" dataKey="approved" name="Approved" stroke="#10b981" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="projected" name="Projected Rate" stroke="#3b82f6" strokeWidth={2} strokeDasharray="5 5" dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
