@@ -2618,15 +2618,18 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   })).filter(a => a.total > 0).slice(0, 10)
 
   // Channel-wise analytics (deduped all)
-  const channelMap: Record<string, { total: number; inProgress: number; completed: number; totalDuration: number; completedDuration: number; completedCount: number }> = {}
+  const channelMap: Record<string, { total: number; inProgress: number; completed: number; totalDuration: number; completedDuration: number; inProgressDuration: number; completedCount: number }> = {}
   dedupedAll.forEach(p => {
     const ch = extractChannel(p.Project_ID)
-    if (!channelMap[ch]) channelMap[ch] = { total: 0, inProgress: 0, completed: 0, totalDuration: 0, completedDuration: 0, completedCount: 0 }
+    if (!channelMap[ch]) channelMap[ch] = { total: 0, inProgress: 0, completed: 0, totalDuration: 0, completedDuration: 0, inProgressDuration: 0, completedCount: 0 }
     channelMap[ch].total++
     const durSec = parseDurationSec(p.Duration, p.Project_ID)
     if (durSec > 0) channelMap[ch].totalDuration += durSec
-    if (['Pending', 'Active', 'Review'].includes(p.Status)) channelMap[ch].inProgress++
-    if (p.Status === 'Approved') {
+    if (['Pending', 'Active', 'Review'].includes(p.Status)) {
+      channelMap[ch].inProgress++
+      if (durSec > 0) channelMap[ch].inProgressDuration += durSec
+    }
+    if (['Approved', 'Paid', 'Closed'].includes(p.Status)) {
       channelMap[ch].completed++
       channelMap[ch].completedCount++
       if (durSec > 0) channelMap[ch].completedDuration += durSec
@@ -2634,7 +2637,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   })
   const channelData = Object.entries(channelMap)
     .sort((a, b) => b[1].total - a[1].total)
-    .map(([name, v]) => ({ name: name.toUpperCase(), ...v, avgDuration: v.completedCount > 0 ? Math.round(v.completedDuration / v.completedCount) : 0 }))
+    .map(([name, v]) => ({ name: name.toUpperCase(), ...v }))
 
   const PIE_COLORS = ['#667eea', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
 
@@ -2760,7 +2763,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100">
-                    {['Channel', 'Total', 'In Progress', 'Completed', 'Total Duration', 'Avg Duration', 'Completion %'].map(h => (
+                    {['Channel', 'Total', 'In Progress', 'Completed', 'Total Duration', 'In Progress Duration', 'Completed Duration', 'Completion %'].map(h => (
                       <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>
                     ))}
                   </tr>
@@ -2773,7 +2776,8 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
                       <td className="px-3 py-2"><span className="text-amber-600 font-medium">{ch.inProgress}</span></td>
                       <td className="px-3 py-2"><span className="text-green-600 font-medium">{ch.completed}</span></td>
                       <td className="px-3 py-2"><span className="text-indigo-600 font-medium">{formatSec(ch.totalDuration)}</span></td>
-                      <td className="px-3 py-2"><span className="text-cyan-600 font-medium">{ch.avgDuration > 0 ? formatSec(ch.avgDuration) : '—'}</span></td>
+                      <td className="px-3 py-2"><span className="text-amber-600 font-medium">{formatSec(ch.inProgressDuration)}</span></td>
+                      <td className="px-3 py-2"><span className="text-green-600 font-medium">{formatSec(ch.completedDuration)}</span></td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 bg-gray-100 rounded-full h-1.5">
