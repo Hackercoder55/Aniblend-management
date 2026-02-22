@@ -1240,6 +1240,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
   const [approving, setApproving] = useState<string | null>(null)
 
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [newStatus, setNewStatus] = useState<string>('')
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
+  const [isUpdating, setIsUpdating] = useState(false)
+
   const filtered = projects.filter(p => {
     const matchSearch = !search ||
       (p.Project_title || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -1297,6 +1302,49 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
       addToast(`❌ Approve failed: ${error.message}`, 'error')
     }
     setApproving(null)
+  }
+
+  const handleSaveStatus = async (project: Project) => {
+    if (newStatus === project.Status) {
+      setEditingProjectId(null)
+      return
+    }
+    setIsUpdating(true)
+    let payload: any = { Status: newStatus }
+    if (newStatus === 'Approved') {
+      payload['Date Approved'] = formatDate()
+      payload['Approved_Date'] = formatDate()
+    }
+    const { error } = await supabase.from('projects').update(payload).eq('Project_ID', project.Project_ID)
+    if (!error) {
+      if (newStatus === 'Approved' && project.Status !== 'Approved' && project.Employee_ID) {
+        const { data: anim } = await supabase.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
+        if (anim) {
+          await supabase.from('animators')
+            .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
+            .eq('Employee_ID', project.Employee_ID)
+        }
+      }
+      addToast(`✅ Status updated to ${newStatus}`)
+      onRefresh()
+    } else {
+      addToast(`❌ Update failed: ${error.message}`, 'error')
+    }
+    setIsUpdating(false)
+    setEditingProjectId(null)
+  }
+
+  const handleDeleteProject = async (project: Project) => {
+    setIsUpdating(true)
+    const { error } = await supabase.from('projects').delete().eq('Project_ID', project.Project_ID)
+    if (!error) {
+      addToast(`✅ Deleted project ${project.Project_ID}`)
+      onRefresh()
+    } else {
+      addToast(`❌ Delete failed: ${error.message}`, 'error')
+    }
+    setIsUpdating(false)
+    setDeletingProjectId(null)
   }
 
   const statuses = ['All', 'Pending', 'Active', 'Review', 'Changes Requested', 'Approved', 'Paid', 'Closed']
@@ -1368,17 +1416,47 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Lead || '—'}</td>
-                  <td className="px-4 py-3"><StatusBadge status={p.Status} /></td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID ? (
+                      <select
+                        value={newStatus}
+                        onChange={e => setNewStatus(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[120px]"
+                      >
+                        {statuses.filter(s => s !== 'All').map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    ) : (
+                      <StatusBadge status={p.Status} />
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{p['Date Assigned'] || '—'}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
                   <td className="px-4 py-3">
-                    {p.Status === 'Review' && !isHead && (
-                      <button onClick={() => handleApprove(p)} disabled={approving === p.Project_ID}
-                        className="px-3 py-1 rounded-lg text-xs font-medium text-white"
-                        style={{ backgroundColor: '#10b981' }}>
-                        {approving === p.Project_ID ? '...' : 'Approve'}
-                      </button>
-                    )}
+                    <div className="flex gap-2 items-center flex-wrap">
+                      {deletingProjectId === p.Project_ID ? (
+                        <>
+                          <button onClick={() => handleDeleteProject(p)} disabled={isUpdating} className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium transition-colors">Confirm Delete</button>
+                          <button onClick={() => setDeletingProjectId(null)} disabled={isUpdating} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium transition-colors">Cancel</button>
+                        </>
+                      ) : editingProjectId === p.Project_ID ? (
+                        <>
+                          <button onClick={() => handleSaveStatus(p)} disabled={isUpdating} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors">Save</button>
+                          <button onClick={() => setEditingProjectId(null)} disabled={isUpdating} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium transition-colors">Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
+                          <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
+                          {p.Status === 'Review' && !isHead && (
+                            <button onClick={() => handleApprove(p)} disabled={approving === p.Project_ID}
+                              className="px-3 py-1 rounded-lg text-xs font-medium text-white transition-colors hover:bg-emerald-600"
+                              style={{ backgroundColor: '#10b981' }}>
+                              {approving === p.Project_ID ? '...' : 'Approve'}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
