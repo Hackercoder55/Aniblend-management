@@ -1351,18 +1351,21 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Animator', 'Lead', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Lead', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-8 text-gray-400">No projects found</td></tr>
+                <tr><td colSpan={9} className="text-center py-8 text-gray-400">No projects found</td></tr>
               ) : filtered.map((p, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{p.Project_ID}</td>
                   <td className="px-4 py-3"><p className="font-medium text-gray-800 max-w-xs truncate">{p.Project_title || '—'}</p></td>
+                  <td className="px-4 py-3 text-xs">
+                    {p.Project_link ? <a href={p.Project_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 hover:underline font-medium">Link</a> : <span className="text-gray-400">—</span>}
+                  </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Lead || '—'}</td>
                   <td className="px-4 py-3"><StatusBadge status={p.Status} /></td>
