@@ -2486,9 +2486,11 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     .reduce((s, p) => s + parseDays(p.Duration), 0)
 
   // Daily Work Trend — deduplicated per day, filtered to selected month or last 30 days
-  const trend: { label: string; assigned: number; approved: number; projected?: number }[] = []
+  const trend: { label: string; assigned: number; approved: number; projected?: number; projectedMins?: number }[] = []
   let runRate = 0
+  let runRateMins = 0
   let projectedTotal = 0
+  let projectedMinsTotal = 0
 
   if (selectedMonth) {
     const MONTHS: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 }
@@ -2508,7 +2510,9 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     }
 
     runRate = daysPassed > 0 ? (approved / daysPassed) : 0
+    runRateMins = daysPassed > 0 ? (durationThisMonth / daysPassed / 60) : 0
     projectedTotal = Math.round(runRate * daysInMonth)
+    projectedMinsTotal = Math.round(runRateMins * daysInMonth)
 
     for (let day = 1; day <= daysInMonth; day++) {
       const d = new Date(year, monthIdx, day)
@@ -2516,7 +2520,13 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
       const assignedIds = new Set(projects.filter(p => p['Date Assigned'] === full).map(p => p.Project_ID))
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
-      trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size, projected: parseFloat(runRate.toFixed(1)) })
+      trend.push({
+        label,
+        assigned: assignedIds.size,
+        approved: approvedIds.size,
+        projected: parseFloat(runRate.toFixed(1)),
+        projectedMins: parseFloat(runRateMins.toFixed(1))
+      })
     }
   } else {
     let last30Approved = 0
@@ -2530,8 +2540,13 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
     }
     runRate = last30Approved / 30
+    runRateMins = (durationThisMonth / 30) / 60 // Approximate using month duration
     projectedTotal = Math.round(runRate * 30)
-    trend.forEach(t => t.projected = parseFloat(runRate.toFixed(1)))
+    projectedMinsTotal = Math.round(runRateMins * 30)
+    trend.forEach(t => {
+      t.projected = parseFloat(runRate.toFixed(1))
+      t.projectedMins = parseFloat(runRateMins.toFixed(1))
+    })
   }
 
   // Status breakdown (deduped all)
@@ -2589,15 +2604,16 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       {/* Summary row 1 */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {[
-          { label: 'Total Projects', value: totalProjects, color: '#667eea' },
-          { label: 'Approved', value: approved, color: '#10b981' },
-          { label: 'In Progress', value: inProgress, color: '#f59e0b' },
-          { label: selectedMonth ? 'Projected (EoM)' : 'Projected (30d)', value: projectedTotal, color: '#3b82f6' },
-          { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
+          { label: 'Total Projects', value: totalProjects, color: '#667eea', sub: null },
+          { label: 'Approved', value: approved, color: '#10b981', sub: null },
+          { label: 'In Progress', value: inProgress, color: '#f59e0b', sub: null },
+          { label: selectedMonth ? 'Projected (EoM)' : 'Projected (30d)', value: projectedTotal, color: '#3b82f6', sub: `${projectedMinsTotal} mins` },
+          { label: 'Total Animators', value: animators.length, color: '#8b5cf6', sub: null },
         ].map(s => (
           <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
             <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
             <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+            {s.sub && <p className="text-[10px] font-semibold text-indigo-500 mt-0.5">{s.sub}</p>}
           </div>
         ))}
       </div>
