@@ -193,8 +193,12 @@ function parseDurationSec(duration: string, projectId?: string): number {
 /** Format seconds as "Xm Ys" or "Xs" */
 function formatSec(sec: number): string {
   if (!sec || sec <= 0) return '—'
+  sec = Math.round(sec)
   if (sec < 60) return `${sec} sec`
-  return `${Math.floor(sec / 60)} min ${sec % 60} sec`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  if (s === 0) return `${m} min`
+  return `${m} min ${s} sec`
 }
 
 /** Display a Duration field: if purely numeric append " sec", else return as-is */
@@ -3555,9 +3559,9 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
                       <td className="px-3 py-2 text-gray-600">{ch.total}</td>
                       <td className="px-3 py-2"><span className="text-amber-600 font-medium">{ch.inProgress}</span></td>
                       <td className="px-3 py-2"><span className="text-green-600 font-medium">{ch.completed}</span></td>
-                      <td className="px-3 py-2"><span className="text-indigo-600 font-medium">{Math.round(ch.totalDuration)} min</span></td>
-                      <td className="px-3 py-2"><span className="text-amber-600 font-medium">{Math.round(ch.inProgressDuration)} min</span></td>
-                      <td className="px-3 py-2"><span className="text-green-600 font-medium">{Math.round(ch.completedDuration)} min</span></td>
+                      <td className="px-3 py-2"><span className="text-indigo-600 font-medium">{formatSec(ch.totalDuration)}</span></td>
+                      <td className="px-3 py-2"><span className="text-amber-600 font-medium">{formatSec(ch.inProgressDuration)}</span></td>
+                      <td className="px-3 py-2"><span className="text-green-600 font-medium">{formatSec(ch.completedDuration)}</span></td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 bg-gray-100 rounded-full h-1.5">
@@ -3911,14 +3915,8 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     'Render QA': '#ec4899', Approved: '#10b981', Paid: '#059669', Closed: '#64748b'
   }
 
-  const sumMinutes = (list: Project[]) => {
-    return list.reduce((total, p) => {
-      // Assuming format "XXX sec" or "XXX mins" -- reusing parseDurationSec handles extraction and gives seconds.
-      // The user requested duration in mins, so we convert from seconds.
-      // `extractDuration` natively extracts from project ID or existing string as seconds. 
-      const seconds = parseDurationSec(p.Duration, p.Project_ID)
-      return total + Math.floor(seconds / 60)
-    }, 0)
+  const sumSeconds = (list: Project[]) => {
+    return list.reduce((total, p) => total + parseDurationSec(p.Duration, p.Project_ID), 0)
   }
 
   // ── Mark as Paid ──
@@ -3939,7 +3937,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   }
 
   const ProjectCard = ({ project, showMarkPaid = false }: { project: Project; showMarkPaid?: boolean }) => {
-    const mins = Math.floor(parseDurationSec(project.Duration, project.Project_ID) / 60)
+    const durStr = formatSec(parseDurationSec(project.Duration, project.Project_ID))
     return (
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
         <div className="flex items-start justify-between gap-2 mb-2">
@@ -3954,7 +3952,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
         </div>
         <div className="space-y-1 text-xs text-gray-500">
           <p>🎬 {project.Animator || '—'}</p>
-          <p>⏱ {mins} min</p>
+          <p>⏱ {durStr}</p>
           {project['Date Assigned'] && <p>📅 Assigned: {project['Date Assigned']}</p>}
           {project.Status === 'Approved' && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
           {project.Status === 'Paid' && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
@@ -4031,7 +4029,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
                         <td className="px-2 py-2 font-mono text-xs text-gray-600">{p.Project_ID}</td>
                         <td className="px-2 py-2 text-gray-800 max-w-[200px] truncate">{p.Project_title || '—'}</td>
                         <td className="px-2 py-2 text-gray-600">{p.Animator || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600">{Math.floor(parseDurationSec(p.Duration, p.Project_ID) / 60)} min</td>
+                        <td className="px-2 py-2 text-gray-600">{formatSec(parseDurationSec(p.Duration, p.Project_ID))}</td>
                         <td className="px-2 py-2 text-gray-600">{p['Date Assigned'] || '—'}</td>
                         <td className="px-2 py-2 text-gray-600">
                           {reportModalStage === 'Approved' ? p['Date Approved'] : reportModalStage === 'Paid' ? p.client_paid_date : p['Date Assigned'] || '—'}
@@ -4087,7 +4085,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
             })
           }
 
-          const stageMinutes = sumMinutes(stageProjects)
+          const stageSecs = sumSeconds(stageProjects)
           const cLabel = STATUS_LABELS[stage] || stage
           const cColor = statusColor[stage] || '#94a3b8'
 
@@ -4097,7 +4095,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-gray-800 truncate" title={cLabel}>{cLabel}</span>
                   <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: cColor }}>
-                    {stageMinutes} min
+                    {formatSec(stageSecs)}
                   </span>
                 </div>
 
