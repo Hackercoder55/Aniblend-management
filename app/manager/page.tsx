@@ -18,6 +18,7 @@ interface Project {
   Employee_ID: string
   Lead: string
   Status: string
+  assigned_head?: string
   'Date Assigned': string
   'Date Approved': string
   Approved_Date: string
@@ -29,6 +30,7 @@ interface Project {
   Discord_Username: string
   WIP: boolean
   client_paid_date: string
+  paid_date?: string
   Priority?: string
   Head_Comment?: string
 }
@@ -45,6 +47,8 @@ interface Animator {
   'Interview notes': string
   'Phone Number': string
   'E-mail': string
+  phone?: string
+  email?: string
   'Contract Type': string
   Compensation: string
   Render: string
@@ -86,12 +90,14 @@ interface Payment {
   Name: string
   'IFSC CODE': string
   'Account Holder Name': string
+  'Bank Branch'?: string
   'PAN Number': string
   'Full Name': string
   Payment_Status: string
   Discord_ID: string
   Discord_Username: string
   Discord_Notified: string
+  paid_date?: string
 }
 
 interface Note {
@@ -107,6 +113,18 @@ interface Note {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+export const STATUS_LABELS: Record<string, string> = {
+  'Pending': 'Pending',
+  'Active': 'Animation in Progress',
+  'Review': 'Viewport',
+  'Changes Requested': 'Animation Revision',
+  'Ready to Render': 'Ready to Render',
+  'Render QA': 'Render Q/A',
+  'Approved': 'Approved',
+  'Paid': 'Paid',
+  'Closed': 'Closed'
+}
 
 function formatDate(d?: Date): string {
   return (d || new Date()).toLocaleDateString('en-GB', {
@@ -190,14 +208,17 @@ function StatusBadge({ status }: { status: string }) {
     Pending: { bg: '#ede9fe', text: '#6d28d9' },
     Unassigned: { bg: '#f1f5f9', text: '#64748b' },
     'Changes Requested': { bg: '#fff1f2', text: '#be123c' },
+    'Ready to Render': { bg: '#e0e7ff', text: '#4338ca' },
+    'Render QA': { bg: '#ffedd5', text: '#c2410c' },
     Paid: { bg: '#dcfce7', text: '#15803d' },
     Closed: { bg: '#f1f5f9', text: '#64748b' },
   }
   const s = styles[status] || { bg: '#f1f5f9', text: '#64748b' }
+  const displayLabel = STATUS_LABELS[status] || status
   return (
     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
       style={{ backgroundColor: s.bg, color: s.text }}>
-      {status}
+      {displayLabel}
     </span>
   )
 }
@@ -687,6 +708,18 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
     if (!selectedProject || !selectedAnimator) { setError('Select a project and an animator.'); return }
     setAssigning(true); setError('')
     const duration = extractDuration(selectedProject.Project_ID)
+
+    if (selectedProject.Employee_ID && selectedProject.Thread_ID) {
+      try {
+        await fetch(`https://discord.com/api/v10/channels/${selectedProject.Thread_ID}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bot ${process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN}` }
+        })
+      } catch (err) {
+        console.error("Failed to delete Discord thread on reassignment:", err)
+      }
+    }
+
     const { error: err } = await supabase.from('projects').update({
       Employee_ID: selectedAnimator.Employee_ID,
       Animator: selectedAnimator.Name,
@@ -696,6 +729,7 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
       Status: 'Pending',
       'Date Assigned': formatDate(),
       Duration: duration || selectedProject.Duration,
+      Thread_ID: null,
     }).eq('Project_ID', selectedProject.Project_ID)
     if (!err) {
       await supabase.from('animators')
@@ -1261,8 +1295,16 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [newStatus, setNewStatus] = useState<string>('')
   const [newPriority, setNewPriority] = useState<string>('Low')
   const [newComment, setNewComment] = useState<string>('')
+  const [newAssignedHead, setNewAssignedHead] = useState<string>('')
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
+  const [leadsList, setLeadsList] = useState<string[]>([])
+
+  useEffect(() => {
+    supabase.from('leads').select('Head_Name').then(({ data }) => {
+      if (data) setLeadsList(data.map(l => l.Head_Name).filter(Boolean))
+    })
+  }, [])
 
   const PRIORITY_RANK: Record<string, number> = {
     'Urgent': 5,
@@ -1339,12 +1381,12 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   }
 
   const handleSaveStatus = async (project: Project) => {
-    if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '')) {
+    if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '') && newAssignedHead === (project.assigned_head || '')) {
       setEditingProjectId(null)
       return
     }
     setIsUpdating(true)
-    let payload: any = { Status: newStatus }
+    let payload: any = { Status: newStatus, assigned_head: newAssignedHead }
     payload['Priority'] = newPriority
     payload['Head_Comment'] = newComment
     if (newStatus === 'Approved') {
@@ -1403,7 +1445,41 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     setDeletingProjectId(null)
   }
 
-  const statuses = ['All', 'Pending', 'Active', 'Review', 'Changes Requested', 'Approved', 'Paid', 'Closed']
+  const handleRemoveAnimator = async (project: Project) => {
+    if (!window.confirm(`Are you sure you want to remove ${project.Animator || 'the animator'} from this project?`)) return
+    setIsUpdating(true)
+
+    // Delete Discord Thread if it exists
+    if (project.Thread_ID) {
+      try {
+        await fetch(`https://discord.com/api/v10/channels/${project.Thread_ID}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bot ${process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN}` }
+        })
+      } catch (err) {
+        console.error("Failed to delete Discord thread:", err)
+      }
+    }
+
+    const { error } = await supabase.from('projects').update({
+      Status: 'Pending',
+      Employee_ID: null,
+      Animator: null,
+      Thread_ID: null,
+      Discord_ID: null,
+      Discord_Username: null
+    }).eq('Project_ID', project.Project_ID)
+
+    if (!error) {
+      addToast(`✅ Removed animator from ${project.Project_ID}`)
+      onRefresh()
+    } else {
+      addToast(`❌ Remove failed: ${error.message}`, 'error')
+    }
+    setIsUpdating(false)
+  }
+
+  const statuses = ['All', 'Pending', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed']
 
   return (
     <div className="space-y-4">
@@ -1449,7 +1525,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           {statuses.map(s => (
             <button key={s} onClick={() => setStatusFilter(s)} className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
               style={{ backgroundColor: statusFilter === s ? '#667eea' : '#f1f5f9', color: statusFilter === s ? 'white' : '#64748b' }}>
-              {s}
+              {STATUS_LABELS[s] || s}
             </button>
           ))}
         </div>
@@ -1460,7 +1536,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Assigned Head', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -1476,6 +1552,20 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     {p.Project_link ? <a href={p.Project_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 hover:underline font-medium">Link</a> : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {editingProjectId === p.Project_ID && !isHead ? (
+                      <select
+                        value={newAssignedHead}
+                        onChange={e => setNewAssignedHead(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px]"
+                      >
+                        <option value="">None</option>
+                        {leadsList.map(l => <option key={l} value={l}>{l}</option>)}
+                      </select>
+                    ) : (
+                      <span className="text-gray-600">{p.assigned_head || '—'}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {editingProjectId === p.Project_ID ? (
                       <select
@@ -1517,7 +1607,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                         onChange={e => setNewStatus(e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[120px]"
                       >
-                        {statuses.filter(s => s !== 'All').map(s => <option key={s} value={s}>{s}</option>)}
+                        {statuses.filter(s => s !== 'All').map(s => <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>)}
                       </select>
                     ) : (
                       <StatusBadge status={p.Status} />
@@ -1539,8 +1629,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                         </>
                       ) : (
                         <>
-                          <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setNewPriority(p.Priority || 'Low'); setNewComment(p.Head_Comment || ''); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
+                          <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setNewPriority(p.Priority || 'Low'); setNewComment(p.Head_Comment || ''); setNewAssignedHead(p.assigned_head || ''); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
                           <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
+                          {!isHead && p.Animator && (
+                            <button onClick={() => handleRemoveAnimator(p)} disabled={isUpdating} className="px-3 py-1 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-lg text-xs font-medium transition-colors">Remove Animator</button>
+                          )}
                           {p.Status === 'Review' && !isHead && (
                             <button onClick={() => handleApprove(p)} disabled={approving === p.Project_ID}
                               className="px-3 py-1 rounded-lg text-xs font-medium text-white transition-colors hover:bg-emerald-600"
@@ -1568,8 +1661,8 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
 
 // ─── Animator Detail Modal ────────────────────────────────────────────────────
 
-function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
-  animator: Animator; projects: Project[]; user: DashboardUser; onClose: () => void; onRefresh: () => void
+function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowProjects }: {
+  animator: Animator; projects: Project[]; user: DashboardUser; onClose: () => void; onRefresh: () => void; onShowProjects?: (title: string, projects: Project[]) => void
 }) {
   const [deboarding, setDeboarding] = useState(false)
   const [confirmDeboard, setConfirmDeboard] = useState(false)
@@ -1679,8 +1772,23 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
                   </span>
                 )}
               </div>
-              <p className="text-sm text-gray-400">{animator.Employee_ID} · {animator.Role || 'Animator'} {joinedDateStr ? ` · Joined: ${joinedDateStr}` : ''}</p>
               {animator.Discord_Username && <p className="text-xs mt-0.5" style={{ color: '#818cf8' }}>@{animator.Discord_Username}</p>}
+              <div className="flex gap-4 mt-2">
+                {animator.phone && (
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <span className="font-medium text-gray-700">Phone:</span>
+                    <span>{animator.phone}</span>
+                    <CopyButton value={animator.phone} />
+                  </div>
+                )}
+                {animator.email && (
+                  <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <span className="font-medium text-gray-700">Email:</span>
+                    <span>{animator.email}</span>
+                    <CopyButton value={animator.email} />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400 flex-shrink-0">
@@ -1692,16 +1800,34 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh }: {
         <div className="px-5 pt-4 pb-0 flex-shrink-0">
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: 'Current', value: load, color: loadColor },
-              { label: 'Total', value: animator['Total video'] || 0, color: '#374151' },
-              { label: 'Active', value: activeProjects.length, color: '#667eea' },
-              { label: 'Rating', value: avg !== null ? avg : '—', color: avg !== null ? (avg >= 7 ? '#10b981' : avg >= 5 ? '#f59e0b' : '#ef4444') : '#cbd5e1' },
-            ].map(s => (
-              <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
-                <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
-              </div>
-            ))}
+              { id: 'curr', label: 'Current', value: load, color: loadColor },
+              { id: 'tot', label: 'Total', value: animator['Total video'] || 0, color: '#374151' },
+              { id: 'act', label: 'Active', value: activeProjects.length, color: '#667eea' },
+              { id: 'rat', label: 'Rating', value: avg !== null ? avg : '—', color: avg !== null ? (avg >= 7 ? '#10b981' : avg >= 5 ? '#f59e0b' : '#ef4444') : '#cbd5e1' },
+            ].map(s => {
+              const content = (
+                <>
+                  <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+                </>
+              )
+              if ((s.id === 'curr' || s.id === 'tot') && onShowProjects) {
+                return (
+                  <button key={s.label} className="bg-gray-50 rounded-xl p-3 text-center transition-colors hover:bg-gray-100"
+                    onClick={() => {
+                      if (s.id === 'curr') onShowProjects(`${animator.Name} - Active Projects`, activeProjects)
+                      else if (s.id === 'tot') onShowProjects(`${animator.Name} - Total Projects`, allProjects.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)))
+                    }}>
+                    {content}
+                  </button>
+                )
+              }
+              return (
+                <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
+                  {content}
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -1932,6 +2058,45 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
 
 // ─── Animators Tab ───────────────────────────────────────────────────────────
 
+function ProjectListModal({ title, projects, onClose }: { title: string; projects: Project[]; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flexitems-center justify-between flex-shrink-0">
+          <h3 className="font-bold text-gray-800 text-lg">{title} ({projects.length})</h3>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400 flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-5">
+          {projects.length === 0 ? (
+            <div className="text-center py-10 text-gray-500">No projects found.</div>
+          ) : (
+            <div className="grid gap-3">
+              {projects.map(p => (
+                <div key={p.Project_ID} className="bg-gray-50 border border-gray-100 p-4 rounded-xl flex flex-col gap-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="font-mono text-xs text-indigo-500">{p.Project_ID}</span>
+                      <p className="font-semibold text-gray-800 text-sm">{p.Project_title || 'Untitled'}</p>
+                    </div>
+                    <StatusBadge status={p.Status} />
+                  </div>
+                  <div className="text-xs text-gray-500 flex gap-4">
+                    {p.Animator && <span>Animator: {p.Animator}</span>}
+                    {p.assigned_head && <span>Lead: {p.assigned_head}</span>}
+                    {p['Date Assigned'] && <span>Assigned: {p['Date Assigned']}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function TeamTab({ animators, projects, user, onRefresh }: {
   animators: Animator[]; projects: Project[]; user: DashboardUser; onRefresh: () => void
 }) {
@@ -1940,6 +2105,8 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState<'none' | 'az' | 'za' | 'leastActive' | 'mostActive' | 'available'>('none')
   const isHead = user.role === 'head'
+
+  const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
 
   const filtered = animators
     .filter(a => {
@@ -1960,10 +2127,14 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
   return (
     <div className="space-y-4">
+      {listModalProps && (
+        <ProjectListModal title={listModalProps.title} projects={listModalProps.sortedProjects} onClose={() => setListModalProps(null)} />
+      )}
       {selectedAnimator && (
         <AnimatorModal animator={selectedAnimator} projects={projects} user={user}
           onClose={() => setSelectedAnimator(null)}
-          onRefresh={() => { onRefresh(); setSelectedAnimator(null) }} />
+          onRefresh={() => { onRefresh(); setSelectedAnimator(null) }}
+          onShowProjects={(title, propsProjects) => setListModalProps({ title, sortedProjects: propsProjects })} />
       )}
       {showAddModal && <AddAnimatorModal onClose={() => setShowAddModal(false)} onRefresh={onRefresh} />}
 
@@ -2030,11 +2201,27 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     })()}
                   </div>
                 </div>
-                <span className="text-xs px-2 py-1 rounded-full bg-purple-50 text-purple-600 font-medium flex-shrink-0">{a.Role || 'Animator'}</span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-xs px-2 py-1 rounded-full bg-purple-50 text-purple-600 font-medium flex-shrink-0">{a.Role || 'Animator'}</span>
+                  {a.phone && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <span className="text-[10px] text-gray-400">📱 {a.phone}</span>
+                      <CopyButton value={a.phone} />
+                    </div>
+                  )}
+                  {a.email && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-gray-400" title={a.email}>✉️ {a.email.slice(0, 15)}{a.email.length > 15 ? '...' : ''}</span>
+                      <CopyButton value={a.email} />
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="bg-gray-50 rounded-xl p-3 text-center">
+                <button
+                  onClick={() => setListModalProps({ title: `${a.Name} - Active Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status)) })}
+                  className="bg-gray-50 rounded-xl p-3 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
                   <p className="text-2xl font-bold" style={{ color: loadColor }}>{load}</p>
                   <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Active Videos</p>
                   {(() => {
@@ -2043,8 +2230,10 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                       .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
                     return durationSec > 0 ? <p className="text-xs font-semibold text-indigo-600 mt-1">{formatSec(durationSec).replace('m', ' min').replace('s', ' sec')}</p> : null
                   })()}
-                </div>
-                <div className="bg-gray-50 rounded-xl p-3 text-center">
+                </button>
+                <button
+                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
+                  className="bg-gray-50 rounded-xl p-3 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
                   <p className="text-2xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total Videos</p>
                   {(() => {
@@ -2053,7 +2242,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                       .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
                     return durationSec > 0 ? <p className="text-xs font-semibold text-green-600 mt-1">{formatSec(durationSec).replace('m', ' min').replace('s', ' sec')}</p> : null
                   })()}
-                </div>
+                </button>
               </div>
 
               <div className="flex items-center justify-between text-xs text-gray-400 mb-4">
@@ -2474,6 +2663,18 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkUpdating, setBulkUpdating] = useState(false)
 
+  // Generate last 13 months as filter options
+  const monthOptions = (() => {
+    const opts: string[] = []
+    const now = new Date()
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
+  const [selectedMonth, setSelectedMonth] = useState('')
+
   const loadPayments = async () => {
     setLoading(true)
     const { data } = await supabase.from('payments').select('*')
@@ -2514,7 +2715,55 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
     return next
   })
 
+  const handleExportCSV = () => {
+    if (filtered.length === 0) return
+    const headers = [
+      'Project ID', 'Project Title', 'Employee ID', 'Full Name',
+      'Contract Type', 'UPI ID', 'Account Number', 'IFSC Code',
+      'Account Holder', 'Bank Branch', 'PAN Number',
+      'Payment Status', 'Paid Date', 'Timestamp'
+    ]
+    const rows = filtered.map(p => [
+      p['Project ID'] || '',
+      projectMap[p['Project ID']] || '',
+      p['Employee ID'] || '',
+      p['Full Name'] || '',
+      p['Contract Type'] || '',
+      p['UPI ID'] || '',
+      p['Account Number'] || '',
+      p['IFSC CODE'] || '',
+      p['Account Holder Name'] || '',
+      p['Bank Branch'] || '',
+      p['PAN Number'] || '',
+      p.Payment_Status || 'Pending',
+      p.paid_date || '',
+      p.Timestamp ? new Date(p.Timestamp).toLocaleString() : ''
+    ])
+
+    // Escape quotes and commas
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    ].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('url')
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `payments_${selectedMonth ? selectedMonth.replace(' ', '_') : 'all'}_${new Date().toISOString().split('T')[0]}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const statuses = ['All', 'Pending', 'Paid', 'Closed']
+
+  // Helper: check if a "DD MMM YYYY" date string is within a "MMM YYYY" month
+  const inMonth = (dateStr: string, month: string) =>
+    !!dateStr && !!month && dateStr.includes(month)
+
   const filtered = payments.filter(p => {
     const matchStatus = statusFilter === 'All' || p.Payment_Status === statusFilter
     const matchSearch = !search ||
@@ -2522,7 +2771,15 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
       (p['Employee ID'] || '').toLowerCase().includes(search.toLowerCase()) ||
       (animatorMap[p['Employee ID']] || '').toLowerCase().includes(search.toLowerCase()) ||
       (p['Full Name'] || '').toLowerCase().includes(search.toLowerCase())
-    return matchStatus && matchSearch
+
+    // Filter by selected month using 'paid_date' (fallback to Timestamp if not Paid but we still want to see Activity?)
+    // Requirements specifically say "based on paid_date". 
+    // Wait, if it's pending it might not have paid_date. If selectedMonth is set, only show cases where paid_date matches, OR date assigned/created?
+    // Let's filter specifically on `paid_date`. If not set, filter out.
+    const dateToMatch = p.paid_date ? new Date(p.paid_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const matchMonth = selectedMonth ? inMonth(dateToMatch, selectedMonth) : true
+
+    return matchStatus && matchSearch && matchMonth
   })
 
   const payStatusColors: Record<string, { bg: string; text: string }> = {
@@ -2534,15 +2791,32 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
   return (
     <div className="space-y-4">
       {/* Filters + bulk actions */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col sm:flex-row gap-3 items-center">
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col sm:flex-row gap-3 items-center flex-wrap">
         <input type="text" placeholder="Search payments..." value={search} onChange={e => setSearch(e.target.value)}
-          className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+          className="flex-1 min-w-[200px] px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500">Month:</span>
+          <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 focus:outline-none bg-white">
+            <option value="">All Time</option>
+            {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+
+        <button onClick={handleExportCSV} disabled={filtered.length === 0}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+          Export CSV
+        </button>
+
         <div className="flex gap-2 flex-wrap">
           {statuses.map(s => (
             <button key={s} onClick={() => setStatusFilter(s)} className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
               style={{ backgroundColor: statusFilter === s ? '#667eea' : '#f1f5f9', color: statusFilter === s ? 'white' : '#64748b' }}>{s}</button>
           ))}
         </div>
+
         {selected.size > 0 && (
           <button onClick={handleBulkMarkPaid} disabled={bulkUpdating}
             className="px-4 py-2 rounded-lg text-xs font-semibold text-white whitespace-nowrap disabled:opacity-60 flex-shrink-0"
@@ -2556,7 +2830,7 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
       <div className="grid grid-cols-3 gap-4">
         {(['Pending', 'Paid', 'Closed'] as const).map(s => {
           const c = payStatusColors[s]
-          const count = payments.filter(p => p.Payment_Status === s).length
+          const count = filtered.filter(p => p.Payment_Status === s).length
           return (
             <div key={s} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 text-center">
               <p className="text-2xl font-bold" style={{ color: c.text }}>{count}</p>
@@ -2681,11 +2955,19 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   })()
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[0])
 
-  // Helper: parse "X days" or "X" → integer
-  const parseDays = (dur: string): number => {
-    if (!dur) return 0
-    const n = parseInt(dur.replace(/\D.*$/, ''), 10)
-    return isNaN(n) ? 0 : n
+  const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
+
+  // Helper: parse duration strictly to minutes
+  const parseDurationMins = (dur: string, pId?: string): number => {
+    const raw = dur || (pId ? extractDuration(pId) : '') || ''
+    if (!raw) return 0
+    const str = raw.toLowerCase()
+    const n = parseFloat(str.replace(/[^0-9.]/g, '')) || 0
+    if (str.includes('min') || str.includes('m')) return n
+    if (str.includes('sec') || str.includes('s')) return n / 60
+    if (str.includes('day') || str.includes('d')) return n * 24 * 60
+    if (str.includes('hr') || str.includes('h')) return n * 60
+    return n // assume minutes if no clear unit
   }
 
   // Helper: check if a "DD MMM YYYY" date string is within a "MMM YYYY" month
@@ -2709,17 +2991,17 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   const totalProjects = filteredByAssigned.length
   const inProgress = filteredByAssigned.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status)).length
   const approved = filteredByApproved.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
-  // Duration stats (filtered approved, parsed as days)
-  const durationThisMonth = filteredByApproved
+  // Duration stats (filtered approved, parsed as minutes)
+  const durationThisMonthMins = filteredByApproved
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
-    .reduce((s, p) => s + parseDays(p.Duration), 0)
+    .reduce((s, p) => s + parseDurationMins(p.Duration, p.Project_ID), 0)
 
   // Lifetime stats (all deduped, unfiltered)
   const lifetimeTotal = dedupedAll.length
   const lifetimeApproved = dedupedAll.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
-  const lifetimeDuration = dedupedAll
+  const lifetimeDurationMins = dedupedAll
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
-    .reduce((s, p) => s + parseDays(p.Duration), 0)
+    .reduce((s, p) => s + parseDurationMins(p.Duration, p.Project_ID), 0)
 
   // Daily Work Trend — deduplicated per day, filtered to selected month or last 30 days
   const trend: { label: string; assigned: number; approved: number; projected?: number; projectedMins?: number }[] = []
@@ -2756,13 +3038,13 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       if (weights[p.Status as keyof typeof weights]) {
         const w = weights[p.Status as keyof typeof weights]
         pipelineValue += w
-        pipelineMins += (parseDays(p.Duration) / 60) * w
+        pipelineMins += parseDurationMins(p.Duration, p.Project_ID) * w
       }
     })
 
     // Base rate from already approved
     runRate = daysPassed > 0 ? (approved / daysPassed) : 0
-    runRateMins = daysPassed > 0 ? (durationThisMonth / daysPassed / 60) : 0
+    runRateMins = daysPassed > 0 ? (durationThisMonthMins / daysPassed) : 0
 
     // Adjusted rate for the future includes pipeline clearing
     const futureRate = remainingDays > 0 ? runRate + (pipelineValue / remainingDays) : runRate
@@ -2811,7 +3093,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
       last30Approved += approvedIds.size
 
-      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDays(p.Duration), 0) / 60
+      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDurationMins(p.Duration, p.Project_ID), 0)
       last30Mins += dayMins
 
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
@@ -2825,7 +3107,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       if (weights[p.Status as keyof typeof weights]) {
         const w = weights[p.Status as keyof typeof weights]
         pipelineValue += w
-        pipelineMins += (parseDays(p.Duration) / 60) * w
+        pipelineMins += parseDurationMins(p.Duration, p.Project_ID) * w
       }
     })
 
@@ -2864,16 +3146,16 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     const ch = extractChannel(p.Project_ID)
     if (!channelMap[ch]) channelMap[ch] = { total: 0, inProgress: 0, completed: 0, totalDuration: 0, completedDuration: 0, inProgressDuration: 0, completedCount: 0 }
     channelMap[ch].total++
-    const durSec = parseDurationSec(p.Duration, p.Project_ID)
-    if (durSec > 0) channelMap[ch].totalDuration += durSec
+    const durMins = parseDurationMins(p.Duration, p.Project_ID)
+    if (durMins > 0) channelMap[ch].totalDuration += durMins
     if (['Pending', 'Active', 'Review'].includes(p.Status)) {
       channelMap[ch].inProgress++
-      if (durSec > 0) channelMap[ch].inProgressDuration += durSec
+      if (durMins > 0) channelMap[ch].inProgressDuration += durMins
     }
     if (['Approved', 'Paid', 'Closed'].includes(p.Status)) {
       channelMap[ch].completed++
       channelMap[ch].completedCount++
-      if (durSec > 0) channelMap[ch].completedDuration += durSec
+      if (durMins > 0) channelMap[ch].completedDuration += durMins
     }
   })
   const channelData = Object.entries(channelMap)
@@ -2884,6 +3166,10 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
 
   return (
     <div className="space-y-6">
+      {listModalProps && (
+        <ProjectListModal title={listModalProps.title} projects={listModalProps.sortedProjects} onClose={() => setListModalProps(null)} />
+      )}
+
       {/* Month Filter */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-3 flex-wrap">
         <span className="text-sm font-semibold text-gray-700">📅 Filter by Month:</span>
@@ -2906,25 +3192,43 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       {/* Summary row 1 */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {[
-          { label: 'Total Projects', value: totalProjects, color: '#667eea', sub: null },
-          { label: 'Approved', value: approved, color: '#10b981', sub: null },
-          { label: 'In Progress', value: inProgress, color: '#f59e0b', sub: null },
+          { label: 'Total Projects', value: totalProjects, color: '#667eea', sub: null, projects: filteredByAssigned },
+          { label: 'Approved', value: approved, color: '#10b981', sub: null, projects: filteredByApproved.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)) },
+          { label: 'In Progress', value: inProgress, color: '#f59e0b', sub: null, projects: filteredByAssigned.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status)) },
           {
             label: selectedMonth ? 'Projected (Remaining)' : 'Projected (Next 30d)',
             value: projectedTotal,
             color: '#3b82f6',
             sub: selectedMonth
               ? `${projectedMinsTotal} mins`
-              : `${projectedMinsTotal} mins | Next 7d: ${next7Total} (${next7MinsTotal}m)`
+              : `${projectedMinsTotal} mins | Next 7d: ${next7Total} (${next7MinsTotal}m)`,
+            projects: null
           },
-          { label: 'Total Animators', value: animators.length, color: '#8b5cf6', sub: null },
-        ].map(s => (
-          <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
-            <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
-            <p className="text-xs text-gray-500 mt-1">{s.label}</p>
-            {s.sub && <p className="text-[10px] font-semibold text-indigo-500 mt-0.5">{s.sub}</p>}
-          </div>
-        ))}
+          { label: 'Total Animators', value: animators.length, color: '#8b5cf6', sub: null, projects: null },
+        ].map(s => {
+          const content = (
+            <>
+              <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
+              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+              {s.sub && <p className="text-[10px] font-semibold text-indigo-500 mt-0.5">{s.sub}</p>}
+            </>
+          )
+
+          if (s.projects) {
+            return (
+              <button key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center hover:bg-gray-50 transition-colors"
+                onClick={() => setListModalProps({ title: `${s.label} ${selectedMonth ? `(${selectedMonth})` : '(All Time)'}`, sortedProjects: s.projects! })}>
+                {content}
+              </button>
+            )
+          }
+
+          return (
+            <div key={s.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
+              {content}
+            </div>
+          )
+        })}
       </div>
 
       {/* Duration cards */}
@@ -2932,13 +3236,13 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
         {[
           {
             label: selectedMonth ? `Total Duration (${selectedMonth})` : 'Total Duration This Month',
-            value: durationThisMonth > 0 ? `${durationThisMonth} sec` : '—',
+            value: durationThisMonthMins > 0 ? `${Math.round(durationThisMonthMins)} min` : '—',
             sub: `approved projects${selectedMonth ? ` in ${selectedMonth}` : ''}`,
             color: '#06b6d4',
           },
           {
             label: 'Total Duration Overall',
-            value: lifetimeDuration > 0 ? `${lifetimeDuration} sec` : '—',
+            value: lifetimeDurationMins > 0 ? `${Math.round(lifetimeDurationMins)} min` : '—',
             sub: `${lifetimeApproved} approved total`,
             color: '#8b5cf6',
           },
@@ -2978,7 +3282,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
             { label: 'Total Projects (Ever)', value: lifetimeTotal, color: '#667eea' },
             { label: 'Total Approved (Ever)', value: lifetimeApproved, color: '#10b981' },
             { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
-            { label: 'Total Duration (Ever)', value: lifetimeDuration > 0 ? `${lifetimeDuration} sec` : '—', color: '#06b6d4' },
+            { label: 'Total Duration (Ever)', value: lifetimeDurationMins > 0 ? `${Math.round(lifetimeDurationMins)} min` : '—', color: '#06b6d4' },
           ].map(s => (
             <div key={s.label} className="bg-gray-50 rounded-xl p-4 text-center border border-gray-100">
               <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
@@ -3023,9 +3327,9 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
                       <td className="px-3 py-2 text-gray-600">{ch.total}</td>
                       <td className="px-3 py-2"><span className="text-amber-600 font-medium">{ch.inProgress}</span></td>
                       <td className="px-3 py-2"><span className="text-green-600 font-medium">{ch.completed}</span></td>
-                      <td className="px-3 py-2"><span className="text-indigo-600 font-medium">{formatSec(ch.totalDuration)}</span></td>
-                      <td className="px-3 py-2"><span className="text-amber-600 font-medium">{formatSec(ch.inProgressDuration)}</span></td>
-                      <td className="px-3 py-2"><span className="text-green-600 font-medium">{formatSec(ch.completedDuration)}</span></td>
+                      <td className="px-3 py-2"><span className="text-indigo-600 font-medium">{Math.round(ch.totalDuration)} min</span></td>
+                      <td className="px-3 py-2"><span className="text-amber-600 font-medium">{Math.round(ch.inProgressDuration)} min</span></td>
+                      <td className="px-3 py-2"><span className="text-green-600 font-medium">{Math.round(ch.completedDuration)} min</span></td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 bg-gray-100 rounded-full h-1.5">
@@ -3822,15 +4126,20 @@ export default function ManagerDashboard() {
   }, [router])
 
   const fetchData = useCallback(async () => {
+    if (!user) return
     setLoading(true)
+    let query = supabase.from('projects').select('*')
+    if (user.role === 'head') {
+      query = query.eq('assigned_head', user.full_name)
+    }
     const [{ data: pData }, { data: aData }] = await Promise.all([
-      supabase.from('projects').select('*'),
+      query,
       supabase.from('animators').select('*'),
     ])
     setProjects((pData as Project[]) || [])
     setAnimators((aData as Animator[]) || [])
     setLoading(false)
-  }, [])
+  }, [user])
 
   useEffect(() => { if (user) fetchData() }, [user, fetchData])
 
