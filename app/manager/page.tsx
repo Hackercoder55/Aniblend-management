@@ -120,6 +120,7 @@ interface Note {
 
 export const STATUS_LABELS: Record<string, string> = {
   'Pending': 'Pending',
+  'Ongoing': 'Ongoing',
   'Active': 'Animation in Progress',
   'Review': 'Viewport',
   'Changes Requested': 'Animation Revision',
@@ -1324,7 +1325,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     const matchSearch = !search ||
       (p.Project_title || '').toLowerCase().includes(search.toLowerCase()) ||
       (p.Project_ID || '').toLowerCase().includes(search.toLowerCase())
-    const matchStatus = statusFilter === 'All' || p.Status === statusFilter
+    const matchStatus = statusFilter === 'All'
+      ? true
+      : statusFilter === 'Ongoing'
+        ? !['Approved', 'Pending', 'Paid', 'Closed'].includes(p.Status)
+        : p.Status === statusFilter
     const matchAnimator = !animatorFilter || (p.Animator || '').toLowerCase().includes(animatorFilter.toLowerCase())
     const matchLead = !leadFilter || (p.Lead || '').toLowerCase().includes(leadFilter.toLowerCase())
     let matchDate = true
@@ -1493,7 +1498,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     setIsUpdating(false)
   }
 
-  const statuses = ['All', 'Pending', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed']
+  const statuses = ['All', 'Ongoing', 'Pending', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed']
 
   return (
     <div className="space-y-4">
@@ -1681,7 +1686,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                         onChange={e => setNewStatus(e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[120px]"
                       >
-                        {statuses.filter(s => s !== 'All').map(s => <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>)}
+                        {statuses.filter(s => s !== 'All' && s !== 'Ongoing').map(s => <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>)}
                       </select>
                     ) : (
                       <StatusBadge status={p.Status} />
