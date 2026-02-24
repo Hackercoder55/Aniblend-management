@@ -193,8 +193,8 @@ function parseDurationSec(duration: string, projectId?: string): number {
 /** Format seconds as "Xm Ys" or "Xs" */
 function formatSec(sec: number): string {
   if (!sec || sec <= 0) return '—'
-  if (sec < 60) return `${sec}s`
-  return `${Math.floor(sec / 60)}m ${sec % 60}s`
+  if (sec < 60) return `${sec} sec`
+  return `${Math.floor(sec / 60)} min ${sec % 60} sec`
 }
 
 /** Display a Duration field: if purely numeric append " sec", else return as-is */
@@ -2200,15 +2200,15 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
       return d.getFullYear() === selYear && (d.getMonth() + 1) === selMonth
     })
 
-    const totalMinutes = aProjects.reduce((sum, p) => sum + Math.round(parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID) / 60), 0)
+    const totalSecs = aProjects.reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
 
     return {
       animator: a,
       projectsCount: aProjects.length,
-      totalMinutes,
+      totalSecs,
       projects: aProjects
     }
-  }).filter(r => r.projectsCount > 0).sort((a, b) => b.totalMinutes - a.totalMinutes)
+  }).filter(r => r.projectsCount > 0).sort((a, b) => b.totalSecs - a.totalSecs)
 
   const handleDownloadCSV = () => {
     const rows = [
@@ -2223,7 +2223,7 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
         `"${r.animator.Name}"`,
         `"${r.animator.Employee_ID}"`,
         r.projectsCount.toString(),
-        r.totalMinutes.toString(),
+        formatSec(r.totalSecs),
         `"${pList}"`
       ])
     })
@@ -2233,12 +2233,12 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
     rows.push(['Project ID', 'Project Title', 'Animator', 'Duration (mins)', 'Approved Date'])
     reportData.forEach(r => {
       r.projects.forEach(p => {
-        const mins = Math.round(parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID) / 60)
+        const mins = formatSec(parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID))
         rows.push([
           `"${p.Project_ID}"`,
           `"${p.Project_title || ''}"`,
           `"${r.animator.Name}"`,
-          mins.toString(),
+          mins,
           `"${p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date || ''}"`
         ])
       })
@@ -2300,8 +2300,8 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
                       <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Projects</p>
                     </div>
                     <div>
-                      <p className="text-xl font-bold text-emerald-600">{r.totalMinutes}</p>
-                      <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Minutes</p>
+                      <p className="text-xl font-bold text-emerald-600">{formatSec(r.totalSecs)}</p>
+                      <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Duration</p>
                     </div>
                   </div>
                 </div>
@@ -2455,7 +2455,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     const durationSec = projects
                       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status))
                       .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
-                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec).replace('m', ' min').replace('s', ' sec') : '0 min 0 sec'}</p>
+                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0 min 0 sec'}</p>
                   })()}
                 </button>
                 <button
@@ -2467,7 +2467,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     const durationSec = projects
                       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
                       .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
-                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec).replace('m', ' min').replace('s', ' sec') : '0 min 0 sec'}</p>
+                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0 min 0 sec'}</p>
                   })()}
                 </button>
               </div>
@@ -3185,7 +3185,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
 
   // Helper: parse duration strictly to minutes
-  const parseDurationMins = (dur: string, pId?: string): number => {
+  const parseDurationSecLocal = (dur: string, pId?: string): number => {
     const raw = dur || (pId ? extractDuration(pId) : '') || ''
     if (!raw) return 0
     const str = raw.toLowerCase()
@@ -3221,14 +3221,14 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   // Duration stats (filtered approved, parsed as minutes)
   const durationThisMonthMins = filteredByApproved
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
-    .reduce((s, p) => s + parseDurationMins(p.Duration, p.Project_ID), 0)
+    .reduce((s, p) => s + parseDurationSecLocal(p.Duration, p.Project_ID), 0)
 
   // Lifetime stats (all deduped, unfiltered)
   const lifetimeTotal = dedupedAll.length
   const lifetimeApproved = dedupedAll.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
   const lifetimeDurationMins = dedupedAll
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
-    .reduce((s, p) => s + parseDurationMins(p.Duration, p.Project_ID), 0)
+    .reduce((s, p) => s + parseDurationSecLocal(p.Duration, p.Project_ID), 0)
 
   // Daily Work Trend — deduplicated per day, filtered to selected month or last 30 days
   const trend: { label: string; assigned: number; approved: number; projected?: number; projectedMins?: number }[] = []
@@ -3265,7 +3265,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       if (weights[p.Status as keyof typeof weights]) {
         const w = weights[p.Status as keyof typeof weights]
         pipelineValue += w
-        pipelineMins += parseDurationMins(p.Duration, p.Project_ID) * w
+        pipelineMins += parseDurationSecLocal(p.Duration, p.Project_ID) * w
       }
     })
 
@@ -3320,7 +3320,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
       last30Approved += approvedIds.size
 
-      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDurationMins(p.Duration, p.Project_ID), 0)
+      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDurationSecLocal(p.Duration, p.Project_ID), 0)
       last30Mins += dayMins
 
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
@@ -3334,7 +3334,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       if (weights[p.Status as keyof typeof weights]) {
         const w = weights[p.Status as keyof typeof weights]
         pipelineValue += w
-        pipelineMins += parseDurationMins(p.Duration, p.Project_ID) * w
+        pipelineMins += parseDurationSecLocal(p.Duration, p.Project_ID) * w
       }
     })
 
@@ -3373,7 +3373,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     const ch = extractChannel(p.Project_ID)
     if (!channelMap[ch]) channelMap[ch] = { total: 0, inProgress: 0, completed: 0, totalDuration: 0, completedDuration: 0, inProgressDuration: 0, completedCount: 0 }
     channelMap[ch].total++
-    const durMins = parseDurationMins(p.Duration, p.Project_ID)
+    const durMins = parseDurationSecLocal(p.Duration, p.Project_ID)
     if (durMins > 0) channelMap[ch].totalDuration += durMins
     if (['Pending', 'Active', 'Review'].includes(p.Status)) {
       channelMap[ch].inProgress++
@@ -3463,13 +3463,13 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
         {[
           {
             label: selectedMonth ? `Total Duration (${selectedMonth})` : 'Total Duration This Month',
-            value: durationThisMonthMins > 0 ? `${Math.round(durationThisMonthMins)} min` : '—',
+            value: durationThisMonthMins > 0 ? `${formatSec(durationThisMonthMins)}` : '—',
             sub: `approved projects${selectedMonth ? ` in ${selectedMonth}` : ''}`,
             color: '#06b6d4',
           },
           {
             label: 'Total Duration Overall',
-            value: lifetimeDurationMins > 0 ? `${Math.round(lifetimeDurationMins)} min` : '—',
+            value: lifetimeDurationMins > 0 ? `${formatSec(lifetimeDurationMins)}` : '—',
             sub: `${lifetimeApproved} approved total`,
             color: '#8b5cf6',
           },
@@ -3509,7 +3509,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
             { label: 'Total Projects (Ever)', value: lifetimeTotal, color: '#667eea' },
             { label: 'Total Approved (Ever)', value: lifetimeApproved, color: '#10b981' },
             { label: 'Total Animators', value: animators.length, color: '#8b5cf6' },
-            { label: 'Total Duration (Ever)', value: lifetimeDurationMins > 0 ? `${Math.round(lifetimeDurationMins)} min` : '—', color: '#06b6d4' },
+            { label: 'Total Duration (Ever)', value: lifetimeDurationMins > 0 ? `${formatSec(lifetimeDurationMins)}` : '—', color: '#06b6d4' },
           ].map(s => (
             <div key={s.label} className="bg-gray-50 rounded-xl p-4 text-center border border-gray-100">
               <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
