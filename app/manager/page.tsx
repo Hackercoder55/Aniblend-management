@@ -2183,11 +2183,155 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
   )
 }
 
+function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators: Animator[]; projects: Project[]; onClose: () => void }) {
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+
+  // Destructure selected year and month
+  const [selYear, selMonth] = selectedMonth.split('-').map(Number)
+
+  // Calculate stats for all animators
+  const reportData = animators.map(a => {
+    const aProjects = projects.filter(p => {
+      // Must belong to animator
+      const belongs = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes(a.Name.toLowerCase())
+      if (!belongs) return false
+
+      // Must be approved/completed
+      if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return false
+
+      // Check date
+      const dateStr = p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date
+      if (!dateStr) return false
+
+      const d = parseDate(dateStr)
+      if (d.getTime() === 0) return false
+
+      return d.getFullYear() === selYear && (d.getMonth() + 1) === selMonth
+    })
+
+    const totalMinutes = aProjects.reduce((sum, p) => sum + Math.round(parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID) / 60), 0)
+
+    return {
+      animator: a,
+      projectsCount: aProjects.length,
+      totalMinutes,
+      projects: aProjects
+    }
+  }).filter(r => r.projectsCount > 0).sort((a, b) => b.totalMinutes - a.totalMinutes)
+
+  const handleDownloadCSV = () => {
+    const rows = [
+      ['Global Monthly Report for Animators'],
+      ['Month:', selectedMonth],
+      [],
+      ['Animator Name', 'Employee ID', 'Total Projects', 'Total Minutes', 'Projects List (IDs)']
+    ]
+    reportData.forEach(r => {
+      const pList = r.projects.map(p => p.Project_ID).join('; ')
+      rows.push([
+        `"${r.animator.Name}"`,
+        `"${r.animator.Employee_ID}"`,
+        r.projectsCount.toString(),
+        r.totalMinutes.toString(),
+        `"${pList}"`
+      ])
+    })
+
+    rows.push([])
+    rows.push(['--- Project Breakdown ---'])
+    rows.push(['Project ID', 'Project Title', 'Animator', 'Duration (mins)', 'Approved Date'])
+    reportData.forEach(r => {
+      r.projects.forEach(p => {
+        const mins = Math.round(parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID) / 60)
+        rows.push([
+          `"${p.Project_ID}"`,
+          `"${p.Project_title || ''}"`,
+          `"${r.animator.Name}"`,
+          mins.toString(),
+          `"${p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date || ''}"`
+        ])
+      })
+    })
+
+    const csvStr = rows.map(r => r.join(',')).join('\n')
+    const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Animator_Monthly_Report_${selectedMonth}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <h3 className="font-bold text-gray-800 text-lg">Global Monthly Report (Animators)</h3>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-gray-50 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-gray-700">Select Month:</span>
+            <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none" />
+          </div>
+          <button onClick={handleDownloadCSV} disabled={reportData.length === 0}
+            className="flex flex-shrink-0 items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 hover:opacity-90 min-w-max"
+            style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+            Download CSV
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-5">
+          {reportData.length === 0 ? (
+            <div className="text-center py-10 text-gray-500">No approved projects found in {selectedMonth}.</div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Summary by Animator</p>
+              {reportData.map(r => (
+                <div key={r.animator.Employee_ID} className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
+                      style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                      {(r.animator.Name || '?')[0]}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800 text-sm truncate">{r.animator.Name}</p>
+                      <p className="text-xs text-gray-500 font-mono mt-0.5">{r.animator.Employee_ID}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-6 text-right flex-shrink-0">
+                    <div>
+                      <p className="text-xl font-bold text-indigo-600">{r.projectsCount}</p>
+                      <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Projects</p>
+                    </div>
+                    <div>
+                      <p className="text-xl font-bold text-emerald-600">{r.totalMinutes}</p>
+                      <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Minutes</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function TeamTab({ animators, projects, user, onRefresh }: {
   animators: Animator[]; projects: Project[]; user: DashboardUser; onRefresh: () => void
 }) {
   const [selectedAnimator, setSelectedAnimator] = useState<Animator | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showReportModal, setShowReportModal] = useState(false)
   const [search, setSearch] = useState('')
   const [sortOrder, setSortOrder] = useState<'none' | 'az' | 'za' | 'leastActive' | 'mostActive' | 'available'>('none')
   const isHead = user.role === 'head'
@@ -2215,6 +2359,9 @@ function TeamTab({ animators, projects, user, onRefresh }: {
     <div className="space-y-4">
       {listModalProps && (
         <ProjectListModal title={listModalProps.title} projects={listModalProps.sortedProjects} onClose={() => setListModalProps(null)} />
+      )}
+      {showReportModal && (
+        <GlobalAnimatorReportModal animators={animators} projects={projects} onClose={() => setShowReportModal(false)} />
       )}
       {selectedAnimator && (
         <AnimatorModal animator={selectedAnimator} projects={projects} user={user}
@@ -2244,12 +2391,18 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           ))}
         </div>
         {!isHead && (
-          <button onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-            Add Animator
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowReportModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 border-indigo-100 text-indigo-600 hover:bg-indigo-50 flex-shrink-0 transition-colors">
+              📊 Monthly Report
+            </button>
+            <button onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0 transition-colors hover:shadow-md"
+              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Add Animator
+            </button>
+          </div>
         )}
       </div>
 
