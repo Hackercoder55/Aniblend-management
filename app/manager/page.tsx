@@ -714,14 +714,6 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
     setAssigning(true); setError('')
     const duration = extractDuration(selectedProject.Project_ID)
 
-    if (selectedProject.Employee_ID && selectedProject.Thread_ID) {
-      try {
-        await fetch(`/api/discord/thread?threadId=${selectedProject.Thread_ID}`, { method: 'DELETE' })
-      } catch (err) {
-        console.error("Failed to delete Discord thread on reassignment:", err)
-      }
-    }
-
     const { error: err } = await supabase.from('projects').update({
       Employee_ID: selectedAnimator.Employee_ID,
       Animator: selectedAnimator.Name,
@@ -730,8 +722,7 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
       Lead: leadName || selectedProject.Lead,
       Status: 'Pending',
       'Date Assigned': formatDate(),
-      Duration: duration || selectedProject.Duration,
-      Thread_ID: null,
+      Duration: duration || selectedProject.Duration
     }).eq('Project_ID', selectedProject.Project_ID)
     if (!err) {
       await supabase.from('animators')
@@ -1465,15 +1456,6 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     if (!window.confirm(`Are you sure you want to remove ${project.Animator || 'the animator'} from this project?`)) return
     setIsUpdating(true)
 
-    // Delete Discord Thread if it exists
-    if (project.Thread_ID) {
-      try {
-        await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' })
-      } catch (err) {
-        console.error("Failed to delete Discord thread:", err)
-      }
-    }
-
     const { error } = await supabase.from('projects').update({
       Status: 'Pending',
       Employee_ID: null,
@@ -1804,19 +1786,11 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
   const handleDeboard = async () => {
     setDeboarding(true)
 
-    // Step 1: Delete Discord threads for active projects before clearing them
-    const activeProjects = projects.filter(p => p.Employee_ID === animator.Employee_ID && ['Pending', 'Active', 'Review'].includes(p.Status))
-    for (const project of activeProjects) {
-      if (project.Thread_ID) {
-        try { await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' }) } catch { }
-      }
-    }
-
-    // Step 2: Unassign projects (and clear Thread_ID)
-    await supabase.from('projects').update({ Employee_ID: null, Animator: null, Discord_ID: null, Discord_Username: null, Status: 'Pending', Thread_ID: null })
+    // Step 1: Unassign projects (leaves Thread_ID intact for backend cleanup)
+    await supabase.from('projects').update({ Employee_ID: null, Animator: null, Discord_ID: null, Discord_Username: null, Status: 'Pending' })
       .eq('Employee_ID', animator.Employee_ID).in('Status', ['Pending', 'Active', 'Review'])
 
-    // Step 3: Delete the animator entirely from the database
+    // Step 2: Delete the animator entirely from the database
     await supabase.from('animators').delete().eq('Employee_ID', animator.Employee_ID)
 
     setDeboarding(false); onRefresh(); onClose()
