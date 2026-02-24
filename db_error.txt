@@ -1,0 +1,6 @@
+{
+  "message": "TypeError: fetch failed",
+  "details": "TypeError: fetch failed\n\nCaused by: ConnectTimeoutError: Connect Timeout Error (attempted address: qhgdamefwmhpjkqpoxvy.supabase.co:443, timeout: 10000ms) (UND_ERR_CONNECT_TIMEOUT)\nConnectTimeoutError: Connect Timeout Error (attempted address: qhgdamefwmhpjkqpoxvy.supabase.co:443, timeout: 10000ms)\n    at onConnectTimeout (node:internal/deps/undici/undici:1690:23)\n    at Immediate._onImmediate (node:internal/deps/undici/undici:1656:35)\n    at process.processImmediate (node:internal/timers:504:21)",
+  "hint": "",
+  "code": ""
+}

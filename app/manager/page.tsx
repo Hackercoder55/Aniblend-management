@@ -1567,7 +1567,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingProjectId === p.Project_ID && !isHead ? (
                       <select
                         value={newPriority}
                         onChange={e => setNewPriority(e.target.value)}
@@ -1586,7 +1586,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingProjectId === p.Project_ID && !isHead ? (
                       <input
                         type="text"
                         value={newComment}
@@ -1630,7 +1630,9 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                       ) : (
                         <>
                           <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setNewPriority(p.Priority || 'Low'); setNewComment(p.Head_Comment || ''); setNewAssignedHead(p.assigned_head || ''); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
-                          <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
+                          {!isHead && (
+                            <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
+                          )}
                           {!isHead && p.Animator && (
                             <button onClick={() => handleRemoveAnimator(p)} disabled={isUpdating} className="px-3 py-1 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-lg text-xs font-medium transition-colors">Remove Animator</button>
                           )}
@@ -2203,16 +2205,16 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <span className="text-xs px-2 py-1 rounded-full bg-purple-50 text-purple-600 font-medium flex-shrink-0">{a.Role || 'Animator'}</span>
-                  {a.phone && (
+                  {(a['Phone Number'] || a.phone) && (
                     <div className="flex items-center gap-1 mt-1">
-                      <span className="text-[10px] text-gray-400">📱 {a.phone}</span>
-                      <CopyButton value={a.phone} />
+                      <span className="text-[10px] text-gray-400">📱 {a['Phone Number'] || a.phone}</span>
+                      <CopyButton value={a['Phone Number'] || a.phone || ''} />
                     </div>
                   )}
-                  {a.email && (
+                  {(a['E-mail'] || a.email) && (
                     <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-gray-400" title={a.email}>✉️ {a.email.slice(0, 15)}{a.email.length > 15 ? '...' : ''}</span>
-                      <CopyButton value={a.email} />
+                      <span className="text-[10px] text-gray-400" title={a['E-mail'] || a.email}>✉️ {(a['E-mail'] || a.email || '').slice(0, 15)}{(a['E-mail'] || a.email || '').length > 15 ? '...' : ''}</span>
+                      <CopyButton value={a['E-mail'] || a.email || ''} />
                     </div>
                   )}
                 </div>
@@ -2228,7 +2230,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     const durationSec = projects
                       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status))
                       .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
-                    return durationSec > 0 ? <p className="text-xs font-semibold text-indigo-600 mt-1">{formatSec(durationSec).replace('m', ' min').replace('s', ' sec')}</p> : null
+                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec).replace('m', ' min').replace('s', ' sec') : '0 min 0 sec'}</p>
                   })()}
                 </button>
                 <button
@@ -2240,7 +2242,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     const durationSec = projects
                       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
                       .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
-                    return durationSec > 0 ? <p className="text-xs font-semibold text-green-600 mt-1">{formatSec(durationSec).replace('m', ' min').replace('s', ' sec')}</p> : null
+                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec).replace('m', ' min').replace('s', ' sec') : '0 min 0 sec'}</p>
                   })()}
                 </button>
               </div>
@@ -4129,9 +4131,7 @@ export default function ManagerDashboard() {
     if (!user) return
     setLoading(true)
     let query = supabase.from('projects').select('*')
-    if (user.role === 'head') {
-      query = query.eq('assigned_head', user.full_name)
-    }
+    // Removing the explicit assigned_head filter here so Head can view all projects in Analytics
     const [{ data: pData }, { data: aData }] = await Promise.all([
       query,
       supabase.from('animators').select('*'),
