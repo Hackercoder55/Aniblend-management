@@ -1298,12 +1298,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [newAssignedHead, setNewAssignedHead] = useState<string>('')
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
-  const [leadsList, setLeadsList] = useState<string[]>([])
+  const [leadsList, setLeadsList] = useState<string[]>(['Divya', 'Ayush', 'Khushi'])
 
   useEffect(() => {
-    supabase.from('leads').select('Head_Name').then(({ data }) => {
-      if (data) setLeadsList(data.map(l => l.Head_Name).filter(Boolean))
-    })
+    // Hardcoded per user request, bypassing `leads` table fetch
   }, [])
 
   const PRIORITY_RANK: Record<string, number> = {
@@ -3624,7 +3622,7 @@ function NotesTab({ user }: { user: DashboardUser }) {
   )
 }
 
-// ─── Budget Tracker Tab (Project Payment Kanban) ────────────────────────────
+// ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
 
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
   // Month filter options (last 13 months)
@@ -3638,14 +3636,12 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     return opts
   })()
 
-  const [approvedMonth, setApprovedMonth] = useState(monthOptions[0])
-  const [paidMonth, setPaidMonth] = useState(monthOptions[0])
+  // We keep a separate month filter state for each column that might need it.
+  const [columnMonths, setColumnMonths] = useState<Record<string, string>>({})
   const [channelFilter, setChannelFilter] = useState('all')
   const [projSearch, setProjSearch] = useState('')
   const [markingId, setMarkingId] = useState<string | null>(null)
-  const [showReport, setShowReport] = useState(false)
-  const [showInProgressReport, setShowInProgressReport] = useState(false)
-  const [showApprovedReport, setShowApprovedReport] = useState(false)
+  const [reportModalStage, setReportModalStage] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [msgType, setMsgType] = useState<'success' | 'error'>('success')
 
@@ -3654,7 +3650,6 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     setTimeout(() => setMsg(''), 4000)
   }
 
-  // ── Deduplication helper ──
   const dedup = (list: Project[]): Project[] => {
     const seen = new Map<string, Project>()
     list.forEach(p => { if (!seen.has(p.Project_ID)) seen.set(p.Project_ID, p) })
@@ -3664,59 +3659,39 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   const inMonth = (dateStr: string, month: string) =>
     !!dateStr && !!month && dateStr.includes(month)
 
-  // ── Channel helper (3rd segment of Project_ID: e.g. "2020_80_plip" → "plip") ──
   const getChannel = (id: string) => (id || '').split('_')[2]?.toLowerCase() || ''
   const byChannel = (list: Project[]) =>
     channelFilter === 'all' ? list : list.filter(p => getChannel(p.Project_ID) === channelFilter)
 
-  // Detect all distinct channels from the full project list
   const availableChannels = Array.from(
     new Set(projects.map(p => getChannel(p.Project_ID)).filter(Boolean))
   ).sort()
 
-
-  const inProgressProjects = byChannel(dedup(
-    projects.filter(p => ['Pending', 'Active', 'Review', 'Changes Requested'].includes(p.Status))
-  ))
-
-  // ── Column 2: Approved (filter by Date Approved month, not yet client paid) ──
-  const approvedProjects = byChannel(dedup(
-    projects.filter(p =>
-      p.Status === 'Approved' &&
-      p.Payment_Status !== 'Client Paid' &&
-      (approvedMonth ? inMonth(p['Date Approved'], approvedMonth) : true)
-    )
-  ))
-
-  // ── Column 3: Paid (filter by client_paid_date month) ──
-  const paidProjects = byChannel(dedup(
-    projects.filter(p =>
-      p.Payment_Status === 'Client Paid' &&
-      (paidMonth ? inMonth(p.client_paid_date, paidMonth) : true)
-    )
-  ))
-
-  // ── Project search filter (applied after channel + month filters) ──
   const matchProj = (p: Project) =>
     !projSearch ||
     p.Project_ID.toLowerCase().includes(projSearch.toLowerCase()) ||
     (p.Project_title || '').toLowerCase().includes(projSearch.toLowerCase())
 
-  const visibleInProgress = inProgressProjects.filter(matchProj)
-  const visibleApproved = approvedProjects.filter(matchProj)
-  const visiblePaid = paidProjects.filter(matchProj)
+  const TRACKER_STAGES = [
+    'Pending', 'Active', 'Review', 'Changes Requested',
+    'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed'
+  ]
 
-  // Extract minutes from 2nd segment of Project_ID (e.g. "2020_80_plip" → 80)
-  const getMinutes = (id: string) => {
-    const parts = (id || '').split('_')
-    const n = parseInt(parts[1] || '0', 10)
-    return isNaN(n) ? 0 : n
+  const statusColor: Record<string, string> = {
+    Pending: '#94a3b8', Active: '#3b82f6', Review: '#f59e0b',
+    'Changes Requested': '#ef4444', 'Ready to Render': '#8b5cf6',
+    'Render QA': '#ec4899', Approved: '#10b981', Paid: '#059669', Closed: '#64748b'
   }
-  const sumMinutes = (list: Project[]) => list.reduce((s, p) => s + getMinutes(p.Project_ID), 0)
 
-  const inProgressMinutes = sumMinutes(inProgressProjects)
-  const approvedMinutes = sumMinutes(approvedProjects)
-  const paidMinutes = sumMinutes(paidProjects)
+  const sumMinutes = (list: Project[]) => {
+    return list.reduce((total, p) => {
+      // Assuming format "XXX sec" or "XXX mins" -- reusing parseDurationSec handles extraction and gives seconds.
+      // The user requested duration in mins, so we convert from seconds.
+      // `extractDuration` natively extracts from project ID or existing string as seconds. 
+      const seconds = parseDurationSec(p.Duration, p.Project_ID)
+      return total + Math.floor(seconds / 60)
+    }, 0)
+  }
 
   // ── Mark as Paid ──
   const handleMarkPaid = async (project: Project) => {
@@ -3724,238 +3699,115 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     const today = formatDate()
     const { error } = await supabase
       .from('projects')
-      .update({ Payment_Status: 'Client Paid', client_paid_date: today })
+      .update({ Payment_Status: 'Client Paid', Status: 'Paid', client_paid_date: today })
       .eq('Project_ID', project.Project_ID)
     if (error) {
       toast('Failed to mark as paid: ' + error.message, 'error')
     } else {
-      toast(`${project.Project_ID} marked as Client Paid ✅`, 'success')
+      toast(`${project.Project_ID} marked as Paid ✅`, 'success')
       await onRefresh()
     }
     setMarkingId(null)
   }
 
-  // ── Report: all paid projects grouped by month ──
-  const reportData = (() => {
-    const allPaid = dedup(projects.filter(p => p.Payment_Status === 'Client Paid'))
-    const groups: Record<string, Project[]> = {}
-    allPaid.forEach(p => {
-      const key = p.client_paid_date
-        ? p.client_paid_date.replace(/^\d{2} /, '').replace(/\s\d{4}$/, m => m) // keep "MMM YYYY"
-        : 'Unknown'
-      // Extract "MMM YYYY" from "DD MMM YYYY"
-      const parts = (p.client_paid_date || '').split(' ')
-      const monthKey = parts.length >= 3 ? `${parts[1]} ${parts[2]}` : 'Unknown'
-      if (!groups[monthKey]) groups[monthKey] = []
-      groups[monthKey].push(p)
-    })
-    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]))
-  })()
-
-  // ── Status badge helper ──
-  const statusColor: Record<string, string> = {
-    Pending: '#94a3b8', Active: '#3b82f6', Review: '#f59e0b',
-    'Changes Requested': '#ef4444', Approved: '#10b981',
+  const ProjectCard = ({ project, showMarkPaid = false }: { project: Project; showMarkPaid?: boolean }) => {
+    const mins = Math.floor(parseDurationSec(project.Duration, project.Project_ID) / 60)
+    return (
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-mono text-gray-400 truncate">{project.Project_ID}</p>
+            <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate">{project.Project_title || '—'}</p>
+          </div>
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 text-white"
+            style={{ backgroundColor: statusColor[project.Status] || '#94a3b8' }}>
+            {STATUS_LABELS[project.Status] || project.Status}
+          </span>
+        </div>
+        <div className="space-y-1 text-xs text-gray-500">
+          <p>🎬 {project.Animator || '—'}</p>
+          <p>⏱ {mins} min</p>
+          {project['Date Assigned'] && <p>📅 Assigned: {project['Date Assigned']}</p>}
+          {project.Status === 'Approved' && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
+          {project.Status === 'Paid' && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
+        </div>
+        {showMarkPaid && (
+          <button
+            onClick={() => handleMarkPaid(project)}
+            disabled={markingId === project.Project_ID}
+            className="mt-3 w-full py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-opacity"
+            style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+            {markingId === project.Project_ID ? 'Marking…' : '💳 Mark as Paid'}
+          </button>
+        )}
+      </div>
+    )
   }
 
-  const ProjectCard = ({
-    project, showApproved = false, showPaid = false, showMarkPaid = false, showAssigned = false,
-  }: {
-    project: Project; showApproved?: boolean; showPaid?: boolean; showMarkPaid?: boolean; showAssigned?: boolean
-  }) => (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-mono text-gray-400 truncate">{project.Project_ID}</p>
-          <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate">{project.Project_title || '—'}</p>
-        </div>
-        <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 text-white"
-          style={{ backgroundColor: statusColor[project.Status] || '#94a3b8' }}>
-          {project.Status}
-        </span>
-      </div>
-      <div className="space-y-1 text-xs text-gray-500">
-        <p>🎬 {project.Animator || '—'}</p>
-        {project.Duration && <p>⏱ {project.Duration}</p>}
-        {showAssigned && project['Date Assigned'] && <p>📅 Assigned: {project['Date Assigned']}</p>}
-        {showApproved && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
-        {showPaid && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
-      </div>
-      {showMarkPaid && (
-        <button
-          onClick={() => handleMarkPaid(project)}
-          disabled={markingId === project.Project_ID}
-          className="mt-3 w-full py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-opacity"
-          style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-          {markingId === project.Project_ID ? 'Marking…' : '💳 Mark as Paid'}
-        </button>
-      )}
-    </div>
-  )
+  // Helper to generate the data for the requested report
+  const generateReportData = (stage: string) => {
+    const projs = byChannel(dedup(projects.filter(p => p.Status === stage && matchProj(p))))
+    // Month filter check
+    const m = columnMonths[stage]
+    const filteredByMonth = m ? projs.filter(p => {
+      if (stage === 'Approved') return inMonth(p['Date Approved'], m)
+      if (stage === 'Paid') return inMonth(p.client_paid_date, m)
+      return inMonth(p['Date Assigned'], m)
+    }) : projs
+    return filteredByMonth
+  }
 
   return (
     <div className="space-y-4">
       {msg && (
-        <div className={`fixed bottom-5 right-5 z-50 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-lg transition-all ${msgType === 'success' ? 'bg-green-500' : 'bg-red-500'
-          }`}>
+        <div className={`fixed bottom-5 right-5 z-50 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-lg transition-all ${msgType === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
           {msg}
         </div>
       )}
 
-      {/* Report Modal */}
-      {showReport && (
+      {/* Dynamic Report Modal */}
+      {reportModalStage && (
         <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col">
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-gray-800 text-lg">📋 Payment Report</h3>
-                <p className="text-xs text-gray-400 mt-0.5">All client-paid projects grouped by month</p>
+                <h3 className="font-bold text-gray-800 text-lg">📋 {STATUS_LABELS[reportModalStage] || reportModalStage} Report</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Projects currently in {STATUS_LABELS[reportModalStage] || reportModalStage}</p>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => window.print()}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
-                  style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700">
                   🖨 Print / Save PDF
                 </button>
-                <button onClick={() => setShowReport(false)}
+                <button onClick={() => setReportModalStage(null)}
                   className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">
                   Close
                 </button>
               </div>
             </div>
             <div className="overflow-y-auto flex-1 p-5 space-y-6">
-              {reportData.length === 0 ? (
-                <p className="text-center text-gray-400 py-12">No paid projects yet</p>
-              ) : reportData.map(([month, projs]) => (
-                <div key={month}>
-                  <div className="flex items-center gap-3 mb-3">
-                    <h4 className="font-bold text-gray-800">{month}</h4>
-                    <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">
-                      {projs.length} projects · {sumMinutes(projs)} min
-                    </span>
-                  </div>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100">
-                        {['Project ID', 'Title', 'Animator', 'Duration', 'Approved', 'Paid Date'].map(h => (
-                          <th key={h} className="text-left px-2 py-1.5 text-xs font-medium text-gray-500 uppercase">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {projs.map(p => (
-                        <tr key={p.Project_ID} className="border-b border-gray-50 hover:bg-gray-50">
-                          <td className="px-2 py-2 font-mono text-xs text-gray-600">{p.Project_ID}</td>
-                          <td className="px-2 py-2 text-gray-800 max-w-[120px] truncate">{p.Project_title || '—'}</td>
-                          <td className="px-2 py-2 text-gray-600">{p.Animator || '—'}</td>
-                          <td className="px-2 py-2 text-gray-600">{p.Duration || '—'}</td>
-                          <td className="px-2 py-2 text-gray-600">{p['Date Approved'] || '—'}</td>
-                          <td className="px-2 py-2 text-gray-600">{p.client_paid_date || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* In Progress Report Modal */}
-      {showInProgressReport && (
-        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-gray-800 text-lg">📋 In Progress Report</h3>
-                <p className="text-xs text-gray-400 mt-0.5">All currently active/in-progress projects</p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => window.print()}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
-                  style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-                  🖨 Print / Save PDF
-                </button>
-                <button onClick={() => setShowInProgressReport(false)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">
-                  Close
-                </button>
-              </div>
-            </div>
-            <div className="overflow-y-auto flex-1 p-5 space-y-6">
-              {inProgressProjects.length === 0 ? (
-                <p className="text-center text-gray-400 py-12">No in-progress projects</p>
+              {generateReportData(reportModalStage).length === 0 ? (
+                <p className="text-center text-gray-400 py-12">No data for this stage</p>
               ) : (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100">
-                      {['Project ID', 'Title', 'Animator', 'Duration', 'Assigned Date', 'Status'].map(h => (
+                      {['Project ID', 'Title', 'Animator', 'Duration', 'Assigned', 'Status Date'].map(h => (
                         <th key={h} className="text-left px-2 py-1.5 text-xs font-medium text-gray-500 uppercase">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {inProgressProjects.map(p => (
+                    {generateReportData(reportModalStage).map(p => (
                       <tr key={p.Project_ID} className="border-b border-gray-50 hover:bg-gray-50">
                         <td className="px-2 py-2 font-mono text-xs text-gray-600">{p.Project_ID}</td>
-                        <td className="px-2 py-2 text-gray-800 max-w-[120px] truncate">{p.Project_title || '—'}</td>
+                        <td className="px-2 py-2 text-gray-800 max-w-[200px] truncate">{p.Project_title || '—'}</td>
                         <td className="px-2 py-2 text-gray-600">{p.Animator || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600">{p.Duration || '—'}</td>
+                        <td className="px-2 py-2 text-gray-600">{Math.floor(parseDurationSec(p.Duration, p.Project_ID) / 60)} min</td>
                         <td className="px-2 py-2 text-gray-600">{p['Date Assigned'] || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600"><StatusBadge status={p.Status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Approved Report Modal */}
-      {showApprovedReport && (
-        <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-gray-800 text-lg">📋 Approved Report</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Approved projects pending client payment</p>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => window.print()}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
-                  style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-                  🖨 Print / Save PDF
-                </button>
-                <button onClick={() => setShowApprovedReport(false)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 bg-gray-100">
-                  Close
-                </button>
-              </div>
-            </div>
-            <div className="overflow-y-auto flex-1 p-5 space-y-6">
-              {approvedProjects.length === 0 ? (
-                <p className="text-center text-gray-400 py-12">No approved projects</p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      {['Project ID', 'Title', 'Animator', 'Duration', 'Assigned Date', 'Approved Date'].map(h => (
-                        <th key={h} className="text-left px-2 py-1.5 text-xs font-medium text-gray-500 uppercase">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {approvedProjects.map(p => (
-                      <tr key={p.Project_ID} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="px-2 py-2 font-mono text-xs text-gray-600">{p.Project_ID}</td>
-                        <td className="px-2 py-2 text-gray-800 max-w-[120px] truncate">{p.Project_title || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600">{p.Animator || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600">{p.Duration || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600">{p['Date Assigned'] || '—'}</td>
-                        <td className="px-2 py-2 text-gray-600">{p['Date Approved'] || '—'}</td>
+                        <td className="px-2 py-2 text-gray-600">
+                          {reportModalStage === 'Approved' ? p['Date Approved'] : reportModalStage === 'Paid' ? p.client_paid_date : p['Date Assigned'] || '—'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -3972,7 +3824,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <input type="text" placeholder="Search budget tracker by project ID or title..." value={projSearch} onChange={e => setProjSearch(e.target.value)}
+          <input type="text" placeholder="Search progress tracker by project ID or title..." value={projSearch} onChange={e => setProjSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-gray-800 transition-all" />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -3991,102 +3843,67 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
         </div>
       </div>
 
-      {/* 3-column Kanban */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {/* Dynamic Kanban Board */}
+      <div className="flex gap-4 overflow-x-auto pb-4 items-start w-full">
+        {TRACKER_STAGES.map(stage => {
+          // Filter projects for this column
+          let stageProjects = byChannel(dedup(projects.filter(p => p.Status === stage && matchProj(p))))
 
-        {/* Column 1: In Progress */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 px-1 flex-wrap">
-            <span className="text-base font-bold text-gray-800">🔄 In Progress</span>
-            <span className="text-xs bg-amber-100 text-amber-700 font-semibold px-2 py-0.5 rounded-full">
-              {inProgressMinutes} sec
-            </span>
-            <button onClick={() => setShowInProgressReport(true)}
-              className="ml-auto px-3 py-1 rounded-lg text-xs font-semibold text-white"
-              style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-              📋 Report
-            </button>
-          </div>
-          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-            {inProgressProjects.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
-                No in-progress projects
-              </div>
-            ) : visibleInProgress.map(p => (
-              <ProjectCard key={p.Project_ID} project={p} showAssigned />
-            ))}
-          </div>
-        </div>
+          const monthFilterValue = columnMonths[stage] || ''
 
-        {/* Column 2: Approved */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 px-1 flex-wrap">
-            <span className="text-base font-bold text-gray-800">✅ Approved</span>
-            <span className="text-xs bg-green-100 text-green-700 font-semibold px-2 py-0.5 rounded-full">
-              {approvedMinutes} sec
-            </span>
-            <select value={approvedMonth} onChange={e => setApprovedMonth(e.target.value)}
-              className="ml-auto px-2 py-1 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
-              <option value="">All Time</option>
-              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <button onClick={() => setShowApprovedReport(true)}
-              className="ml-2 px-3 py-1 rounded-lg text-xs font-semibold text-white"
-              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-              📋 Report
-            </button>
-          </div>
-          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-            {approvedProjects.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
-                No approved projects {approvedMonth ? `in ${approvedMonth}` : ''}
-              </div>
-            ) : visibleApproved.map(p => (
-              <ProjectCard key={p.Project_ID} project={p} showAssigned showApproved showMarkPaid />
-            ))}
-          </div>
-        </div>
+          if (monthFilterValue) {
+            stageProjects = stageProjects.filter(p => {
+              if (stage === 'Approved') return inMonth(p['Date Approved'], monthFilterValue)
+              if (stage === 'Paid') return inMonth(p.client_paid_date, monthFilterValue)
+              return inMonth(p['Date Assigned'], monthFilterValue)
+            })
+          }
 
-        {/* Column 3: Paid */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 px-1 flex-wrap">
-            <span className="text-base font-bold text-gray-800">💰 Client Paid</span>
-            <span className="text-xs bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
-              {paidMinutes} sec
-            </span>
-            <select value={paidMonth} onChange={e => setPaidMonth(e.target.value)}
-              className="ml-auto px-2 py-1 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
-              <option value="">All Time</option>
-              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <button onClick={() => setShowReport(true)}
-              className="ml-2 px-3 py-1 rounded-lg text-xs font-semibold text-white"
-              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-              📋 Report
-            </button>
-          </div>
-          {paidMonth && paidProjects.length > 0 && (
-            <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex gap-4 text-center">
-              <div className="flex-1">
-                <p className="text-xl font-bold text-indigo-600">{paidMinutes} sec</p>
-                <p className="text-xs text-indigo-400">Total Duration Paid</p>
+          const stageMinutes = sumMinutes(stageProjects)
+          const cLabel = STATUS_LABELS[stage] || stage
+          const cColor = statusColor[stage] || '#94a3b8'
+
+          return (
+            <div key={stage} className="flex flex-col gap-3 min-w-[320px] max-w-[320px] flex-shrink-0 bg-gray-50/50 rounded-2xl p-3 border border-gray-100">
+              <div className="flex items-center justify-between px-1 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-gray-800 truncate" title={cLabel}>{cLabel}</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: cColor }}>
+                    {stageMinutes} min
+                  </span>
+                </div>
+
+                <button onClick={() => setReportModalStage(stage)}
+                  className="px-2 py-1 rounded text-[10px] font-semibold text-white opacity-80 hover:opacity-100"
+                  style={{ backgroundColor: cColor }}>
+                  Report
+                </button>
               </div>
-              <div className="flex-1">
-                <p className="text-xl font-bold text-indigo-600">{paidProjects.length}</p>
-                <p className="text-xs text-indigo-400">Projects</p>
+
+              <div className="px-1">
+                <select value={monthFilterValue} onChange={e => setColumnMonths(prev => ({ ...prev, [stage]: e.target.value }))}
+                  className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
+                  <option value="">All Time</option>
+                  {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+
+              <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                {stageProjects.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
+                    No {cLabel.toLowerCase()} projects
+                  </div>
+                ) : stageProjects.map(p => (
+                  <ProjectCard
+                    key={p.Project_ID}
+                    project={p}
+                    showMarkPaid={stage === 'Approved'}
+                  />
+                ))}
               </div>
             </div>
-          )}
-          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-            {paidProjects.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-gray-400 text-sm">
-                No paid projects {paidMonth ? `in ${paidMonth}` : ''}
-              </div>
-            ) : visiblePaid.map(p => (
-              <ProjectCard key={p.Project_ID} project={p} showAssigned showApproved showPaid />
-            ))}
-          </div>
-        </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -4109,7 +3926,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payments', label: 'Payments', icon: '💳', managerOnly: true },
   { id: 'notes', label: 'Notes', icon: '📝' },
-  { id: 'budget', label: 'Budget Tracker', icon: '💰' },
+  { id: 'budget', label: 'Progress Tracker', icon: '📈' },
 ]
 
 export default function ManagerDashboard() {
