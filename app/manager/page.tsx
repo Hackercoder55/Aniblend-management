@@ -2964,10 +2964,10 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     const str = raw.toLowerCase()
     const n = parseFloat(str.replace(/[^0-9.]/g, '')) || 0
     if (str.includes('min') || str.includes('m')) return n
-    if (str.includes('sec') || str.includes('s')) return n / 60
     if (str.includes('day') || str.includes('d')) return n * 24 * 60
     if (str.includes('hr') || str.includes('h')) return n * 60
-    return n // assume minutes if no clear unit
+    // If it specifically says 'sec' or 's', or has NO unit, treat as seconds -> convert to mins
+    return n / 60
   }
 
   // Helper: check if a "DD MMM YYYY" date string is within a "MMM YYYY" month
