@@ -2900,7 +2900,7 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
     }
     return opts
   })()
-  const [selectedMonth, setSelectedMonth] = useState('')
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0])
 
   const loadPayments = async () => {
     setLoading(true)
@@ -3002,8 +3002,9 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
     // Filter by selected month using 'paid_date' (fallback to Timestamp if not Paid but we still want to see Activity?)
     // Requirements specifically say "based on paid_date". 
     // Wait, if it's pending it might not have paid_date. If selectedMonth is set, only show cases where paid_date matches, OR date assigned/created?
-    // Let's filter specifically on `paid_date`. If not set, filter out.
-    const dateToMatch = p.paid_date ? new Date(p.paid_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    // Let's filter specifically on `paid_date`. If not set, fallback to `Timestamp`.
+    const dateSource = p.paid_date || p.Timestamp
+    const dateToMatch = dateSource ? new Date(dateSource).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
     const matchMonth = selectedMonth ? inMonth(dateToMatch, selectedMonth) : true
 
     return matchStatus && matchSearch && matchMonth
