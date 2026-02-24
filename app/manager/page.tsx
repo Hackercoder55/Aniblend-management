@@ -716,10 +716,7 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
 
     if (selectedProject.Employee_ID && selectedProject.Thread_ID) {
       try {
-        await fetch(`https://discord.com/api/v10/channels/${selectedProject.Thread_ID}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bot ${process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN}` }
-        })
+        await fetch(`/api/discord/thread?threadId=${selectedProject.Thread_ID}`, { method: 'DELETE' })
       } catch (err) {
         console.error("Failed to delete Discord thread on reassignment:", err)
       }
@@ -1471,10 +1468,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     // Delete Discord Thread if it exists
     if (project.Thread_ID) {
       try {
-        await fetch(`https://discord.com/api/v10/channels/${project.Thread_ID}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bot ${process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN}` }
-        })
+        await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' })
       } catch (err) {
         console.error("Failed to delete Discord thread:", err)
       }
@@ -1809,10 +1803,20 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
 
   const handleDeboard = async () => {
     setDeboarding(true)
-    await supabase.from('projects').update({ Employee_ID: null, Animator: null, Discord_ID: null, Discord_Username: null, Status: 'Pending' })
+
+    // Step 1: Delete Discord threads for active projects before clearing them
+    const activeProjects = projects.filter(p => p.Employee_ID === animator.Employee_ID && ['Pending', 'Active', 'Review'].includes(p.Status))
+    for (const project of activeProjects) {
+      if (project.Thread_ID) {
+        try { await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' }) } catch { }
+      }
+    }
+
+    // Step 2: Unassign projects (and clear Thread_ID)
+    await supabase.from('projects').update({ Employee_ID: null, Animator: null, Discord_ID: null, Discord_Username: null, Status: 'Pending', Thread_ID: null })
       .eq('Employee_ID', animator.Employee_ID).in('Status', ['Pending', 'Active', 'Review'])
 
-    // Delete the animator entirely from the database
+    // Step 3: Delete the animator entirely from the database
     await supabase.from('animators').delete().eq('Employee_ID', animator.Employee_ID)
 
     setDeboarding(false); onRefresh(); onClose()
@@ -1820,6 +1824,11 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
 
   const handleUnassignProject = async (project: Project) => {
     setUnassigningId(project.Project_ID)
+
+    if (project.Thread_ID) {
+      try { await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' }) } catch { }
+    }
+
     const { error } = await supabase.from('projects').update({
       Employee_ID: null,
       Animator: null,
