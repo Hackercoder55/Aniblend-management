@@ -33,6 +33,10 @@ interface Project {
   paid_date?: string
   Priority?: string
   Head_Comment?: string
+  progress?: string
+  emp_type?: string
+  warning?: string
+  acknowledgement?: string
 }
 
 interface Animator {
@@ -1296,6 +1300,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [newPriority, setNewPriority] = useState<string>('Low')
   const [newComment, setNewComment] = useState<string>('')
   const [newAssignedHead, setNewAssignedHead] = useState<string>('')
+  const [newProgress, setNewProgress] = useState<string>('')
+  const [newEmpType, setNewEmpType] = useState<string>('')
+  const [newWarning, setNewWarning] = useState<string>('')
+  const [newAcknowledgement, setNewAcknowledgement] = useState<string>('')
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const [leadsList, setLeadsList] = useState<string[]>(['Divya', 'Ayush', 'Khushi'])
@@ -1379,14 +1387,22 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   }
 
   const handleSaveStatus = async (project: Project) => {
-    if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '') && newAssignedHead === (project.assigned_head || '')) {
+    if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '') && newAssignedHead === (project.assigned_head || '') && newProgress === (project.progress || '') && newEmpType === (project.emp_type || '') && newWarning === (project.warning || '') && newAcknowledgement === (project.acknowledgement || '')) {
       setEditingProjectId(null)
       return
     }
     setIsUpdating(true)
-    let payload: any = { Status: newStatus, assigned_head: newAssignedHead }
+    let payload: any = { Status: newStatus }
+    if (!isHead) {
+      payload['assigned_head'] = newAssignedHead
+    }
     payload['Priority'] = newPriority
     payload['Head_Comment'] = newComment
+    payload['progress'] = newProgress
+    payload['emp_type'] = newEmpType
+    payload['warning'] = newWarning
+    payload['acknowledgement'] = newAcknowledgement
+
     if (newStatus === 'Approved') {
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
@@ -1534,7 +1550,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Assigned Head', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Duration', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Assigned Head', 'Progress', 'Emp Type', 'Warning', 'Acknowledgement', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -1565,7 +1581,67 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID && !isHead ? (
+                    {editingProjectId === p.Project_ID ? (
+                      <input
+                        type="text"
+                        value={newProgress}
+                        onChange={e => setNewProgress(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
+                        placeholder="Progress..."
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.progress || ''}>
+                        {p.progress || '—'}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID ? (
+                      <input
+                        type="text"
+                        value={newEmpType}
+                        onChange={e => setNewEmpType(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
+                        placeholder="Emp Type..."
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.emp_type || ''}>
+                        {p.emp_type || '—'}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID ? (
+                      <input
+                        type="text"
+                        value={newWarning}
+                        onChange={e => setNewWarning(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
+                        placeholder="Warning..."
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.warning || ''}>
+                        {p.warning || '—'}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID ? (
+                      <input
+                        type="text"
+                        value={newAcknowledgement}
+                        onChange={e => setNewAcknowledgement(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
+                        placeholder="Acknowledgement..."
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.acknowledgement || ''}>
+                        {p.acknowledgement || '—'}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingProjectId === p.Project_ID ? (
                       <select
                         value={newPriority}
                         onChange={e => setNewPriority(e.target.value)}
@@ -1584,7 +1660,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID && !isHead ? (
+                    {editingProjectId === p.Project_ID ? (
                       <input
                         type="text"
                         value={newComment}
@@ -1612,7 +1688,6 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{p['Date Assigned'] || '—'}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2 items-center flex-wrap">
                       {deletingProjectId === p.Project_ID ? (
@@ -1627,7 +1702,18 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                         </>
                       ) : (
                         <>
-                          <button onClick={() => { setEditingProjectId(p.Project_ID); setNewStatus(p.Status); setNewPriority(p.Priority || 'Low'); setNewComment(p.Head_Comment || ''); setNewAssignedHead(p.assigned_head || ''); setDeletingProjectId(null) }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
+                          <button onClick={() => {
+                            setEditingProjectId(p.Project_ID);
+                            setNewStatus(p.Status);
+                            setNewPriority(p.Priority || 'Low');
+                            setNewComment(p.Head_Comment || '');
+                            setNewAssignedHead(p.assigned_head || '');
+                            setNewProgress(p.progress || '');
+                            setNewEmpType(p.emp_type || '');
+                            setNewWarning(p.warning || '');
+                            setNewAcknowledgement(p.acknowledgement || '');
+                            setDeletingProjectId(null)
+                          }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
                           {!isHead && (
                             <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
                           )}
