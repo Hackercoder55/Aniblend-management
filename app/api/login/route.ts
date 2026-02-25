@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import bcrypt from 'bcryptjs';
 
 export async function POST(request: Request) {
     try {
@@ -26,16 +27,22 @@ export async function POST(request: Request) {
             },
         });
 
-        // Query the dashboard_users table securely
+        // Query the dashboard_users table securely based on email and role only
         const { data: user, error: dbError } = await supabaseAdmin
             .from('dashboard_users')
             .select('*')
             .eq('email', email)
-            .eq('password', password)
             .eq('role', role)
             .single();
 
         if (dbError || !user) {
+            return NextResponse.json({ error: 'Invalid credentials or role. Please try again.' }, { status: 401 });
+        }
+
+        // Verify the provided password against the hashed password in the DB
+        const passwordMatch = await bcrypt.compare(password, user.password);
+
+        if (!passwordMatch) {
             return NextResponse.json({ error: 'Invalid credentials or role. Please try again.' }, { status: 401 });
         }
 
