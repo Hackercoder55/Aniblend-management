@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer
@@ -551,7 +551,7 @@ function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
     const duration = extractDuration(selectedProject.Project_ID) || selectedProject.Duration || null
     let ok = 0; let failMsg = ''
     for (const animator of selectedAnimators) {
-      const { error: err } = await supabase.from('projects').insert({
+      const { error: err } = await apiClient.from('projects').insert({
         Project_ID: selectedProject.Project_ID,
         Project_title: selectedProject.Project_title || null,
         Project_link: selectedProject.Project_link || null,
@@ -567,7 +567,7 @@ function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
         WIP: false,
       })
       if (!err) {
-        await supabase.from('animators').update({ 'Current video': (animator['Current video'] || 0) + 1 }).eq('Employee_ID', animator.Employee_ID)
+        await apiClient.from('animators').update({ 'Current video': (animator['Current video'] || 0) + 1 }).eq('Employee_ID', animator.Employee_ID)
         ok++
       } else { failMsg = err.message }
     }
@@ -722,7 +722,7 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
       try { await fetch(`/api/discord/thread?threadId=${selectedProject.Thread_ID}`, { method: 'DELETE' }) } catch { }
     }
 
-    const { error: err } = await supabase.from('projects').update({
+    const { error: err } = await apiClient.from('projects').update({
       Employee_ID: selectedAnimator.Employee_ID,
       Animator: selectedAnimator.Name,
       Discord_ID: selectedAnimator.Discord_ID || null,
@@ -734,7 +734,7 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
       Thread_ID: null
     }).eq('Project_ID', selectedProject.Project_ID)
     if (!err) {
-      await supabase.from('animators')
+      await apiClient.from('animators')
         .update({ 'Current video': (selectedAnimator['Current video'] || 0) + 1 })
         .eq('Employee_ID', selectedAnimator.Employee_ID)
       onSuccess(`Assigned "${selectedProject.Project_title || selectedProject.Project_ID}" to ${selectedAnimator.Name}`)
@@ -964,18 +964,18 @@ function AssignTab({ projects, animators, onRefresh }: {
     // Track old animator to decrement their count
     const oldAnimatorId = project.Employee_ID && project.Employee_ID !== animator.Employee_ID ? project.Employee_ID : null
 
-    const { error } = await supabase.from('projects').update(updateData).eq('Project_ID', project.Project_ID)
+    const { error } = await apiClient.from('projects').update(updateData).eq('Project_ID', project.Project_ID)
     if (!error) {
       // Increment new animator
-      await supabase.from('animators')
+      await apiClient.from('animators')
         .update({ 'Current video': (animator['Current video'] || 0) + 1 })
         .eq('Employee_ID', animator.Employee_ID)
 
       // Decrement old animator if changed
       if (oldAnimatorId) {
-        const { data: oldAnim } = await supabase.from('animators').select('*').eq('Employee_ID', oldAnimatorId).single()
+        const { data: oldAnim } = await apiClient.from('animators').select('*').eq('Employee_ID', oldAnimatorId).single()
         if (oldAnim) {
-          await supabase.from('animators')
+          await apiClient.from('animators')
             .update({ 'Current video': Math.max(0, (oldAnim['Current video'] || 1) - 1) })
             .eq('Employee_ID', oldAnimatorId)
         }
@@ -996,7 +996,7 @@ function AssignTab({ projects, animators, onRefresh }: {
     // deletes the old thread from private workspace, creates a group workspace for both.
     // Requires Project_ID to NOT be a primary key in Supabase (use a separate id column).
     const duration = extractDuration(project.Project_ID) || project.Duration || null
-    const { error } = await supabase.from('projects').insert({
+    const { error } = await apiClient.from('projects').insert({
       Project_ID: project.Project_ID,          // same as original
       Project_title: project.Project_title || null,  // same
       Project_link: project.Project_link || null,    // same
@@ -1012,7 +1012,7 @@ function AssignTab({ projects, animators, onRefresh }: {
       WIP: false,
     })
     if (!error) {
-      await supabase.from('animators')
+      await apiClient.from('animators')
         .update({ 'Current video': (animator['Current video'] || 0) + 1 })
         .eq('Employee_ID', animator.Employee_ID)
       addToast(`Group workspace: Added ${animator.Name} to "${project.Project_title || project.Project_ID}"`)
@@ -1364,7 +1364,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const handleApprove = async (project: Project) => {
     setApproving(project.Project_ID)
     // Use both Project_ID + Animator to be specific (handles duplicate Project_IDs for group workspaces)
-    let query = supabase.from('projects').update({
+    let query = apiClient.from('projects').update({
       Status: 'Approved',
       'Date Approved': formatDate(),
       Approved_Date: formatDate(),
@@ -1373,9 +1373,9 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     const { error } = await query
     if (!error) {
       if (project.Employee_ID) {
-        const { data: anim } = await supabase.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
+        const { data: anim } = await apiClient.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
         if (anim) {
-          await supabase.from('animators')
+          await apiClient.from('animators')
             .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
             .eq('Employee_ID', project.Employee_ID)
         }
@@ -1409,12 +1409,12 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
     }
-    const { error } = await supabase.from('projects').update(payload).eq('Project_ID', project.Project_ID)
+    const { error } = await apiClient.from('projects').update(payload).eq('Project_ID', project.Project_ID)
     if (!error) {
       if (newStatus === 'Approved' && project.Status !== 'Approved' && project.Employee_ID) {
-        const { data: anim } = await supabase.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
+        const { data: anim } = await apiClient.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
         if (anim) {
-          await supabase.from('animators')
+          await apiClient.from('animators')
             .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
             .eq('Employee_ID', project.Employee_ID)
         }
@@ -1434,11 +1434,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     const empId = project.Employee_ID
     const isActiveStatus = ['Pending', 'Active', 'Review', 'Changes Requested'].includes(project.Status)
 
-    const { error } = await supabase.from('projects').delete().eq('Project_ID', project.Project_ID)
+    const { error } = await apiClient.from('projects').delete().eq('Project_ID', project.Project_ID)
     if (!error) {
       if (empId) {
         // Decrement counts for the animator
-        const { data: oldAnim } = await supabase.from('animators').select('*').eq('Employee_ID', empId).single()
+        const { data: oldAnim } = await apiClient.from('animators').select('*').eq('Employee_ID', empId).single()
         if (oldAnim) {
           const updates: any = {}
           if (oldAnim['Total video'] && oldAnim['Total video'] > 0) {
@@ -1448,7 +1448,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
             updates['Current video'] = Math.max(0, (oldAnim['Current video'] || 1) - 1)
           }
           if (Object.keys(updates).length > 0) {
-            await supabase.from('animators').update(updates).eq('Employee_ID', empId)
+            await apiClient.from('animators').update(updates).eq('Employee_ID', empId)
           }
         }
       }
@@ -1469,7 +1469,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
       try { await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' }) } catch { }
     }
 
-    const { error } = await supabase.from('projects').update({
+    const { error } = await apiClient.from('projects').update({
       Status: 'Pending',
       Employee_ID: null,
       Animator: null,
@@ -1783,7 +1783,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
       note: newNote.trim(), ...(isHead && newRating > 0 ? { rating: newRating } : {}),
     }
     const updated = [...noteEntries, entry]
-    const { error } = await supabase.from('animators')
+    const { error } = await apiClient.from('animators')
       .update({ 'Interview notes': serializeNotes(updated) }).eq('Employee_ID', animator.Employee_ID)
     if (!error) { setNoteEntries(updated); setNewNote(''); setNewRating(0); setNoteMsg('✅ Note saved!'); setTimeout(() => setNoteMsg(''), 2500) }
     else setNoteMsg('❌ Failed to save note.')
@@ -1792,7 +1792,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
 
   const handleDeleteNote = async (id: string) => {
     const updated = noteEntries.filter(e => e.id !== id)
-    await supabase.from('animators').update({ 'Interview notes': serializeNotes(updated) }).eq('Employee_ID', animator.Employee_ID)
+    await apiClient.from('animators').update({ 'Interview notes': serializeNotes(updated) }).eq('Employee_ID', animator.Employee_ID)
     setNoteEntries(updated)
   }
 
@@ -1808,11 +1808,11 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
     }
 
     // Step 2: Unassign projects (and clear Thread_ID)
-    await supabase.from('projects').update({ Employee_ID: null, Animator: null, Discord_ID: null, Discord_Username: null, Status: 'Pending', Thread_ID: null })
+    await apiClient.from('projects').update({ Employee_ID: null, Animator: null, Discord_ID: null, Discord_Username: null, Status: 'Pending', Thread_ID: null })
       .eq('Employee_ID', animator.Employee_ID).in('Status', ['Pending', 'Active', 'Review'])
 
     // Step 3: Delete the animator entirely from the database
-    await supabase.from('animators').delete().eq('Employee_ID', animator.Employee_ID)
+    await apiClient.from('animators').delete().eq('Employee_ID', animator.Employee_ID)
 
     setDeboarding(false); onRefresh(); onClose()
   }
@@ -1824,7 +1824,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
       try { await fetch(`/api/discord/thread?threadId=${project.Thread_ID}`, { method: 'DELETE' }) } catch { }
     }
 
-    const { error } = await supabase.from('projects').update({
+    const { error } = await apiClient.from('projects').update({
       Employee_ID: null,
       Animator: null,
       Discord_ID: null,
@@ -1836,9 +1836,9 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
 
     if (!error) {
       // Decrement the animator's current video count
-      const { data: currentAnim } = await supabase.from('animators').select('*').eq('Employee_ID', animator.Employee_ID).single()
+      const { data: currentAnim } = await apiClient.from('animators').select('*').eq('Employee_ID', animator.Employee_ID).single()
       if (currentAnim) {
-        await supabase.from('animators')
+        await apiClient.from('animators')
           .update({ 'Current video': Math.max(0, (currentAnim['Current video'] || 1) - 1) })
           .eq('Employee_ID', animator.Employee_ID)
       }
@@ -2096,7 +2096,7 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setMsg('')
-    const { error } = await supabase.from('animators').insert({
+    const { error } = await apiClient.from('animators').insert({
       Employee_ID: form.Employee_ID, Name: form.Name, Role: form.Role,
       Discord_ID: form.Discord_ID || null, Discord_Username: form.Discord_Username || null,
       'Phone Number': form.phoneNumber || null, 'E-mail': form.emailAddress || null,
@@ -2566,7 +2566,7 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true); setSuccessInfo(null); setErrorMsg('')
-    const { error } = await supabase.from('projects').insert({
+    const { error } = await apiClient.from('projects').insert({
       Project_ID: form.Project_ID,
       Project_title: form.Project_title,
       Project_link: form.Project_link,
@@ -2724,7 +2724,7 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
 
   const loadSubmissions = async () => {
     setLoading(true)
-    const { data } = await supabase.from('form_submissions').select('*').order('created_at', { ascending: false })
+    const { data } = await apiClient.from('form_submissions').select('*').order('created_at', { ascending: false })
     let rows = (data as FormSubmission[]) || []
     // Head should see all forms just like Manager, so we don't filter by lead_name for Head here
     setSubmissions(rows)
@@ -2751,7 +2751,7 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
 
   const handleSave = async (id: number) => {
     setSaving(true); setSaveMsg('')
-    const { error } = await supabase.from('form_submissions').update({ status: editStatus, feedback: editFeedback }).eq('id', id)
+    const { error } = await apiClient.from('form_submissions').update({ status: editStatus, feedback: editFeedback }).eq('id', id)
     if (!error) {
       setSaveMsg('Saved!')
       setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: editStatus, feedback: editFeedback } : s))
@@ -2762,7 +2762,7 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
 
   const handleDelete = async (id: number) => {
     setSaving(true)
-    const { error } = await supabase.from('form_submissions').delete().eq('id', id)
+    const { error } = await apiClient.from('form_submissions').delete().eq('id', id)
     if (!error) {
       setSubmissions(prev => prev.filter(s => s.id !== id))
       setDeletingId(null)
@@ -2925,7 +2925,7 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
 
   const loadPayments = async () => {
     setLoading(true)
-    const { data } = await supabase.from('payments').select('*')
+    const { data } = await apiClient.from('payments').select('*')
     const sorted = ((data as Payment[]) || []).sort((a, b) => {
       const ta = a.Timestamp ? new Date(a.Timestamp).getTime() : 0
       const tb = b.Timestamp ? new Date(b.Timestamp).getTime() : 0
@@ -2942,7 +2942,7 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
 
   const handleStatusChange = async (id: number, newStatus: string) => {
     setUpdatingId(id)
-    await supabase.from('payments').update({ Payment_Status: newStatus }).eq('id', id)
+    await apiClient.from('payments').update({ Payment_Status: newStatus }).eq('id', id)
     setPayments(prev => prev.map(p => p.id === id ? { ...p, Payment_Status: newStatus } : p))
     setUpdatingId(null)
   }
@@ -2951,7 +2951,7 @@ function PaymentsTab({ animators, projects }: { animators: Animator[]; projects:
     if (selected.size === 0) return
     setBulkUpdating(true)
     const ids = Array.from(selected)
-    await supabase.from('payments').update({ Payment_Status: 'Paid' }).in('id', ids)
+    await apiClient.from('payments').update({ Payment_Status: 'Paid' }).in('id', ids)
     setPayments(prev => prev.map(p => selected.has(p.id) ? { ...p, Payment_Status: 'Paid' } : p))
     setSelected(new Set())
     setBulkUpdating(false)
@@ -3653,8 +3653,8 @@ function NotesTab({ user }: { user: DashboardUser }) {
   const loadData = async () => {
     setLoading(true)
     const [{ data: notesData, error: notesErr }, { data: leadsData }] = await Promise.all([
-      supabase.from('notes').select('*').order('created_at', { ascending: false }),
-      supabase.from('leads').select('Head_Name'),
+      apiClient.from('notes').select('*').order('created_at', { ascending: false }),
+      apiClient.from('leads').select('Head_Name'),
     ])
     if (notesErr) setRlsError(notesErr.message)
     else setRlsError('')
@@ -3668,7 +3668,7 @@ function NotesTab({ user }: { user: DashboardUser }) {
   const saveQuickNote = async () => {
     if (!quickNote.trim()) return
     setSavingQuick(true)
-    const { error } = await supabase.from('notes').insert({
+    const { error } = await apiClient.from('notes').insert({
       content: quickNote.trim(),
       created_by: user.full_name || user.email,
       assigned_to: null,
@@ -3689,7 +3689,7 @@ function NotesTab({ user }: { user: DashboardUser }) {
   const addTodo = async () => {
     if (!todoContent.trim()) return
     setAddingTodo(true)
-    const { error } = await supabase.from('notes').insert({
+    const { error } = await apiClient.from('notes').insert({
       content: todoContent.trim(),
       created_by: user.full_name || user.email,
       assigned_to: todoAssignee || null,
@@ -3702,12 +3702,12 @@ function NotesTab({ user }: { user: DashboardUser }) {
   }
 
   const toggleDone = async (note: Note) => {
-    await supabase.from('notes').update({ is_done: !note.is_done }).eq('id', note.id)
+    await apiClient.from('notes').update({ is_done: !note.is_done }).eq('id', note.id)
     setNotes(prev => prev.map(n => n.id === note.id ? { ...n, is_done: !n.is_done } : n))
   }
 
   const deleteNote = async (id: number) => {
-    await supabase.from('notes').delete().eq('id', id)
+    await apiClient.from('notes').delete().eq('id', id)
     setNotes(prev => prev.filter(n => n.id !== id))
   }
 
@@ -3940,7 +3940,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   const handleMarkPaid = async (project: Project) => {
     setMarkingId(project.Project_ID)
     const today = formatDate()
-    const { error } = await supabase
+    const { error } = await apiClient
       .from('projects')
       .update({ Payment_Status: 'Client Paid', Status: 'Paid', client_paid_date: today })
       .eq('Project_ID', project.Project_ID)
@@ -4172,6 +4172,43 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
 ]
 
+
+// --- Secure Server-Side Proxy Client ---
+// Replaces the direct Supabase client to fix ISP routing blocks
+const apiClient = {
+  from: (table: string) => {
+    let _action = 'select';
+    let _payload: any = null;
+    let _match: any = null;
+    let _inMatch: any = null;
+    let _order: any = null;
+    let _single = false;
+
+    const builder: any = {
+      select(params?: string) { _action = 'select'; _payload = params; return builder; },
+      insert(payload: any) { _action = 'insert'; _payload = payload; return builder; },
+      update(payload: any) { _action = 'update'; _payload = payload; return builder; },
+      delete() { _action = 'delete'; return builder; },
+      eq(col: string, val: any) { _match = _match || {}; _match[col] = val; return builder; },
+      in(col: string, vals: any[]) { _inMatch = { column: col, values: vals }; return builder; },
+      order(col: string, opts?: any) { _order = { column: col, options: opts }; return builder; },
+      single() { _single = true; return builder; },
+      then(resolve: (value: any) => void, reject: (reason?: any) => void) {
+        fetch(`/api/${table}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: _action, payload: _payload, match: _match, inMatch: _inMatch, order: _order, single: _single })
+        })
+          .then(res => res.json().then(data => res.ok ? data : Promise.reject(data.error)))
+          .then(data => resolve({ data: data.data, error: null }))
+          .catch(error => resolve({ data: null, error: typeof error === 'string' ? { message: error } : error }));
+      }
+    };
+    return builder as PromiseLike<any> & any;
+  }
+};
+// ----------------------------------------
+
 export default function ManagerDashboard() {
   const router = useRouter()
   const [user, setUser] = useState<DashboardUser | null>(null)
@@ -4190,11 +4227,11 @@ export default function ManagerDashboard() {
   const fetchData = useCallback(async () => {
     if (!user) return
     setLoading(true)
-    let query = supabase.from('projects').select('*')
+    let query = apiClient.from('projects').select('*')
     // Removing the explicit assigned_head filter here so Head can view all projects in Analytics
     const [{ data: pData }, { data: aData }] = await Promise.all([
       query,
-      supabase.from('animators').select('*'),
+      apiClient.from('animators').select('*'),
     ])
     setProjects((pData as Project[]) || [])
     setAnimators((aData as Animator[]) || [])
