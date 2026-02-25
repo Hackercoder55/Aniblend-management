@@ -18,32 +18,21 @@ export default function LoginPage() {
     setError('')
 
     try {
-      const { data, error: dbError } = await supabase
-        .from('dashboard_users')
-        .select('*')
-        .eq('email', email)
-        .eq('password', password)
-        .eq('role', role)
-        .single()
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, role }),
+      })
 
-      if (dbError || !data) {
-        setError('Invalid credentials or role. Please try again.')
+      const result = await response.json()
+
+      if (!response.ok) {
+        setError(result.error || 'Invalid credentials or role. Please try again.')
         setLoading(false)
         return
       }
 
-      await supabase
-        .from('dashboard_users')
-        .update({ last_login: new Date().toISOString() })
-        .eq('id', data.id)
-
-      localStorage.setItem('tfa_user', JSON.stringify({
-        id: data.id,
-        email: data.email,
-        role: data.role,
-        full_name: data.full_name,
-        employee_id: data.employee_id,
-      }))
+      localStorage.setItem('tfa_user', JSON.stringify(result.user))
 
       router.push('/manager')
     } catch {
