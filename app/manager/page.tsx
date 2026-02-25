@@ -3206,17 +3206,17 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
 
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
 
-  // Helper: parse duration strictly to minutes
+  // Helper: parse duration strictly to seconds
   const parseDurationSecLocal = (dur: string, pId?: string): number => {
     const raw = dur || (pId ? extractDuration(pId) : '') || ''
     if (!raw) return 0
     const str = raw.toLowerCase()
     const n = parseFloat(str.replace(/[^0-9.]/g, '')) || 0
-    if (str.includes('min') || str.includes('m')) return n
-    if (str.includes('day') || str.includes('d')) return n * 24 * 60
-    if (str.includes('hr') || str.includes('h')) return n * 60
-    // If it specifically says 'sec' or 's', or has NO unit, treat as seconds -> convert to mins
-    return n / 60
+    if (str.includes('min') || str.includes('m')) return n * 60
+    if (str.includes('day') || str.includes('d')) return n * 24 * 60 * 60
+    if (str.includes('hr') || str.includes('h')) return n * 60 * 60
+    // If it specifically says 'sec' or 's', or has NO unit, treat as seconds -> KEEP AS SECONDS
+    return n
   }
 
   // Helper: check if a "DD MMM YYYY" date string is within a "MMM YYYY" month
@@ -3449,8 +3449,8 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
             value: projectedTotal,
             color: '#3b82f6',
             sub: selectedMonth
-              ? `${projectedMinsTotal} mins`
-              : `${projectedMinsTotal} mins | Next 7d: ${next7Total} (${next7MinsTotal}m)`,
+              ? `${formatSec(projectedMinsTotal)}`
+              : `${formatSec(projectedMinsTotal)} | Next 7d: ${next7Total} (${formatSec(next7MinsTotal)})`,
             projects: null
           },
           { label: 'Total Animators', value: animators.length, color: '#8b5cf6', sub: null, projects: null },
