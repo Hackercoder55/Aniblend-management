@@ -60,13 +60,15 @@ export default function LoginPage() {
     >
       <div className="w-full max-w-md mx-4">
         <div className="text-center mb-8">
-          <div
-            className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4"
-            style={{ background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(10px)' }}
-          >
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.82V15a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-            </svg>
+          <div className="inline-flex items-center justify-center mb-4">
+            <img
+              src="/logo.png"
+              alt="The Future Animations Logo"
+              className="w-24 h-24 object-contain drop-shadow-2xl"
+              onError={(e) => {
+                e.currentTarget.src = 'https://ui-avatars.com/api/?name=TFA&background=667eea&color=fff&rounded=true&size=128';
+              }}
+            />
           </div>
           <h1 className="text-3xl font-bold text-white">TFA Dashboard</h1>
           <p className="mt-1" style={{ color: '#d8b4fe' }}>The Future Animation Agency</p>

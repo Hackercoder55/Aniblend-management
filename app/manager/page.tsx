@@ -4214,10 +4214,15 @@ export default function ManagerDashboard() {
     <>
       <div className="p-5 border-b border-gray-100">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.82V15a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-            </svg>
+          <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
+            <img
+              src="/logo.png"
+              alt="Logo"
+              className="w-full h-full object-contain drop-shadow-md"
+              onError={(e) => {
+                e.currentTarget.src = 'https://ui-avatars.com/api/?name=TFA&background=667eea&color=fff&rounded=true';
+              }}
+            />
           </div>
           <div>
             <p className="font-bold text-gray-800 text-sm">TFA Dashboard</p>
