@@ -1103,13 +1103,13 @@ function AssignTab({ projects, animators, onRefresh }: {
                     onChange={e => { setProjectSearch(e.target.value); setSelectedProject(null); setThreadConflict(null) }}
                     placeholder="Type project ID or title..."
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 text-gray-800" />
-                  {projectSearch && !selectedProject && (
-                    <div className="mt-1 border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: '150px' }}>
+                  {!selectedProject && (
+                    <div className="mt-1 border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: '200px' }}>
                       {filteredUnassigned.length === 0
-                        ? <p className="p-3 text-xs text-gray-400 text-center">No matching projects</p>
-                        : filteredUnassigned.slice(0, 10).map(p => (
+                        ? <p className="p-3 text-xs text-gray-400 text-center">No pending projects available</p>
+                        : filteredUnassigned.slice(0, 50).map(p => (
                           <button key={p.Project_ID} type="button"
-                            onClick={() => { setSelectedProject(p); setProjectSearch(p.Project_ID) }}
+                            onClick={() => { setSelectedProject(p); setProjectSearch(p.Project_ID); setThreadConflict(null) }}
                             className="w-full text-left px-3 py-2 hover:bg-indigo-50 transition-colors border-b border-gray-50 last:border-0">
                             <p className="font-mono text-xs text-gray-500">{p.Project_ID}</p>
                             <p className="text-xs font-medium text-gray-800 truncate">{p.Project_title || '—'}</p>
