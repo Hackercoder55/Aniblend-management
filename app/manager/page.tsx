@@ -2290,18 +2290,32 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
 }
 
 function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator; avgInfo: { totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] }; onClose: () => void }) {
-  const sortedEntries = [...avgInfo.entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  // State for the currently viewed month. Default to current month.
+  const [viewDate, setViewDate] = useState(new Date())
 
-  // Generate a mini calendar heatmap for the last 30 days
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const last30Days = Array.from({ length: 30 }, (_, i) => {
-    const d = new Date(today)
-    d.setDate(d.getDate() - (29 - i))
-    return d.toISOString().split('T')[0]
+  // Helper to change month
+  const handlePrevMonth = () => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1))
+  const handleNextMonth = () => setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1))
+
+  // Determine all days in the currently selected month
+  const year = viewDate.getFullYear()
+  const month = viewDate.getMonth()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+  const monthDays = Array.from({ length: daysInMonth }, (_, i) => {
+    // Format as YYYY-MM-DD to match the logs
+    const y = year
+    const m = String(month + 1).padStart(2, '0')
+    const d = String(i + 1).padStart(2, '0')
+    return `${y}-${m}-${d}`
   })
 
-  // Map each date to the total seconds logged on that date
+  // Filter entries to only show ones from the selected month
+  const selectedMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`
+  const monthEntries = avgInfo.entries.filter(e => e.date.startsWith(selectedMonthStr))
+  const sortedMonthEntries = [...monthEntries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+  // Map each date to the total seconds logged on that date (across ALL history for the heatmap to be accurate if we navigate)
   const dateMap: Record<string, number> = {}
   avgInfo.entries.forEach(e => {
     dateMap[e.date] = (dateMap[e.date] || 0) + e.seconds
@@ -2342,11 +2356,36 @@ function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator
 
         <div className="flex-1 overflow-auto p-5">
           <div className="mb-6">
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Activity Heatmap (Last 30 Days)</h4>
-            <div className="flex gap-1 flex-wrap">
-              {last30Days.map(dateStr => {
+            <div className="flex items-center justify-between mb-3 border-b border-gray-100 pb-2">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Activity Heatmap</h4>
+              <div className="flex items-center gap-3">
+                <button onClick={handlePrevMonth} className="text-gray-400 hover:text-orange-600 transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <span className="text-sm font-bold text-gray-700 w-24 text-center">
+                  {viewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                </span>
+                <button onClick={handleNextMonth} className="text-gray-400 hover:text-orange-600 transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <div key={day} className="text-[10px] text-center text-gray-400 font-semibold uppercase">{day}</div>
+              ))}
+
+              {/* Empty padding boxes for the first row to align to the correct day of the week */}
+              {Array.from({ length: new Date(year, month, 1).getDay() }).map((_, i) => (
+                <div key={`empty-${i}`} className="w-full aspect-square" />
+              ))}
+
+              {monthDays.map(dateStr => {
                 const secs = dateMap[dateStr] || 0
-                // Determine color intensity based on seconds (e.g., >0 is active, higher is darker orange)
+                const isToday = dateStr === new Date().toISOString().split('T')[0]
+
+                // Determine color intensity based on seconds
                 let bgClass = "bg-gray-100"
                 if (secs > 0 && secs <= 30) bgClass = "bg-orange-200"
                 else if (secs > 30 && secs <= 90) bgClass = "bg-orange-300"
@@ -2356,16 +2395,27 @@ function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator
                 return (
                   <div
                     key={dateStr}
-                    className={`w-5 h-5 rounded-sm ${bgClass} cursor-help transition-all hover:ring-2 hover:ring-orange-600 ring-offset-1`}
-                    title={`${dateStr}: ${secs > 0 ? formatSec(secs) : 'No output'}`}
-                  />
+                    className={`w-full aspect-square rounded-md ${bgClass} cursor-help transition-all hover:ring-2 hover:ring-orange-600 ring-offset-1 flex items-center justify-center relative group`}
+                  >
+                    {/* Day Number Overlay */}
+                    <span className={`text-[10px] font-bold ${secs > 90 ? 'text-white' : 'text-gray-500'} opacity-30 group-hover:opacity-100 z-10 transition-opacity`}>
+                      {parseInt(dateStr.split('-')[2])}
+                    </span>
+                    {/* Today Highlight Indicator */}
+                    {isToday && <div className="absolute inset-0 border-2 border-indigo-500 rounded-md pointer-events-none"></div>}
+
+                    {/* Desktop Tooltip */}
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max px-2 py-1 bg-gray-800 text-white text-[10px] rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-20 pointer-events-none">
+                      {dateStr}: {secs > 0 ? formatSec(secs) : 'No output'}
+                    </div>
+                  </div>
                 )
               })}
             </div>
-            <div className="flex gap-2 items-center mt-2 text-[10px] text-gray-400 font-medium">
+            <div className="flex gap-2 items-center justify-end mt-3 text-[10px] text-gray-400 font-medium">
               <span>Less</span>
               <div className="flex gap-1">
-                <div className="w-3 h-3 rounded-sm bg-gray-100"></div>
+                <div className="w-3 h-3 rounded-sm bg-gray-50 border border-gray-100"></div>
                 <div className="w-3 h-3 rounded-sm bg-orange-200"></div>
                 <div className="w-3 h-3 rounded-sm bg-orange-300"></div>
                 <div className="w-3 h-3 rounded-sm bg-orange-400"></div>
@@ -2375,12 +2425,17 @@ function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator
             </div>
           </div>
 
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4 border-t border-gray-100 pt-4">Detailed Log</h4>
-          {sortedEntries.length === 0 ? (
-            <div className="text-center py-6 text-gray-500 text-sm">No output logged yet.</div>
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4 border-t border-gray-100 pt-4">
+            Detailed Log: {viewDate.toLocaleString('default', { month: 'long', year: 'numeric' })}
+          </h4>
+
+          {sortedMonthEntries.length === 0 ? (
+            <div className="text-center py-6 text-gray-500 text-sm">
+              No output logged in {viewDate.toLocaleString('default', { month: 'long' })}.
+            </div>
           ) : (
             <div className="grid gap-3">
-              {sortedEntries.map((e, i) => (
+              {sortedMonthEntries.map((e, i) => (
                 <div key={i} className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-lg flex flex-col items-center justify-center flex-shrink-0">
