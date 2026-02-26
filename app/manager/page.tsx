@@ -37,6 +37,7 @@ interface Project {
   emp_type?: string
   warning?: string
   acknowledgement?: string
+  output_history?: { date: string; empId: string; seconds: number }[]
 }
 
 interface Animator {
@@ -1388,6 +1389,85 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     setApproving(null)
   }
 
+  const [loggingOutputProject, setLoggingOutputProject] = useState<Project | null>(null)
+
+  function LogOutputModal({ project, onClose, onRefresh }: { project: Project, onClose: () => void, onRefresh: () => void }) {
+    const [seconds, setSeconds] = useState('')
+    const [saving, setSaving] = useState(false)
+    const dateStr = formatDate() // Today's date
+    const history = project.output_history || []
+
+    // Default to the animator directly assigned in this row if possible
+    const [selectedEmpId, setSelectedEmpId] = useState(project.Employee_ID || '')
+
+    const handleLog = async (e: React.FormEvent) => {
+      e.preventDefault()
+      if (!selectedEmpId || !seconds || isNaN(Number(seconds))) return
+
+      setSaving(true)
+      const secNum = Number(seconds)
+      const newEntry = { date: dateStr, empId: selectedEmpId, seconds: secNum }
+      const newHistory = [...history, newEntry]
+
+      const { error } = await apiClient
+        .from('projects')
+        .update({ output_history: newHistory })
+        .eq('Project_ID', project.Project_ID)
+
+      setSaving(false)
+      if (error) {
+        addToast(`❌ Failed to log output: ${error.message}`, 'error')
+      } else {
+        addToast(`✅ Logged ${secNum} sec for today.`)
+        onRefresh()
+        onClose()
+      }
+    }
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="font-bold text-gray-800">Log Daily Output</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+          </div>
+          <form onSubmit={handleLog} className="p-4 space-y-4">
+            <div>
+              <p className="text-xs text-gray-400 font-mono mb-2">{project.Project_ID}</p>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Animator</label>
+              <input type="text" value={project.Animator || 'No Animator Assigned'} disabled
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Completed Today (Seconds)</label>
+              <input type="number" min="1" value={seconds} onChange={e => setSeconds(e.target.value)} required autoFocus
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none" />
+            </div>
+            <button type="submit" disabled={saving || !selectedEmpId}
+              className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+              {saving ? 'Saving...' : `Save for ${dateStr}`}
+            </button>
+
+            {history.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">Recent Output</p>
+                <div className="max-h-32 overflow-auto space-y-2">
+                  {history.slice().reverse().map((h, i) => (
+                    <div key={i} className="flex justify-between items-center text-xs">
+                      <span className="text-gray-400">{h.date}</span>
+                      <span className="font-bold text-gray-700">{h.seconds} sec</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </form>
+        </div>
+      </div>
+    )
+  }
+
   const handleSaveStatus = async (project: Project) => {
     if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '') && newAssignedHead === (project.assigned_head || '') && newProgress === (project.progress || '') && newEmpType === (project.emp_type || '') && newWarning === (project.warning || '') && newAcknowledgement === (project.acknowledgement || '')) {
       setEditingProjectId(null)
@@ -1544,14 +1624,14 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Assigned Head', 'Progress', 'Emp Type', 'Warning', 'Acknowledgement', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Head', 'Progress', 'Emp Type', 'Warning', 'Acknowledgement', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-8 text-gray-400">No projects found</td></tr>
+                <tr><td colSpan={15} className="text-center py-8 text-gray-400">No projects found</td></tr>
               ) : filtered.map((p, i) => (
                 <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{p.Project_ID}</td>
@@ -1560,6 +1640,15 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     {p.Project_link ? <a href={p.Project_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 hover:underline font-medium">Link</a> : <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
+
+                  {/* LOG OUTPUT COLUMN */}
+                  <td className="px-4 py-3">
+                    <button onClick={() => setLoggingOutputProject(p)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors whitespace-nowrap">
+                      Log Output
+                    </button>
+                  </td>
+
                   <td className="px-4 py-3 text-xs">
                     {editingProjectId === p.Project_ID && !isHead ? (
                       <select
@@ -1734,6 +1823,14 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           Showing {filtered.length} of {projects.length} projects
         </div>
       </div>
+
+      {loggingOutputProject && (
+        <LogOutputModal
+          project={loggingOutputProject}
+          onClose={() => setLoggingOutputProject(null)}
+          onRefresh={onRefresh}
+        />
+      )}
     </div>
   )
 }
@@ -2192,6 +2289,67 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
   )
 }
 
+function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator; avgInfo: { totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] }; onClose: () => void }) {
+  const sortedEntries = [...avgInfo.entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="font-bold text-gray-800 text-lg">Daily Output History</h3>
+            <p className="text-sm font-medium text-gray-500">{animator.Name}</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400 flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <div className="p-5 bg-orange-50 border-b border-orange-100 flex justify-around flex-shrink-0 text-center">
+          <div>
+            <p className="text-3xl font-bold text-orange-600">{avgInfo.days > 0 ? formatSec(Math.round(avgInfo.totalSec / avgInfo.days)) : '0s'}</p>
+            <p className="text-[10px] text-orange-500 uppercase tracking-wider font-semibold mt-1">Average / Day</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-gray-800">{formatSec(avgInfo.totalSec)}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">Total Output</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-gray-800">{avgInfo.days}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">Active Days</p>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto p-5">
+          {sortedEntries.length === 0 ? (
+            <div className="text-center py-10 text-gray-500">No output logged yet.</div>
+          ) : (
+            <div className="relative border-l-2 border-orange-200 ml-3 space-y-6 pb-4">
+              {sortedEntries.map((e, i) => (
+                <div key={i} className="relative pl-6">
+                  {/* Timeline dot */}
+                  <div className="absolute w-3 h-3 bg-white border-2 border-orange-400 rounded-full -left-[7px] top-1"></div>
+
+                  <div className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-md">{e.date}</span>
+                      <span className="text-sm font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded-md">+{e.seconds} sec</span>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">{e.title || 'Untitled Project'}</p>
+                      <p className="text-xs font-mono text-gray-400 mt-1">{e.projectId}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators: Animator[]; projects: Project[]; onClose: () => void }) {
   const [reportType, setReportType] = useState<'monthly' | 'all-time'>('monthly')
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -2223,7 +2381,23 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
       return d.getFullYear() === selYear && (d.getMonth() + 1) === selMonth
     })
 
-    const totalSecs = aProjects.reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
+    const totalSecs = aProjects.reduce((sum, p) => {
+      // 1. If output_history exists for this animator on this project, sum those seconds
+      if (p.output_history && p.output_history.length > 0) {
+        const myOutput = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
+        if (myOutput > 0) return sum + myOutput
+      }
+
+      // 2. Fallback: If no history exists, use the old calculation
+      const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+      const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+      const isGroup = anims.length > 1
+      if (isGroup) {
+        return sum + Math.round(baseSec / anims.length)
+      } else {
+        return sum + baseSec
+      }
+    }, 0)
 
     return {
       animator: a,
@@ -2358,6 +2532,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const isHead = user.role === 'head'
 
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
+  const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
 
   const filtered = animators
     .filter(a => {
@@ -2378,6 +2553,13 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
   return (
     <div className="space-y-4">
+      {outputHistoryProps && (
+        <OutputHistoryModal
+          animator={outputHistoryProps.animator}
+          avgInfo={outputHistoryProps.avgInfo}
+          onClose={() => setOutputHistoryProps(null)}
+        />
+      )}
       {listModalProps && (
         <ProjectListModal title={listModalProps.title} projects={listModalProps.sortedProjects} onClose={() => setListModalProps(null)} />
       )}
@@ -2439,6 +2621,35 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           const entries = parseNotes(a['Interview notes'])
           const avg = avgRating(entries)
 
+          // Calculate Average Daily Output Info
+          const animProjects = projects.filter(p => p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()))
+          let totalSec = 0
+          const activeDays = new Set<string>()
+          const historyEntries: { date: string, seconds: number, projectId: string, title: string }[] = []
+
+          animProjects.forEach(p => {
+            if (p.output_history && p.output_history.length > 0) {
+              p.output_history.forEach(h => {
+                if (h.empId === a.Employee_ID) {
+                  totalSec += h.seconds
+                  activeDays.add(h.date)
+                  historyEntries.push({
+                    date: h.date,
+                    seconds: h.seconds,
+                    projectId: p.Project_ID,
+                    title: p.Project_title || ''
+                  })
+                }
+              })
+            }
+          })
+
+          const avgInfo = {
+            totalSec,
+            days: activeDays.size,
+            entries: historyEntries
+          }
+
           return (
             <div key={a.Employee_ID} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col">
               <div className="flex items-start justify-between mb-4">
@@ -2478,29 +2689,71 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="grid grid-cols-3 gap-2 mb-4">
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Active Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status)) })}
-                  className="bg-gray-50 rounded-xl p-3 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
-                  <p className="text-2xl font-bold" style={{ color: loadColor }}>{load}</p>
-                  <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Active Videos</p>
+                  className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
+                  <p className="text-xl font-bold" style={{ color: loadColor }}>{load}</p>
+                  <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Active</p>
                   {(() => {
                     const durationSec = projects
                       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status))
-                      .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
-                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0 min 0 sec'}</p>
+                      .reduce((sum, p) => {
+                        if (p.output_history && p.output_history.length > 0) {
+                          const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
+                          if (myOut > 0) return sum + myOut
+                        }
+                        const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                        const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+                        if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
+                        return sum + baseSec
+                      }, 0)
+                    return <p className={`text-[10px] font-semibold mt-1 ${durationSec > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0s'}</p>
                   })()}
                 </button>
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
-                  className="bg-gray-50 rounded-xl p-3 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
-                  <p className="text-2xl font-bold text-gray-700">{a['Total video'] || 0}</p>
-                  <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total Videos</p>
+                  className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
+                  <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
+                  <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
                   {(() => {
                     const durationSec = projects
                       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
-                      .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
-                    return <p className={`text-xs font-semibold mt-1 ${durationSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0 min 0 sec'}</p>
+                      .reduce((sum, p) => {
+                        if (p.output_history && p.output_history.length > 0) {
+                          const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
+                          if (myOut > 0) return sum + myOut
+                        }
+                        const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                        const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+                        if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
+                        return sum + baseSec
+                      }, 0)
+                    return <p className={`text-[10px] font-semibold mt-1 ${durationSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0s'}</p>
+                  })()}
+                </button>
+                <button
+                  onClick={() => setOutputHistoryProps({ animator: a, avgInfo })}
+                  className="bg-orange-50 rounded-xl p-2 text-center flex flex-col items-center justify-center hover:bg-orange-100 transition-colors hover:shadow-inner">
+                  {(() => {
+                    if (avgInfo.days === 0) {
+                      return (
+                        <>
+                          <p className="text-xl font-bold text-orange-400">0s</p>
+                          <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
+                          <p className="text-[10px] font-semibold mt-1 text-orange-400">0 days logged</p>
+                        </>
+                      )
+                    }
+
+                    const avg = Math.round(avgInfo.totalSec / avgInfo.days)
+                    return (
+                      <>
+                        <p className="text-xl font-bold text-orange-600">{formatSec(avg)}</p>
+                        <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
+                        <p className="text-[10px] font-semibold mt-1 text-orange-600">{avgInfo.days} days active</p>
+                      </>
+                    )
                   })()}
                 </button>
               </div>
