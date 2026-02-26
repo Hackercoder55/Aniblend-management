@@ -2485,14 +2485,16 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
       // Must be approved/completed
       if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return false
 
-      // Check date
+      // If 'all-time' is selected, include all approved projects regardless of whether a date is cleanly parsable
+      if (reportType === 'all-time') return true;
+
+      // Check date (only heavily enforced for monthly views)
       const dateStr = p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date
       if (!dateStr) return false
 
       const d = parseDate(dateStr)
       if (d.getTime() === 0) return false
 
-      if (reportType === 'all-time') return true;
       return d.getFullYear() === selYear && (d.getMonth() + 1) === selMonth
     })
 
