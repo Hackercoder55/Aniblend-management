@@ -2193,6 +2193,7 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
 }
 
 function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators: Animator[]; projects: Project[]; onClose: () => void }) {
+  const [reportType, setReportType] = useState<'monthly' | 'all-time'>('monthly')
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -2218,6 +2219,7 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
       const d = parseDate(dateStr)
       if (d.getTime() === 0) return false
 
+      if (reportType === 'all-time') return true;
       return d.getFullYear() === selYear && (d.getMonth() + 1) === selMonth
     })
 
@@ -2232,9 +2234,12 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
   }).filter(r => r.projectsCount > 0).sort((a, b) => b.totalSecs - a.totalSecs)
 
   const handleDownloadCSV = () => {
+    const reportTitle = reportType === 'all-time' ? 'Global All-Time Report for Animators' : 'Global Monthly Report for Animators';
+    const reportPeriod = reportType === 'all-time' ? 'All Time' : selectedMonth;
+
     const rows = [
-      ['Global Monthly Report for Animators'],
-      ['Month:', selectedMonth],
+      [reportTitle],
+      ['Period:', reportPeriod],
       [],
       ['Animator Name', 'Employee ID', 'Total Projects', 'Total Minutes', 'Projects List (IDs)']
     ]
@@ -2272,7 +2277,7 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `Animator_Monthly_Report_${selectedMonth}.csv`
+    a.download = `Animator_${reportType === 'all-time' ? 'All_Time' : 'Monthly'}_Report_${reportType === 'monthly' ? selectedMonth : 'Total'}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -2281,16 +2286,21 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <h3 className="font-bold text-gray-800 text-lg">Global Monthly Report (Animators)</h3>
+          <h3 className="font-bold text-gray-800 text-lg">Global Report (Animators)</h3>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
         <div className="p-5 border-b border-gray-50 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between bg-gray-50 flex-shrink-0">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-gray-700">Select Month:</span>
-            <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none" />
+            <select value={reportType} onChange={e => setReportType(e.target.value as 'monthly' | 'all-time')} className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none bg-white font-semibold text-gray-700">
+              <option value="monthly">Monthly</option>
+              <option value="all-time">All Time</option>
+            </select>
+            {reportType === 'monthly' && (
+              <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none" />
+            )}
           </div>
           <button onClick={handleDownloadCSV} disabled={reportData.length === 0}
             className="flex flex-shrink-0 items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 hover:opacity-90 min-w-max"
@@ -2301,7 +2311,7 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
         </div>
         <div className="flex-1 overflow-auto p-5">
           {reportData.length === 0 ? (
-            <div className="text-center py-10 text-gray-500">No approved projects found in {selectedMonth}.</div>
+            <div className="text-center py-10 text-gray-500">No approved projects found {reportType === 'monthly' ? `in ${selectedMonth}` : 'ever'}.</div>
           ) : (
             <div className="space-y-4">
               <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Summary by Animator</p>
