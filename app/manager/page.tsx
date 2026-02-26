@@ -2251,16 +2251,18 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
 
     rows.push([])
     rows.push(['--- Project Breakdown ---'])
-    rows.push(['Project ID', 'Project Title', 'Animator', 'Duration (mins)', 'Approved Date'])
+    rows.push(['Project ID', 'Project Title', 'Project Link', 'Animator', 'Assigned Date', 'Approved Date', 'Duration (mins)'])
     reportData.forEach(r => {
       r.projects.forEach(p => {
         const mins = formatSec(parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID))
         rows.push([
           `"${p.Project_ID}"`,
           `"${p.Project_title || ''}"`,
+          `"${p.Project_link || ''}"`,
           `"${r.animator.Name}"`,
-          mins,
-          `"${p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date || ''}"`
+          `"${p['Date Assigned'] || ''}"`,
+          `"${p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date || ''}"`,
+          mins
         ])
       })
     })
