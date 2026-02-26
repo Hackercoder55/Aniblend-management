@@ -2292,9 +2292,24 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
 function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator; avgInfo: { totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] }; onClose: () => void }) {
   const sortedEntries = [...avgInfo.entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
+  // Generate a mini calendar heatmap for the last 30 days
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const last30Days = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(today)
+    d.setDate(d.getDate() - (29 - i))
+    return d.toISOString().split('T')[0]
+  })
+
+  // Map each date to the total seconds logged on that date
+  const dateMap: Record<string, number> = {}
+  avgInfo.entries.forEach(e => {
+    dateMap[e.date] = (dateMap[e.date] || 0) + e.seconds
+  })
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="font-bold text-gray-800 text-lg">Daily Output History</h3>
@@ -2312,33 +2327,75 @@ function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator
           </div>
           <div>
             <p className="text-3xl font-bold text-gray-800">{formatSec(avgInfo.totalSec)}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">Total Output</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">Total All-Time</p>
           </div>
-          <div>
+          <div className="group relative cursor-help">
             <p className="text-3xl font-bold text-gray-800">{avgInfo.days}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">Active Days</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1 border-b border-dashed border-gray-300 inline-block pb-0.5">Active Days</p>
+
+            {/* Tooltip for clarification */}
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-800 text-white text-[10px] rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 pointer-events-none">
+              "Active Days" means the total number of unique days where at least 1 second of output was logged.
+            </div>
           </div>
         </div>
 
         <div className="flex-1 overflow-auto p-5">
-          {sortedEntries.length === 0 ? (
-            <div className="text-center py-10 text-gray-500">No output logged yet.</div>
-          ) : (
-            <div className="relative border-l-2 border-orange-200 ml-3 space-y-6 pb-4">
-              {sortedEntries.map((e, i) => (
-                <div key={i} className="relative pl-6">
-                  {/* Timeline dot */}
-                  <div className="absolute w-3 h-3 bg-white border-2 border-orange-400 rounded-full -left-[7px] top-1"></div>
+          <div className="mb-6">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Activity Heatmap (Last 30 Days)</h4>
+            <div className="flex gap-1 flex-wrap">
+              {last30Days.map(dateStr => {
+                const secs = dateMap[dateStr] || 0
+                // Determine color intensity based on seconds (e.g., >0 is active, higher is darker orange)
+                let bgClass = "bg-gray-100"
+                if (secs > 0 && secs <= 30) bgClass = "bg-orange-200"
+                else if (secs > 30 && secs <= 90) bgClass = "bg-orange-300"
+                else if (secs > 90 && secs <= 180) bgClass = "bg-orange-400"
+                else if (secs > 180) bgClass = "bg-orange-500"
 
-                  <div className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-md">{e.date}</span>
-                      <span className="text-sm font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded-md">+{e.seconds} sec</span>
+                return (
+                  <div
+                    key={dateStr}
+                    className={`w-5 h-5 rounded-sm ${bgClass} cursor-help transition-all hover:ring-2 hover:ring-orange-600 ring-offset-1`}
+                    title={`${dateStr}: ${secs > 0 ? formatSec(secs) : 'No output'}`}
+                  />
+                )
+              })}
+            </div>
+            <div className="flex gap-2 items-center mt-2 text-[10px] text-gray-400 font-medium">
+              <span>Less</span>
+              <div className="flex gap-1">
+                <div className="w-3 h-3 rounded-sm bg-gray-100"></div>
+                <div className="w-3 h-3 rounded-sm bg-orange-200"></div>
+                <div className="w-3 h-3 rounded-sm bg-orange-300"></div>
+                <div className="w-3 h-3 rounded-sm bg-orange-400"></div>
+                <div className="w-3 h-3 rounded-sm bg-orange-500"></div>
+              </div>
+              <span>More</span>
+            </div>
+          </div>
+
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4 border-t border-gray-100 pt-4">Detailed Log</h4>
+          {sortedEntries.length === 0 ? (
+            <div className="text-center py-6 text-gray-500 text-sm">No output logged yet.</div>
+          ) : (
+            <div className="grid gap-3">
+              {sortedEntries.map((e, i) => (
+                <div key={i} className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-lg flex flex-col items-center justify-center flex-shrink-0">
+                      <span className="text-[10px] font-bold uppercase">{new Date(e.date).toLocaleString('default', { month: 'short' })}</span>
+                      <span className="text-lg font-black leading-none">{new Date(e.date).getDate()}</span>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-gray-800">{e.title || 'Untitled Project'}</p>
-                      <p className="text-xs font-mono text-gray-400 mt-1">{e.projectId}</p>
+                      <p className="text-sm font-bold text-gray-800">{e.title || 'Untitled Project'}</p>
+                      <p className="text-xs font-mono text-gray-400 mt-0.5">{e.projectId}</p>
                     </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-600 font-bold text-sm rounded-lg">
+                      +{formatSec(e.seconds)}
+                    </span>
                   </div>
                 </div>
               ))}
