@@ -2605,6 +2605,23 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
             <div className="text-center py-10 text-gray-500">No approved projects found {reportType === 'monthly' ? `in ${selectedMonth}` : 'ever'}.</div>
           ) : (
             <div className="space-y-4">
+              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 p-5 rounded-2xl shadow-sm flex items-center justify-between mb-6">
+                <div>
+                  <h4 className="font-bold text-indigo-900 text-lg">Grand Total</h4>
+                  <p className="text-xs text-indigo-600 font-medium">{reportType === 'monthly' ? new Date(selYear, selMonth - 1).toLocaleString('default', { month: 'long', year: 'numeric' }) : 'All Time'}</p>
+                </div>
+                <div className="flex gap-6 text-right">
+                  <div>
+                    <p className="text-2xl font-black text-indigo-600">{reportData.reduce((acc, r) => acc + r.projectsCount, 0)}</p>
+                    <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5">Projects</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-black text-emerald-600">{formatSec(reportData.reduce((acc, r) => acc + r.totalSecs, 0))}</p>
+                    <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider mt-0.5">Duration</p>
+                  </div>
+                </div>
+              </div>
+
               <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Summary by Animator</p>
               {reportData.map(r => (
                 <div key={r.animator.Employee_ID} className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center justify-between">
