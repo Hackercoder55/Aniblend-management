@@ -2289,7 +2289,7 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
   )
 }
 
-function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator; avgInfo: { totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] }; onClose: () => void }) {
+function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] }; onClose: () => void }) {
   // State for the currently viewed month. Default to current month.
   const [viewDate, setViewDate] = useState(new Date())
 
@@ -2336,20 +2336,23 @@ function OutputHistoryModal({ animator, avgInfo, onClose }: { animator: Animator
 
         <div className="p-5 bg-orange-50 border-b border-orange-100 flex justify-around flex-shrink-0 text-center">
           <div>
-            <p className="text-3xl font-bold text-orange-600">{avgInfo.days > 0 ? formatSec(Math.round(avgInfo.totalSec / avgInfo.days)) : '0s'}</p>
+            <p className="text-3xl font-bold text-orange-600">{avgInfo.historicalApprovedSec > 0 ? formatSec(Math.round(avgInfo.historicalApprovedSec / avgInfo.daysSinceJoined)) : '0s'}</p>
             <p className="text-[10px] text-orange-500 uppercase tracking-wider font-semibold mt-1">Average / Day</p>
           </div>
-          <div>
-            <p className="text-3xl font-bold text-gray-800">{formatSec(avgInfo.totalSec)}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">Total All-Time</p>
+          <div className="group relative cursor-help">
+            <p className="text-3xl font-bold text-gray-800">{formatSec(avgInfo.historicalApprovedSec)}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1 border-b border-dashed border-gray-300 inline-block pb-0.5">Total Approved</p>
+
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-800 text-white text-[10px] rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 pointer-events-none">
+              "Total Approved" means the combined duration of all Approved, Paid, and Closed projects.
+            </div>
           </div>
           <div className="group relative cursor-help">
-            <p className="text-3xl font-bold text-gray-800">{avgInfo.days}</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1 border-b border-dashed border-gray-300 inline-block pb-0.5">Active Days</p>
+            <p className="text-3xl font-bold text-gray-800">{avgInfo.daysSinceJoined}</p>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1 border-b border-dashed border-gray-300 inline-block pb-0.5">Days Since Joined</p>
 
-            {/* Tooltip for clarification */}
             <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 p-2 bg-gray-800 text-white text-[10px] rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 pointer-events-none">
-              "Active Days" means the total number of unique days where at least 1 second of output was logged.
+              "Days Since Joined" means the number of days passed since their first assigned project date.
             </div>
           </div>
         </div>
@@ -2644,7 +2647,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const isHead = user.role === 'head'
 
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
-  const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
+  const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
 
   const filtered = animators
     .filter(a => {
@@ -2733,7 +2736,29 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           const entries = parseNotes(a['Interview notes'])
           const avg = avgRating(entries)
 
-          // Calculate Average Daily Output Info
+          // Check Date Joined
+          const joinedMs = projects
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && p['Date Assigned'])
+            .map(p => new Date(p['Date Assigned']).getTime())
+            .sort((x, y) => x - y)[0]
+
+          const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
+
+          // Calculate Historical Approved Duration (for Total box & Average box)
+          const historicalApprovedSec = projects
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .reduce((sum, p) => {
+              if (p.output_history && p.output_history.length > 0) {
+                const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
+                if (myOut > 0) return sum + myOut
+              }
+              const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+              const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+              if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
+              return sum + baseSec
+            }, 0)
+
+          // Calculate Explicit Logged Output Data
           const animProjects = projects.filter(p => p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()))
           let totalSec = 0
           const activeDays = new Set<string>()
@@ -2757,6 +2782,8 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           })
 
           const avgInfo = {
+            historicalApprovedSec,
+            daysSinceJoined,
             totalSec,
             days: activeDays.size,
             entries: historyEntries
@@ -2773,15 +2800,9 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                   <div>
                     <p className="font-semibold text-gray-800">{a.Name}</p>
                     <p className="text-[10px] text-gray-400 font-medium tracking-wide">{a.Employee_ID}</p>
-                    {(() => {
-                      const joined = projects
-                        .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && p['Date Assigned'])
-                        .map(p => new Date(p['Date Assigned']).getTime())
-                        .sort((x, y) => x - y)[0]
-                      return joined ? (
-                        <p className="text-[10px] text-gray-500 mt-0.5">Joined: {new Date(joined).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</p>
-                      ) : null
-                    })()}
+                    {joinedMs ? (
+                      <p className="text-[10px] text-gray-500 mt-0.5">Joined: {new Date(joinedMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</p>
+                    ) : null}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1">
@@ -2828,42 +2849,20 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                   className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
-                  {(() => {
-                    const durationSec = projects
-                      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
-                      .reduce((sum, p) => {
-                        if (p.output_history && p.output_history.length > 0) {
-                          const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
-                          if (myOut > 0) return sum + myOut
-                        }
-                        const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-                        const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
-                        if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
-                        return sum + baseSec
-                      }, 0)
-                    return <p className={`text-[10px] font-semibold mt-1 ${durationSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0s'}</p>
-                  })()}
+                  <p className={`text-[10px] font-semibold mt-1 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                    {historicalApprovedSec > 0 ? formatSec(historicalApprovedSec) : '0s'}
+                  </p>
                 </button>
                 <button
                   onClick={() => setOutputHistoryProps({ animator: a, avgInfo })}
                   className="bg-orange-50 rounded-xl p-2 text-center flex flex-col items-center justify-center hover:bg-orange-100 transition-colors hover:shadow-inner">
                   {(() => {
-                    if (avgInfo.days === 0) {
-                      return (
-                        <>
-                          <p className="text-xl font-bold text-orange-400">0s</p>
-                          <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
-                          <p className="text-[10px] font-semibold mt-1 text-orange-400">0 days logged</p>
-                        </>
-                      )
-                    }
-
-                    const avg = Math.round(avgInfo.totalSec / avgInfo.days)
+                    const avg = Math.round(historicalApprovedSec / daysSinceJoined)
                     return (
                       <>
-                        <p className="text-xl font-bold text-orange-600">{formatSec(avg)}</p>
+                        <p className="text-xl font-bold text-orange-600">{historicalApprovedSec > 0 ? formatSec(avg) : '0s'}</p>
                         <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
-                        <p className="text-[10px] font-semibold mt-1 text-orange-600">{avgInfo.days} days active</p>
+                        <p className="text-[10px] font-semibold mt-1 text-orange-600">{daysSinceJoined} days since joined</p>
                       </>
                     )
                   })()}
