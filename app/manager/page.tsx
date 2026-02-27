@@ -2666,11 +2666,32 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showReportModal, setShowReportModal] = useState(false)
   const [search, setSearch] = useState('')
-  const [sortOrder, setSortOrder] = useState<'none' | 'az' | 'za' | 'leastActive' | 'mostActive' | 'available'>('none')
+  const [sortOrder, setSortOrder] = useState<'none' | 'az' | 'za' | 'leastActive' | 'mostActive' | 'available' | 'mostAvgDay' | 'leastAvgDay'>('none')
   const isHead = user.role === 'head'
 
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
   const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
+
+  const getAvgDay = useCallback((a: Animator) => {
+    const joinedMs = projects
+      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && p['Date Assigned'])
+      .map(p => new Date(p['Date Assigned']).getTime())
+      .sort((x, y) => x - y)[0]
+    const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
+    const historicalApprovedSec = projects
+      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+      .reduce((sum, p) => {
+        if (p.output_history && p.output_history.length > 0) {
+          const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
+          if (myOut > 0) return sum + myOut
+        }
+        const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+        const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+        if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
+        return sum + baseSec
+      }, 0)
+    return Math.round(historicalApprovedSec / daysSinceJoined)
+  }, [projects])
 
   const filtered = animators
     .filter(a => {
@@ -2684,6 +2705,8 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       if (!aDep && bDep) return -1
       if (sortOrder === 'leastActive') return (a['Current video'] || 0) - (b['Current video'] || 0)
       if (sortOrder === 'mostActive') return (b['Current video'] || 0) - (a['Current video'] || 0)
+      if (sortOrder === 'mostAvgDay') return getAvgDay(b) - getAvgDay(a)
+      if (sortOrder === 'leastAvgDay') return getAvgDay(a) - getAvgDay(b)
       if (sortOrder === 'az') return a.Name.localeCompare(b.Name)
       if (sortOrder === 'za') return b.Name.localeCompare(a.Name)
       return 0
@@ -2723,7 +2746,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         </div>
         {/* Sort buttons */}
         <div className="flex gap-2 flex-wrap">
-          {([{ key: 'none', label: 'Default' }, { key: 'az', label: 'A→Z' }, { key: 'za', label: 'Z→A' }, { key: 'leastActive', label: 'Least Active' }, { key: 'mostActive', label: 'Most Active' }, { key: 'available', label: 'Available (0 active)' }] as const).map(s => (
+          {([{ key: 'none', label: 'Default' }, { key: 'mostAvgDay', label: 'Most Avg/Day' }, { key: 'leastAvgDay', label: 'Least Avg/Day' }, { key: 'az', label: 'A→Z' }, { key: 'za', label: 'Z→A' }, { key: 'leastActive', label: 'Least Active' }, { key: 'mostActive', label: 'Most Active' }, { key: 'available', label: 'Available (0 active)' }] as const).map(s => (
             <button key={s.key} onClick={() => setSortOrder(s.key as any)}
               className="px-3 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
               style={{ backgroundColor: sortOrder === s.key ? '#667eea' : '#f1f5f9', color: sortOrder === s.key ? 'white' : '#64748b' }}>
@@ -4579,6 +4602,7 @@ const apiClient = {
     let _action = 'select';
     let _payload: any = null;
     let _match: any = null;
+    let _isMatch: any = null;
     let _inMatch: any = null;
     let _order: any = null;
     let _single = false;
@@ -4589,6 +4613,7 @@ const apiClient = {
       update(payload: any) { _action = 'update'; _payload = payload; return builder; },
       delete() { _action = 'delete'; return builder; },
       eq(col: string, val: any) { _match = _match || {}; _match[col] = val; return builder; },
+      is(col: string, val: any) { _isMatch = _isMatch || {}; _isMatch[col] = val; return builder; },
       in(col: string, vals: any[]) { _inMatch = { column: col, values: vals }; return builder; },
       order(col: string, opts?: any) { _order = { column: col, options: opts }; return builder; },
       single() { _single = true; return builder; },
@@ -4596,7 +4621,7 @@ const apiClient = {
         fetch(`/api/${table}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: _action, payload: _payload, match: _match, inMatch: _inMatch, order: _order, single: _single })
+          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, order: _order, single: _single })
         })
           .then(res => res.json().then(data => res.ok ? data : Promise.reject(data.error)))
           .then(data => resolve({ data: data.data, error: null }))
