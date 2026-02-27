@@ -553,7 +553,7 @@ function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
     let ok = 0; let failMsg = ''
 
     // Remove any existing unassigned row for this project to avoid duplicates
-    await apiClient.from('projects').delete().eq('Project_ID', selectedProject.Project_ID).is('Employee_ID', null)
+    await apiClient.from('projects').delete().eq('Project_ID', selectedProject.Project_ID).eq('Employee_ID', null)
 
     for (const animator of selectedAnimators) {
       const { error: err } = await apiClient.from('projects').insert({
