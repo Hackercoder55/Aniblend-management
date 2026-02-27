@@ -4654,16 +4654,22 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const handleMarkPaid = async (eid: string, animatorName: string, net: number) => {
     setPayingId(eid)
     try {
-      // Find the animator's projects to get thread ID
+      // Find the animator's approved projects to get Thread_ID
       const animProjects = projects.filter(p =>
         p.Status === 'Approved' && (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animatorName.toLowerCase()))
       )
-      // Thread ID may be stored under different field names depending on DB schema
-      const threadProject = animProjects.find((p: any) => p.Discord_Thread_ID || p.thread_id || p.ThreadID)
-      const threadId: string | undefined = (threadProject as any)?.Discord_Thread_ID || (threadProject as any)?.thread_id || (threadProject as any)?.ThreadID
+      const threadProject = animProjects.find((p: any) => p.Thread_ID)
+      const threadId: string | undefined = (threadProject as any)?.Thread_ID
       const netFormatted = net.toLocaleString(undefined, { maximumFractionDigits: 0 })
       const tdsAmount = (net / (1 - tdsPercent / 100) * tdsPercent / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })
 
+      // Update Payment_Status on all approved projects for this animator
+      await apiClient.from('projects')
+        .update({ Payment_Status: 'Paid' })
+        .eq('Employee_ID', eid)
+        .eq('Status', 'Approved')
+
+      // Send Discord notification to the thread
       if (threadId) {
         await fetch('/api/discord/delete-thread', {
           method: 'POST',
@@ -4678,7 +4684,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
       addToast(`✅ Marked ${animatorName} as Paid${threadId ? ' & notified on Discord' : ''}`)
     } catch {
-      addToast('❌ Failed to send Discord notification', 'error')
+      addToast('❌ Failed to mark as paid', 'error')
     }
     setPayingId(null)
   }
