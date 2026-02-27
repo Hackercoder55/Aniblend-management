@@ -4626,7 +4626,7 @@ const apiClient = {
 // ----------------------------------------
 
 function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; projects: Project[] }) {
-  const { toasts, addToast } = useToast()
+  const { addToast } = useToast()
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
   const [tdsPercent, setTdsPercent] = useState<number>(10)
@@ -4636,7 +4636,20 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [manuallyAddedAnimators, setManuallyAddedAnimators] = useState<Set<string>>(new Set())
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [paidStatus, setPaidStatus] = useState<Record<string, 'Pending' | 'Paid'>>({})
+  const [paidNets, setPaidNets] = useState<Record<string, number>>({})
   const [payingId, setPayingId] = useState<string | null>(null)
+
+  // Month filter
+  const monthOptions = (() => {
+    const opts: string[] = ['All']
+    const now = new Date()
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[1]) // default to current month
 
   const toggleExpand = (eid: string) => {
     setExpandedAnimators(prev => {
@@ -4682,6 +4695,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         })
       }
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
+      setPaidNets(prev => ({ ...prev, [eid]: net }))
       addToast(`✅ Marked ${animatorName} as Paid${threadId ? ' & notified on Discord' : ''}`)
     } catch {
       addToast('❌ Failed to mark as paid', 'error')
@@ -4749,9 +4763,21 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // 3. Build data rows
+  // Helper: check if animator has any approved project in the selected month
+  const animatorInMonth = (eid: string, animName: string) => {
+    if (selectedMonth === 'All') return true
+    return projects.some(p =>
+      p.Status === 'Approved' &&
+      (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase())) &&
+      (p['Date Approved'] || '').includes(selectedMonth)
+    )
+  }
+
+  // 3. Build data rows — hide paid, filter by month
   const rows = animators
-    .filter(a => approvedSecondsByEmpId[a.Employee_ID] > 0 || manuallyAddedAnimators.has(a.Employee_ID))
+    .filter(a => (approvedSecondsByEmpId[a.Employee_ID] > 0 || manuallyAddedAnimators.has(a.Employee_ID)))
+    .filter(a => paidStatus[a.Employee_ID] !== 'Paid')
+    .filter(a => animatorInMonth(a.Employee_ID, a.Name))
     .filter(a => !search || a.Name.toLowerCase().includes(search.toLowerCase()) || a.Employee_ID.toLowerCase().includes(search.toLowerCase()))
     .map(a => {
       const eid = a.Employee_ID
@@ -4806,6 +4832,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     })
 
   const availableToAdd = animators.filter(a => !approvedSecondsByEmpId[a.Employee_ID] && !manuallyAddedAnimators.has(a.Employee_ID))
+  const paidRows = animators.filter(a => paidStatus[a.Employee_ID] === 'Paid')
 
   return (
     <div className="space-y-4">
@@ -4815,8 +4842,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             <h2 className="text-lg font-bold text-gray-800">Payout Calculator</h2>
             <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹5000/minute.</p>
           </div>
-          <div className="flex items-center gap-4 bg-gray-50 px-4 py-2 rounded-xl border border-gray-200">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none">
+              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-xl border border-gray-200">
               <label className="text-sm font-semibold text-gray-700">TDS %:</label>
               <input
                 type="number"
@@ -4980,6 +5013,49 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           </div>
         </div>
       </div>
+
+      {/* ── Paid History ─────────────────────────────── */}
+      {paidRows.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+          <h2 className="text-base font-bold text-gray-800 mb-4">🟢 Paid This Session</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-emerald-50 border-y border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
+                <th className="px-4 py-2 text-left">Animator</th>
+                <th className="px-4 py-2 text-right">Amount Paid (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paidRows.map((a, i) => (
+                <tr key={a.Employee_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                        style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+                        {(a.Name || '?')[0]}
+                      </div>
+                      <span className="font-semibold text-gray-800">{a.Name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono font-bold text-emerald-600">
+                      ₹{(paidNets[a.Employee_ID] || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-emerald-50">
+                <td className="px-4 py-2 text-xs font-bold text-emerald-800 uppercase">Total</td>
+                <td className="px-4 py-2 text-right font-mono font-bold text-emerald-800">
+                  ₹{paidRows.reduce((s, a) => s + (paidNets[a.Employee_ID] || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
