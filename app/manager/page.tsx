@@ -4658,6 +4658,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [manualProjects, setManualProjects] = useState<Record<string, Project[]>>({})
   const [addProjectSearch, setAddProjectSearch] = useState<Record<string, string>>({})
   const [showAddProject, setShowAddProject] = useState<string | null>(null) // empId currently showing the picker
+  // Deferred projects excluded from current payout (stays Approved in DB, appears next month)
+  const [deferredProjects, setDeferredProjects] = useState<Set<string>>(new Set())
+  const deferProject = (projectId: string) => setDeferredProjects(prev => new Set(prev).add(projectId))
+  const undeferProject = (projectId: string) => setDeferredProjects(prev => { const s = new Set(prev); s.delete(projectId); return s })
 
   const toggleExpand = (eid: string) => {
     setExpandedAnimators(prev => {
@@ -4760,9 +4764,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // 2. Aggregate approved seconds per animator
+  // 2. Aggregate approved seconds per animator (skip deferred projects)
   const approvedSecondsByEmpId: Record<string, number> = {}
-  projects.filter(p => p.Status === 'Approved').forEach(p => {
+  projects.filter(p => p.Status === 'Approved' && !deferredProjects.has(p.Project_ID)).forEach(p => {
     // Collect all unique Employee IDs for this project (both primary and shared group animators)
     const empIds = new Set<string>()
     if (p.Employee_ID) empIds.add(p.Employee_ID)
@@ -4799,9 +4803,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // Add manually linked projects contribution to approvedSecondsByEmpId
+  // Add manually linked projects contribution (skip deferred)
   Object.entries(manualProjects).forEach(([eid, projs]) => {
-    projs.forEach(p => {
+    projs.filter(p => !deferredProjects.has(p.Project_ID)).forEach(p => {
       const overrideStr = durationOverrides[`${eid}__${p.Project_ID}`]
       const secs = overrideStr !== undefined
         ? (parseFloat(overrideStr) || 0)
@@ -5047,7 +5051,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                           setAddProjectSearch(prev => ({ ...prev, [r.animator.Employee_ID]: '' }))
                                         }}
                                         className="w-full text-left flex justify-between items-center px-2 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors">
-                                        <span className="text-xs text-gray-800 font-medium truncate max-w-[180px]">{p.Project_title || p.Project_ID}</span>
+                                        <div className="min-w-0">
+                                          <span className="text-xs text-gray-800 font-medium truncate max-w-[180px] block">{p.Project_title || p.Project_ID}</span>
+                                          <span className="text-[9px] text-gray-400 font-mono">{p.Project_ID}</span>
+                                        </div>
                                         <span className="text-[10px] text-indigo-600 font-mono flex-shrink-0 ml-2">{formatDurationDisplay(p.Duration, p.Project_ID)}</span>
                                       </button>
                                     ))}
@@ -5065,43 +5072,56 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                   const rawSec = parseDurationSec(p.Duration || '', p.Project_ID)
                                   const displaySec = durationOverrides[overrideKey] !== undefined ? durationOverrides[overrideKey] : String(rawSec)
                                   const isManual = (manualProjects[r.animator.Employee_ID] || []).find(mp => mp.Project_ID === p.Project_ID)
+                                  const isDeferred = deferredProjects.has(p.Project_ID)
                                   return (
-                                    <div key={p.Project_ID} className="flex justify-between items-center bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                                    <div key={p.Project_ID} className={`flex justify-between items-start rounded-lg px-3 py-2 border transition-all ${isDeferred ? 'bg-red-50 border-red-100 opacity-60' : 'bg-gray-50 border-gray-100'}`}>
                                       <div className="min-w-0 pr-3 flex-1">
-                                        <div className="flex items-center gap-1">
-                                          <p className="text-xs font-semibold text-gray-800 truncate">{p.Project_title}</p>
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          <p className={`text-xs font-semibold truncate ${isDeferred ? 'line-through text-gray-400' : 'text-gray-800'}`}>{p.Project_title}</p>
                                           {isManual && <span className="text-[9px] bg-indigo-100 text-indigo-600 px-1 rounded">manual</span>}
+                                          {isDeferred && <span className="text-[9px] bg-red-100 text-red-500 px-1 rounded">deferred</span>}
                                         </div>
                                         <p className="text-[10px] text-gray-400 font-mono mt-0.5">{p.Project_ID}</p>
                                       </div>
                                       <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
-                                        {isEditing ? (
-                                          <div className="flex items-center gap-1">
-                                            <input
-                                              type="number"
-                                              autoFocus
-                                              value={displaySec}
-                                              onChange={e => setDurationOverrides(prev => ({ ...prev, [overrideKey]: e.target.value }))}
-                                              onBlur={() => setEditingDurationId(null)}
-                                              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDurationId(null) }}
-                                              className="w-16 px-1 py-0.5 text-xs border border-indigo-400 rounded font-mono text-right focus:outline-none"
-                                            />
-                                            <span className="text-[10px] text-gray-400">sec</span>
-                                          </div>
+                                        {isDeferred ? (
+                                          <button onClick={() => undeferProject(p.Project_ID)}
+                                            className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">↩ Undo</button>
                                         ) : (
-                                          <button
-                                            onClick={() => setEditingDurationId(overrideKey)}
-                                            title="Click to edit duration"
-                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors cursor-pointer">
-                                            {durationOverrides[overrideKey] !== undefined ? `${durationOverrides[overrideKey]} sec` : formatDurationDisplay(p.Duration, p.Project_ID)}
-                                            {durationOverrides[overrideKey] !== undefined && <span className="text-[9px] text-orange-500 ml-1">✎</span>}
-                                          </button>
-                                        )}
-                                        <p className="text-[10px] text-gray-400">{p['Date Approved'] || '—'}</p>
-                                        {isManual && (
-                                          <button
-                                            onClick={() => setManualProjects(prev => ({ ...prev, [r.animator.Employee_ID]: (prev[r.animator.Employee_ID] || []).filter(mp => mp.Project_ID !== p.Project_ID) }))}
-                                            className="text-[9px] text-red-400 hover:text-red-600">✕ remove</button>
+                                          <>
+                                            {isEditing ? (
+                                              <div className="flex items-center gap-1">
+                                                <input
+                                                  type="number"
+                                                  autoFocus
+                                                  value={displaySec}
+                                                  onChange={e => setDurationOverrides(prev => ({ ...prev, [overrideKey]: e.target.value }))}
+                                                  onBlur={() => setEditingDurationId(null)}
+                                                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDurationId(null) }}
+                                                  className="w-16 px-1 py-0.5 text-xs border border-indigo-400 rounded font-mono text-right focus:outline-none"
+                                                />
+                                                <span className="text-[10px] text-gray-400">sec</span>
+                                              </div>
+                                            ) : (
+                                              <button
+                                                onClick={() => setEditingDurationId(overrideKey)}
+                                                title="Click to edit duration"
+                                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors cursor-pointer">
+                                                {durationOverrides[overrideKey] !== undefined ? `${durationOverrides[overrideKey]} sec` : formatDurationDisplay(p.Duration, p.Project_ID)}
+                                                {durationOverrides[overrideKey] !== undefined && <span className="text-[9px] text-orange-500 ml-1">✎</span>}
+                                              </button>
+                                            )}
+                                            <p className="text-[10px] text-gray-400">{p['Date Approved'] || '—'}</p>
+                                            <div className="flex items-center gap-2">
+                                              <button onClick={() => deferProject(p.Project_ID)}
+                                                className="text-[9px] text-orange-400 hover:text-orange-600 font-semibold">⏸ Defer</button>
+                                              {isManual && (
+                                                <button
+                                                  onClick={() => setManualProjects(prev => ({ ...prev, [r.animator.Employee_ID]: (prev[r.animator.Employee_ID] || []).filter(mp => mp.Project_ID !== p.Project_ID) }))}
+                                                  className="text-[9px] text-red-400 hover:text-red-600">✕ remove</button>
+                                              )}
+                                            </div>
+                                          </>
                                         )}
                                       </div>
                                     </div>
