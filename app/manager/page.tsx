@@ -4651,6 +4651,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   })()
   const [selectedMonth, setSelectedMonth] = useState(monthOptions[1]) // default to current month
 
+  // Per-project duration overrides (projectId -> seconds)
+  const [durationOverrides, setDurationOverrides] = useState<Record<string, string>>({})
+  const [editingDurationId, setEditingDurationId] = useState<string | null>(null)
+  // Manually linked projects per animator (empId -> Project[])
+  const [manualProjects, setManualProjects] = useState<Record<string, Project[]>>({})
+  const [addProjectSearch, setAddProjectSearch] = useState<Record<string, string>>({})
+  const [showAddProject, setShowAddProject] = useState<string | null>(null) // empId currently showing the picker
+
   const toggleExpand = (eid: string) => {
     setExpandedAnimators(prev => {
       const next = new Set(prev)
@@ -4791,6 +4799,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
+  // Add manually linked projects contribution to approvedSecondsByEmpId
+  Object.entries(manualProjects).forEach(([eid, projs]) => {
+    projs.forEach(p => {
+      const overrideStr = durationOverrides[`${eid}__${p.Project_ID}`]
+      const secs = overrideStr !== undefined
+        ? (parseFloat(overrideStr) || 0)
+        : parseDurationSec(p.Duration || '', p.Project_ID)
+      if (!approvedSecondsByEmpId[eid]) approvedSecondsByEmpId[eid] = 0
+      approvedSecondsByEmpId[eid] += secs
+    })
+  })
+
   // Helper: check if animator has any approved project in the selected month
   const animatorInMonth = (eid: string, animName: string) => {
     if (selectedMonth === 'All') return true
@@ -4818,13 +4838,16 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       const payInfo = latestPaymentByEmpId[eid]
 
-      // Filter this animator's approved projects for the dropdown
-      const animatorProjects = projects.filter(p =>
-        p.Status === 'Approved' &&
-        (p.Employee_ID === eid ||
-          (p.Animator && animators.find(an => an.Employee_ID === eid)?.Name &&
-            p.Animator.toLowerCase().includes(animators.find(an => an.Employee_ID === eid)!.Name.toLowerCase())))
-      )
+      // Filter this animator's approved projects for the dropdown (including manual ones)
+      const animatorProjects = [
+        ...projects.filter(p =>
+          p.Status === 'Approved' &&
+          (p.Employee_ID === eid ||
+            (p.Animator && animators.find(an => an.Employee_ID === eid)?.Name &&
+              p.Animator.toLowerCase().includes(animators.find(an => an.Employee_ID === eid)!.Name.toLowerCase())))
+        ),
+        ...(manualProjects[eid] || [])
+      ]
 
       let bankDisplay = <span className="text-gray-400 italic">No details found</span>
       if (payInfo) {
@@ -4980,23 +5003,110 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                       <tr className="bg-gray-50/80">
                         <td colSpan={6} className="px-10 py-4 border-b border-gray-100">
                           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-inner">
-                            <h4 className="text-xs font-bold text-gray-700 uppercase mb-3">Approved Projects ({r.animatorProjects.length})</h4>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-xs font-bold text-gray-700 uppercase">Projects ({r.animatorProjects.length})</h4>
+                              <button
+                                onClick={() => setShowAddProject(showAddProject === r.animator.Employee_ID ? null : r.animator.Employee_ID)}
+                                className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                Add Project
+                              </button>
+                            </div>
+
+                            {/* Add Project search panel */}
+                            {showAddProject === r.animator.Employee_ID && (
+                              <div className="mb-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  placeholder="Search project name or ID..."
+                                  value={addProjectSearch[r.animator.Employee_ID] || ''}
+                                  onChange={e => setAddProjectSearch(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                                  className="w-full px-3 py-1.5 text-xs border border-indigo-200 rounded-lg bg-white focus:outline-none mb-2"
+                                />
+                                <div className="max-h-40 overflow-y-auto space-y-1">
+                                  {projects
+                                    .filter(p => {
+                                      const q = (addProjectSearch[r.animator.Employee_ID] || '').toLowerCase()
+                                      if (!q) return true
+                                      return (p.Project_title || '').toLowerCase().includes(q) || (p.Project_ID || '').toLowerCase().includes(q)
+                                    })
+                                    .filter(p => !r.animatorProjects.find(ap => ap.Project_ID === p.Project_ID))
+                                    .slice(0, 20)
+                                    .map(p => (
+                                      <button
+                                        key={p.Project_ID}
+                                        onClick={() => {
+                                          setManualProjects(prev => ({
+                                            ...prev,
+                                            [r.animator.Employee_ID]: [...(prev[r.animator.Employee_ID] || []), p]
+                                          }))
+                                          setShowAddProject(null)
+                                          setAddProjectSearch(prev => ({ ...prev, [r.animator.Employee_ID]: '' }))
+                                        }}
+                                        className="w-full text-left flex justify-between items-center px-2 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors">
+                                        <span className="text-xs text-gray-800 font-medium truncate max-w-[180px]">{p.Project_title || p.Project_ID}</span>
+                                        <span className="text-[10px] text-indigo-600 font-mono flex-shrink-0 ml-2">{formatDurationDisplay(p.Duration, p.Project_ID)}</span>
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
                             {r.animatorProjects.length === 0 ? (
-                              <p className="text-xs text-gray-500">No approved projects found. Added manually or data missing.</p>
+                              <p className="text-xs text-gray-500">No projects found. Use Add Project above.</p>
                             ) : (
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2">
-                                {r.animatorProjects.map((p: Project) => (
-                                  <div key={p.Project_ID} className="flex justify-between items-center bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-                                    <div className="min-w-0 pr-3">
-                                      <p className="text-xs font-semibold text-gray-800 truncate">{p.Project_title}</p>
-                                      <p className="text-[10px] text-gray-400 font-mono mt-0.5">{p.Project_ID}</p>
+                                {r.animatorProjects.map((p: Project) => {
+                                  const overrideKey = `${r.animator.Employee_ID}__${p.Project_ID}`
+                                  const isEditing = editingDurationId === overrideKey
+                                  const rawSec = parseDurationSec(p.Duration || '', p.Project_ID)
+                                  const displaySec = durationOverrides[overrideKey] !== undefined ? durationOverrides[overrideKey] : String(rawSec)
+                                  const isManual = (manualProjects[r.animator.Employee_ID] || []).find(mp => mp.Project_ID === p.Project_ID)
+                                  return (
+                                    <div key={p.Project_ID} className="flex justify-between items-center bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                                      <div className="min-w-0 pr-3 flex-1">
+                                        <div className="flex items-center gap-1">
+                                          <p className="text-xs font-semibold text-gray-800 truncate">{p.Project_title}</p>
+                                          {isManual && <span className="text-[9px] bg-indigo-100 text-indigo-600 px-1 rounded">manual</span>}
+                                        </div>
+                                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">{p.Project_ID}</p>
+                                      </div>
+                                      <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
+                                        {isEditing ? (
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              type="number"
+                                              autoFocus
+                                              value={displaySec}
+                                              onChange={e => setDurationOverrides(prev => ({ ...prev, [overrideKey]: e.target.value }))}
+                                              onBlur={() => setEditingDurationId(null)}
+                                              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDurationId(null) }}
+                                              className="w-16 px-1 py-0.5 text-xs border border-indigo-400 rounded font-mono text-right focus:outline-none"
+                                            />
+                                            <span className="text-[10px] text-gray-400">sec</span>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={() => setEditingDurationId(overrideKey)}
+                                            title="Click to edit duration"
+                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors cursor-pointer">
+                                            {durationOverrides[overrideKey] !== undefined ? `${durationOverrides[overrideKey]} sec` : formatDurationDisplay(p.Duration, p.Project_ID)}
+                                            {durationOverrides[overrideKey] !== undefined && <span className="text-[9px] text-orange-500 ml-1">✎</span>}
+                                          </button>
+                                        )}
+                                        <p className="text-[10px] text-gray-400">{p['Date Approved'] || '—'}</p>
+                                        {isManual && (
+                                          <button
+                                            onClick={() => setManualProjects(prev => ({ ...prev, [r.animator.Employee_ID]: (prev[r.animator.Employee_ID] || []).filter(mp => mp.Project_ID !== p.Project_ID) }))}
+                                            className="text-[9px] text-red-400 hover:text-red-600">✕ remove</button>
+                                        )}
+                                      </div>
                                     </div>
-                                    <div className="text-right flex-shrink-0">
-                                      <p className="text-xs font-bold text-indigo-600">{formatDurationDisplay(p.Duration, p.Project_ID)}</p>
-                                      <p className="text-[10px] text-gray-400">{p['Date Approved']}</p>
-                                    </div>
-                                  </div>
-                                ))}
+                                  )
+                                })}
                               </div>
                             )}
                           </div>
