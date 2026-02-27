@@ -5116,9 +5116,37 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   </Fragment>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="bg-gray-100 border-t-2 border-gray-200">
+                  <td colSpan={3} className="px-4 py-3 text-sm font-bold text-gray-700 uppercase tracking-wide">Total Pending Payout</td>
+                  <td className="px-4 py-3 text-right font-mono text-gray-600 font-semibold">
+                    ₹{rows.reduce((s, r) => s + r.gross, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono font-bold text-xl text-indigo-700">
+                      ₹{rows.reduce((s, r) => s + r.net, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
+
+        {/* Mark Paid info */}
+        <div className="mt-4 flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+          <span className="text-lg mt-0.5">💬</span>
+          <div className="text-xs text-blue-700">
+            <p className="font-bold mb-1">What happens when you click “Mark Paid”?</p>
+            <ul className="list-disc list-inside space-y-0.5 text-blue-600">
+              <li><b>Supabase DB:</b> Sets <code className="bg-blue-100 px-1 rounded">Payment_Status = Paid</code> on all their Approved projects</li>
+              <li><b>Discord:</b> Sends a payment confirmation message to their project thread</li>
+              <li><b>Tab:</b> Row moves from this table to the “🟢 Paid” section below</li>
+              <li><b>On refresh:</b> Row stays in Paid (persisted in DB)</li>
+            </ul>
+          </div>
+        </div>
 
         {/* Manual Add Button */}
         <div className="mt-5 border-t border-gray-100 pt-5">
