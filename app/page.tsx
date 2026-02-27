@@ -78,24 +78,24 @@ export default function LoginPage() {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setRole('head')}
-                  className="py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-all"
-                  style={{
-                    borderColor: role === 'head' ? '#667eea' : '#e5e7eb',
-                    backgroundColor: role === 'head' ? '#f0f0ff' : 'white',
-                    color: role === 'head' ? '#667eea' : '#6b7280',
-                  }}
-                >
-                  Head
-                </button>
-                <button
-                  type="button"
                   onClick={() => setRole('manager')}
                   className="py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-all"
                   style={{
                     borderColor: role === 'manager' ? '#667eea' : '#e5e7eb',
                     backgroundColor: role === 'manager' ? '#f0f0ff' : 'white',
                     color: role === 'manager' ? '#667eea' : '#6b7280',
+                  }}
+                >
+                  Head
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole('head')}
+                  className="py-2.5 px-4 rounded-lg border-2 text-sm font-medium transition-all"
+                  style={{
+                    borderColor: role === 'head' ? '#667eea' : '#e5e7eb',
+                    backgroundColor: role === 'head' ? '#f0f0ff' : 'white',
+                    color: role === 'head' ? '#667eea' : '#6b7280',
                   }}
                 >
                   Manager

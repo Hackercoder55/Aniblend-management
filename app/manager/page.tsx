@@ -5261,8 +5261,9 @@ export default function ManagerDashboard() {
 
   if (!user) return null
 
-  const isHead = user.role === 'head'
-  // managerOnly:true = show ONLY to Head, hide from regular Manager
+  // In this system: role='manager' = Head user, role='head' = Manager user
+  const isHead = user.role === 'manager'
+  // managerOnly:true = show ONLY to Head (manager role)
   const TABS = ALL_TABS.filter(t => !t.managerOnly || isHead)
 
   const SidebarContent = () => (
