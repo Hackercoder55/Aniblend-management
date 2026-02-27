@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 
 import {
@@ -183,12 +183,16 @@ function extractChannel(projectId: string): string {
   return 'other'
 }
 
-/** Parse duration value to seconds: "80 sec" → 80, "80" → 80 */
+/** Parse duration value to seconds: "80 sec" → 80, "2 min" → 120 */
 function parseDurationSec(duration: string, projectId?: string): number {
-  const d = duration || (projectId ? extractDuration(projectId) : '') || ''
-  if (!d) return 0
-  const num = parseInt(d.replace(/\D/g, ''), 10)
-  return isNaN(num) ? 0 : num
+  const raw = duration || (projectId ? extractDuration(projectId) : '') || ''
+  if (!raw) return 0
+  const str = raw.toLowerCase()
+  const n = parseFloat(str.replace(/[^0-9.]/g, '')) || 0
+  if (str.includes('min') || str.includes('m')) return n * 60
+  if (str.includes('day') || str.includes('d')) return n * 24 * 60 * 60
+  if (str.includes('hr') || str.includes('h')) return n * 60 * 60
+  return n
 }
 
 /** Format seconds as "Xm Ys" or "Xs" */
@@ -3628,19 +3632,6 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
 
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
 
-  // Helper: parse duration strictly to seconds
-  const parseDurationSecLocal = (dur: string, pId?: string): number => {
-    const raw = dur || (pId ? extractDuration(pId) : '') || ''
-    if (!raw) return 0
-    const str = raw.toLowerCase()
-    const n = parseFloat(str.replace(/[^0-9.]/g, '')) || 0
-    if (str.includes('min') || str.includes('m')) return n * 60
-    if (str.includes('day') || str.includes('d')) return n * 24 * 60 * 60
-    if (str.includes('hr') || str.includes('h')) return n * 60 * 60
-    // If it specifically says 'sec' or 's', or has NO unit, treat as seconds -> KEEP AS SECONDS
-    return n
-  }
-
   // Helper: check if a "DD MMM YYYY" date string is within a "MMM YYYY" month
   const inMonth = (dateStr: string, month: string) =>
     !!dateStr && !!month && dateStr.includes(month)
@@ -3665,14 +3656,14 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   // Duration stats (filtered approved, parsed as minutes)
   const durationThisMonthMins = filteredByApproved
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
-    .reduce((s, p) => s + parseDurationSecLocal(p.Duration, p.Project_ID), 0)
+    .reduce((s, p) => s + parseDurationSec(p.Duration, p.Project_ID), 0)
 
   // Lifetime stats (all deduped, unfiltered)
   const lifetimeTotal = dedupedAll.length
   const lifetimeApproved = dedupedAll.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
   const lifetimeDurationMins = dedupedAll
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
-    .reduce((s, p) => s + parseDurationSecLocal(p.Duration, p.Project_ID), 0)
+    .reduce((s, p) => s + parseDurationSec(p.Duration, p.Project_ID), 0)
 
   // Daily Work Trend — deduplicated per day, filtered to selected month or last 30 days
   const trend: { label: string; assigned: number; approved: number; projected?: number; projectedMins?: number }[] = []
@@ -3709,7 +3700,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       if (weights[p.Status as keyof typeof weights]) {
         const w = weights[p.Status as keyof typeof weights]
         pipelineValue += w
-        pipelineMins += parseDurationSecLocal(p.Duration, p.Project_ID) * w
+        pipelineMins += parseDurationSec(p.Duration, p.Project_ID) * w
       }
     })
 
@@ -3764,7 +3755,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       const approvedIds = new Set(projects.filter(p => p['Date Approved'] === full).map(p => p.Project_ID))
       last30Approved += approvedIds.size
 
-      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDurationSecLocal(p.Duration, p.Project_ID), 0)
+      const dayMins = dedupedAll.filter(p => p['Date Approved'] === full && ['Approved', 'Paid', 'Closed'].includes(p.Status)).reduce((s, p) => s + parseDurationSec(p.Duration, p.Project_ID), 0)
       last30Mins += dayMins
 
       trend.push({ label, assigned: assignedIds.size, approved: approvedIds.size })
@@ -3778,7 +3769,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       if (weights[p.Status as keyof typeof weights]) {
         const w = weights[p.Status as keyof typeof weights]
         pipelineValue += w
-        pipelineMins += parseDurationSecLocal(p.Duration, p.Project_ID) * w
+        pipelineMins += parseDurationSec(p.Duration, p.Project_ID) * w
       }
     })
 
@@ -3817,7 +3808,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
     const ch = extractChannel(p.Project_ID)
     if (!channelMap[ch]) channelMap[ch] = { total: 0, inProgress: 0, completed: 0, totalDuration: 0, completedDuration: 0, inProgressDuration: 0, completedCount: 0 }
     channelMap[ch].total++
-    const durMins = parseDurationSecLocal(p.Duration, p.Project_ID)
+    const durMins = parseDurationSec(p.Duration, p.Project_ID)
     if (durMins > 0) channelMap[ch].totalDuration += durMins
     if (['Pending', 'Active', 'Review'].includes(p.Status)) {
       channelMap[ch].inProgress++
@@ -4579,7 +4570,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'notes' | 'budget'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'notes' | 'budget'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -4590,6 +4581,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'submissions', label: 'Form Submissions', icon: '📋' },
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payments', label: 'Payments', icon: '💳', managerOnly: true },
+  { id: 'payouts', label: 'Payout Calculator', icon: '🧮', managerOnly: true },
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
 ]
@@ -4632,6 +4624,359 @@ const apiClient = {
   }
 };
 // ----------------------------------------
+
+function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; projects: Project[] }) {
+  const { toasts, addToast } = useToast()
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [loading, setLoading] = useState(true)
+  const [tdsPercent, setTdsPercent] = useState<number>(10)
+  const [manualMinutes, setManualMinutes] = useState<Record<string, string>>({})
+  const [search, setSearch] = useState('')
+  const [expandedAnimators, setExpandedAnimators] = useState<Set<string>>(new Set())
+  const [manuallyAddedAnimators, setManuallyAddedAnimators] = useState<Set<string>>(new Set())
+  const [showAddMenu, setShowAddMenu] = useState(false)
+  const [paidStatus, setPaidStatus] = useState<Record<string, 'Pending' | 'Paid'>>({})
+  const [payingId, setPayingId] = useState<string | null>(null)
+
+  const toggleExpand = (eid: string) => {
+    setExpandedAnimators(prev => {
+      const next = new Set(prev)
+      next.has(eid) ? next.delete(eid) : next.add(eid)
+      return next
+    })
+  }
+
+  const addManualAnimator = (eid: string) => {
+    setManuallyAddedAnimators(prev => new Set(prev).add(eid))
+    setShowAddMenu(false)
+  }
+
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number) => {
+    setPayingId(eid)
+    try {
+      // Find the animator's projects to get thread ID
+      const animProjects = projects.filter(p =>
+        p.Status === 'Approved' && (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animatorName.toLowerCase()))
+      )
+      // Thread ID may be stored under different field names depending on DB schema
+      const threadProject = animProjects.find((p: any) => p.Discord_Thread_ID || p.thread_id || p.ThreadID)
+      const threadId: string | undefined = (threadProject as any)?.Discord_Thread_ID || (threadProject as any)?.thread_id || (threadProject as any)?.ThreadID
+      const netFormatted = net.toLocaleString(undefined, { maximumFractionDigits: 0 })
+      const tdsAmount = (net / (1 - tdsPercent / 100) * tdsPercent / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })
+
+      if (threadId) {
+        await fetch('/api/discord/delete-thread', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'send_message',
+            threadId,
+            message: `💸 **Payment Processed!**\n\nHi ${animatorName},\n\nYour payment of **₹${netFormatted}** (after TDS deduction of ₹${tdsAmount}) has been processed and sent to your registered account.\n\nThank you for your work! 🎉`
+          })
+        })
+      }
+      setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
+      addToast(`✅ Marked ${animatorName} as Paid${threadId ? ' & notified on Discord' : ''}`)
+    } catch {
+      addToast('❌ Failed to send Discord notification', 'error')
+    }
+    setPayingId(null)
+  }
+
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      // Sort to get the latest payment details per animator
+      const sorted = ((data as Payment[]) || []).sort((a, b) => {
+        const ta = a.Timestamp ? new Date(a.Timestamp).getTime() : 0
+        const tb = b.Timestamp ? new Date(b.Timestamp).getTime() : 0
+        return tb - ta
+      })
+      setPayments(sorted)
+      setLoading(false)
+    })
+  }, [])
+
+  // 1. Group latest payment details by Employee ID
+  const latestPaymentByEmpId: Record<string, Payment> = {}
+  payments.forEach(p => {
+    if (p['Employee ID'] && !latestPaymentByEmpId[p['Employee ID']]) {
+      latestPaymentByEmpId[p['Employee ID']] = p
+    }
+  })
+
+  // 2. Aggregate approved seconds per animator
+  const approvedSecondsByEmpId: Record<string, number> = {}
+  projects.filter(p => p.Status === 'Approved').forEach(p => {
+    // Collect all unique Employee IDs for this project (both primary and shared group animators)
+    const empIds = new Set<string>()
+    if (p.Employee_ID) empIds.add(p.Employee_ID)
+
+    // Check output_history first
+    let mappedFromHistory = false
+    if (p.output_history && p.output_history.length > 0) {
+      p.output_history.forEach(h => {
+        if (!approvedSecondsByEmpId[h.empId]) approvedSecondsByEmpId[h.empId] = 0
+        approvedSecondsByEmpId[h.empId] += h.seconds
+      })
+      mappedFromHistory = true
+    }
+
+    if (!mappedFromHistory) {
+      // Fallback to splitting base duration equally among group members
+      const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+      const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+
+      // Match animator names back to Employee_IDs if needed
+      anims.forEach(animName => {
+        const found = animators.find(a => a.Name.toLowerCase() === animName.toLowerCase())
+        if (found) empIds.add(found.Employee_ID)
+      })
+
+      const finalEmpIds = Array.from(empIds)
+      if (finalEmpIds.length > 0) {
+        const splitSec = Math.round(baseSec / finalEmpIds.length)
+        finalEmpIds.forEach(eid => {
+          if (!approvedSecondsByEmpId[eid]) approvedSecondsByEmpId[eid] = 0
+          approvedSecondsByEmpId[eid] += splitSec
+        })
+      }
+    }
+  })
+
+  // 3. Build data rows
+  const rows = animators
+    .filter(a => approvedSecondsByEmpId[a.Employee_ID] > 0 || manuallyAddedAnimators.has(a.Employee_ID))
+    .filter(a => !search || a.Name.toLowerCase().includes(search.toLowerCase()) || a.Employee_ID.toLowerCase().includes(search.toLowerCase()))
+    .map(a => {
+      const eid = a.Employee_ID
+      const autoMins = (approvedSecondsByEmpId[eid] || 0) / 60
+      const currentMinsStr = manualMinutes[eid] !== undefined ? manualMinutes[eid] : autoMins.toFixed(2)
+      const currentMins = parseFloat(currentMinsStr) || 0
+
+      const gross = currentMins * 5000
+      const net = gross - (gross * tdsPercent / 100)
+
+      const payInfo = latestPaymentByEmpId[eid]
+
+      // Filter this animator's approved projects for the dropdown
+      const animatorProjects = projects.filter(p =>
+        p.Status === 'Approved' &&
+        (p.Employee_ID === eid ||
+          (p.Animator && animators.find(an => an.Employee_ID === eid)?.Name &&
+            p.Animator.toLowerCase().includes(animators.find(an => an.Employee_ID === eid)!.Name.toLowerCase())))
+      )
+
+      let bankDisplay = <span className="text-gray-400 italic">No details found</span>
+      if (payInfo) {
+        if (payInfo['UPI ID']) {
+          bankDisplay = (
+            <div className="flex items-center gap-1">
+              <span className="font-semibold text-gray-800">UPI:</span>
+              <span className="font-mono text-indigo-600">{payInfo['UPI ID']}</span>
+              <CopyButton value={payInfo['UPI ID']} />
+            </div>
+          )
+        } else if (payInfo['Account Number']) {
+          bankDisplay = (
+            <div className="text-[10px] text-gray-600 space-y-0.5">
+              <div className="flex justify-between"><span>A/C:</span> <span className="font-mono font-bold text-gray-800">{payInfo['Account Number']}</span></div>
+              <div className="flex justify-between"><span>IFSC:</span> <span className="font-mono">{payInfo['IFSC CODE']}</span></div>
+              <div className="flex justify-between"><span>Name:</span> <span>{payInfo['Account Holder Name']}</span></div>
+              <div className="flex justify-between"><span>PAN:</span> <span className="font-mono">{payInfo['PAN Number']}</span></div>
+            </div>
+          )
+        }
+      }
+
+      return {
+        animator: a,
+        autoMins,
+        currentMinsStr,
+        gross,
+        net,
+        bankDisplay,
+        animatorProjects: animatorProjects as Project[]
+      }
+    })
+
+  const availableToAdd = animators.filter(a => !approvedSecondsByEmpId[a.Employee_ID] && !manuallyAddedAnimators.has(a.Employee_ID))
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">Payout Calculator</h2>
+            <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹5000/minute.</p>
+          </div>
+          <div className="flex items-center gap-4 bg-gray-50 px-4 py-2 rounded-xl border border-gray-200">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-semibold text-gray-700">TDS %:</label>
+              <input
+                type="number"
+                value={tdsPercent}
+                onChange={e => setTdsPercent(parseFloat(e.target.value) || 0)}
+                className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="relative mb-4">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input type="text" placeholder="Search by name or ID..." value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full max-w-sm pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+        </div>
+
+        {loading ? (
+          <p className="text-center text-sm text-gray-400 py-10">Loading payment data...</p>
+        ) : rows.length === 0 ? (
+          <p className="text-center text-sm text-gray-400 py-10">No approved projects found for payout.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead>
+                <tr className="bg-gray-50 border-y border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  <th className="px-4 py-3">Animator</th>
+                  <th className="px-4 py-3">Total Minutes</th>
+                  <th className="px-4 py-3">Bank / UPI</th>
+                  <th className="px-4 py-3 text-right">Gross (₹)</th>
+                  <th className="px-4 py-3 text-right">Net (₹)</th>
+                  <th className="px-4 py-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <Fragment key={r.animator.Employee_ID}>
+                    <tr className={`border-b border-gray-50 hover:bg-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => toggleExpand(r.animator.Employee_ID)} className="text-gray-400 hover:text-indigo-600 transition-colors">
+                            <svg className={`w-5 h-5 transform transition-transform ${expandedAnimators.has(r.animator.Employee_ID) ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                            {(r.animator.Name || '?')[0]}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-800">{r.animator.Name}</p>
+                            <p className="text-[10px] text-gray-500">{r.animator.Employee_ID}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={r.currentMinsStr}
+                            onChange={e => setManualMinutes(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                            className="w-20 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none font-mono focus:border-indigo-500 transition-colors"
+                          />
+                          <span className="text-xs text-gray-400">min</span>
+                          {r.autoMins > 0 && r.currentMinsStr !== r.autoMins.toFixed(2) && (
+                            <span className="text-[10px] text-orange-500 bg-orange-50 px-1.5 rounded" title={`Auto calculated: ${r.autoMins.toFixed(2)} min`}>Modified</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.bankDisplay}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-gray-600">
+                        ₹{r.gross.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="font-mono font-bold text-lg text-emerald-600">
+                          ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {paidStatus[r.animator.Employee_ID] === 'Paid' ? (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold">
+                            ✅ Paid
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net)}
+                            disabled={payingId === r.animator.Employee_ID}
+                            className="px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
+                            style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
+                            {payingId === r.animator.Employee_ID ? 'Sending...' : 'Mark Paid'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandedAnimators.has(r.animator.Employee_ID) && (
+                      <tr className="bg-gray-50/80">
+                        <td colSpan={6} className="px-10 py-4 border-b border-gray-100">
+                          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-inner">
+                            <h4 className="text-xs font-bold text-gray-700 uppercase mb-3">Approved Projects ({r.animatorProjects.length})</h4>
+                            {r.animatorProjects.length === 0 ? (
+                              <p className="text-xs text-gray-500">No approved projects found. Added manually or data missing.</p>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2">
+                                {r.animatorProjects.map((p: Project) => (
+                                  <div key={p.Project_ID} className="flex justify-between items-center bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                                    <div className="min-w-0 pr-3">
+                                      <p className="text-xs font-semibold text-gray-800 truncate">{p.Project_title}</p>
+                                      <p className="text-[10px] text-gray-400 font-mono mt-0.5">{p.Project_ID}</p>
+                                    </div>
+                                    <div className="text-right flex-shrink-0">
+                                      <p className="text-xs font-bold text-indigo-600">{formatDurationDisplay(p.Duration, p.Project_ID)}</p>
+                                      <p className="text-[10px] text-gray-400">{p['Date Approved']}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Manual Add Button */}
+        <div className="mt-5 border-t border-gray-100 pt-5">
+          <div className="relative inline-block">
+            <button
+              onClick={() => setShowAddMenu(!showAddMenu)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-sm font-semibold transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Animator Manually
+            </button>
+
+            {showAddMenu && (
+              <div className="absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-lg z-10 max-h-60 overflow-y-auto">
+                {availableToAdd.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-gray-500">All animators already in list.</p>
+                ) : (
+                  availableToAdd.map(a => (
+                    <button
+                      key={a.Employee_ID}
+                      onClick={() => addManualAnimator(a.Employee_ID)}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 border-b border-gray-50 last:border-0 text-gray-700">
+                      {a.Name} <span className="text-xs text-gray-400">({a.Employee_ID})</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function ManagerDashboard() {
   const router = useRouter()
@@ -4783,6 +5128,7 @@ export default function ManagerDashboard() {
               {activeTab === 'submissions' && <FormSubmissionsTab animators={animators} userRole={user.role} userLead={user.full_name} />}
               {activeTab === 'analytics' && <AnalyticsTab projects={projects} animators={animators} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
+              {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={projects} onRefresh={fetchData} />}
             </>
