@@ -4879,13 +4879,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       const payInfo = latestPaymentByEmpId[eid]
 
-      // Filter this animator's approved projects for the dropdown (including manual ones)
+      // Filter this animator's approved projects (exact name match, not substring)
+      const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
       const animatorProjects = [
         ...projects.filter(p =>
           p.Status === 'Approved' &&
           (p.Employee_ID === eid ||
-            (p.Animator && animators.find(an => an.Employee_ID === eid)?.Name &&
-              p.Animator.toLowerCase().includes(animators.find(an => an.Employee_ID === eid)!.Name.toLowerCase())))
+            (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
         ...(manualProjects[eid] || [])
       ]
@@ -5238,47 +5238,108 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       </div>
 
       {/* ── Paid History ─────────────────────────────── */}
-      {paidRows.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-          <h2 className="text-base font-bold text-gray-800 mb-4">🟢 Paid This Session</h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-emerald-50 border-y border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
-                <th className="px-4 py-2 text-left">Animator</th>
-                <th className="px-4 py-2 text-right">Amount Paid (₹)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paidRows.map((a, i) => (
-                <tr key={a.Employee_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                        style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-                        {(a.Name || '?')[0]}
-                      </div>
-                      <span className="font-semibold text-gray-800">{a.Name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <span className="font-mono font-bold text-emerald-600">
-                      ₹{(paidNets[a.Employee_ID] || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-emerald-50">
-                <td className="px-4 py-2 text-xs font-bold text-emerald-800 uppercase">Total</td>
-                <td className="px-4 py-2 text-right font-mono font-bold text-emerald-800">
-                  ₹{paidRows.reduce((s, a) => s + (paidNets[a.Employee_ID] || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
+      {paidRows.length > 0 && (() => {
+        const downloadCsv = () => {
+          const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
+          const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Net Payment (₹)']
+          const csvRows = paidRows.map(a => {
+            const payInfo = latestPaymentByEmpId[a.Employee_ID]
+            const net = paidNets[a.Employee_ID] || 0
+            const gross = net / (1 - tdsPercent / 100)
+            const tdsAmt = gross - net
+            return [
+              escCsv(selectedMonth),
+              escCsv(payInfo?.['Account Holder Name'] || a.Name),
+              escCsv(a.Employee_ID),
+              escCsv(payInfo?.['PAN Number'] || ''),
+              escCsv(Math.round(gross)),
+              escCsv(tdsPercent),
+              escCsv(Math.round(tdsAmt)),
+              escCsv(Math.round(net)),
+            ].join(',')
+          })
+          const csv = [headers.map(h => escCsv(h)).join(','), ...csvRows].join('\n')
+          const blob = new Blob([csv], { type: 'text/csv' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `payout_${selectedMonth.replace(/ /g, '_')}.csv`
+          a.click()
+          URL.revokeObjectURL(url)
+        }
+
+        return (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-gray-800">🟢 Paid — {selectedMonth}</h2>
+              <button onClick={downloadCsv}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download CSV
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-emerald-50 border-y border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
+                    <th className="px-3 py-2 text-left">Animator</th>
+                    <th className="px-3 py-2 text-left">PAN</th>
+                    <th className="px-3 py-2 text-right">Gross (₹)</th>
+                    <th className="px-3 py-2 text-right">TDS {tdsPercent}%</th>
+                    <th className="px-3 py-2 text-right">Net Paid (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paidRows.map((a, i) => {
+                    const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                    const net = paidNets[a.Employee_ID] || 0
+                    const gross = net / (1 - tdsPercent / 100)
+                    const tdsAmt = gross - net
+                    return (
+                      <tr key={a.Employee_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+                              {(a.Name || '?')[0]}
+                            </div>
+                            <div>
+                              <p className="font-semibold text-gray-800 text-xs">{payInfo?.['Account Holder Name'] || a.Name}</p>
+                              <p className="text-[10px] text-gray-400">{a.Employee_ID}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 font-mono text-xs text-gray-600">{payInfo?.['PAN Number'] || <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-3 text-right font-mono text-gray-600 text-xs">₹{Math.round(gross).toLocaleString()}</td>
+                        <td className="px-3 py-3 text-right font-mono text-red-500 text-xs">−₹{Math.round(tdsAmt).toLocaleString()}</td>
+                        <td className="px-3 py-3 text-right">
+                          <span className="font-mono font-bold text-emerald-600">₹{Math.round(net).toLocaleString()}</span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-emerald-50">
+                    <td colSpan={2} className="px-3 py-2 text-xs font-bold text-emerald-800 uppercase">Total</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-emerald-800 text-xs">
+                      ₹{Math.round(paidRows.reduce((s, a) => { const net = paidNets[a.Employee_ID] || 0; return s + net / (1 - tdsPercent / 100) }, 0)).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-red-600 text-xs">
+                      −₹{Math.round(paidRows.reduce((s, a) => { const net = paidNets[a.Employee_ID] || 0; const gross = net / (1 - tdsPercent / 100); return s + gross - net }, 0)).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-emerald-800">
+                      ₹{Math.round(paidRows.reduce((s, a) => s + (paidNets[a.Employee_ID] || 0), 0)).toLocaleString()}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
