@@ -2780,7 +2780,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         {filtered.length === 0 ? (
           <p className="text-gray-400 col-span-3 text-center py-12">No animators found</p>
         ) : filtered.map(a => {
-          const activeCount = projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status)).length
+          const activeCount = projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review', 'Changes Requested'].includes(p.Status)).length
           const load = a['Current video'] || 0
           const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
           const entries = parseNotes(a['Interview notes'])
@@ -2874,7 +2874,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
               <div className="grid grid-cols-3 gap-2 mb-4">
                 <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Active Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review'].includes(p.Status)) })}
+                  onClick={() => setListModalProps({ title: `${a.Name} - Active Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase())) && ['Pending', 'Active', 'Review', 'Changes Requested'].includes(p.Status)) })}
                   className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
                   <p className="text-xl font-bold" style={{ color: loadColor }}>{load}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Active</p>
