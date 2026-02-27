@@ -86,7 +86,7 @@ export default function LoginPage() {
                     color: role === 'manager' ? '#667eea' : '#6b7280',
                   }}
                 >
-                  Manager
+                  Head
                 </button>
                 <button
                   type="button"
@@ -98,7 +98,7 @@ export default function LoginPage() {
                     color: role === 'head' ? '#667eea' : '#6b7280',
                   }}
                 >
-                  Head
+                  Manager
                 </button>
               </div>
             </div>

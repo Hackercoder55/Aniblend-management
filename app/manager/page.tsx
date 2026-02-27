@@ -1624,7 +1624,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Head', 'Progress', 'Emp Type', 'Warning', 'Acknowledgement', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Manager', 'Progress', 'Emp Type', 'Warning', 'Acknowledgement', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
