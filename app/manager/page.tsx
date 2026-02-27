@@ -4815,6 +4815,43 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     })
   })
 
+  // Apply per-project duration overrides to auto-detected approved projects
+  // For each override key (empId__projectId), subtract the original contribution and add the new value
+  Object.entries(durationOverrides).forEach(([key, newSecStr]) => {
+    const sep = key.indexOf('__')
+    if (sep < 0) return
+    const eid = key.slice(0, sep)
+    const projectId = key.slice(sep + 2)
+    // Only handle auto-detected projects (manual ones are already handled above)
+    const isManual = (manualProjects[eid] || []).some(p => p.Project_ID === projectId)
+    if (isManual) return
+    const proj = projects.find(p => p.Project_ID === projectId && p.Status === 'Approved' && !deferredProjects.has(p.Project_ID))
+    if (!proj) return
+
+    const newSec = parseFloat(newSecStr) || 0
+
+    // Compute original contribution of this project to this emp
+    const histEntry = (proj.output_history || []).find((h: any) => h.empId === eid)
+    let originalSec: number
+    if (histEntry) {
+      originalSec = histEntry.seconds || 0
+    } else {
+      const rawSec = parseDurationSec(proj.Duration || '', proj.Project_ID)
+      const empSet = new Set<string>()
+      if (proj.Employee_ID) empSet.add(proj.Employee_ID)
+        ; (proj.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
+          const found = animators.find(a => a.Name.toLowerCase() === name.toLowerCase())
+          if (found) empSet.add(found.Employee_ID)
+        })
+      originalSec = Math.round(rawSec / Math.max(1, empSet.size))
+    }
+
+    // Adjust: remove original, add override
+    if (approvedSecondsByEmpId[eid] !== undefined) {
+      approvedSecondsByEmpId[eid] = Math.max(0, approvedSecondsByEmpId[eid] - originalSec + newSec)
+    }
+  })
+
   // Helper: check if animator has any approved project in the selected month
   const animatorInMonth = (eid: string, animName: string) => {
     if (selectedMonth === 'All') return true
