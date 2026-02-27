@@ -4703,6 +4703,34 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setPayingId(null)
   }
 
+  // Pre-populate paid status from DB (persists across refreshes)
+  useEffect(() => {
+    if (!projects.length) return
+    const initialPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
+    const empApprovedSecs: Record<string, number> = {}
+
+    projects.filter(p => p.Status === 'Approved').forEach((p: any) => {
+      const secs = parseDurationSec(p.Duration || '', p.Project_ID)
+      if (p.Employee_ID) {
+        empApprovedSecs[p.Employee_ID] = (empApprovedSecs[p.Employee_ID] || 0) + secs
+        if (p.Payment_Status === 'Paid') {
+          initialPaidStatus[p.Employee_ID] = 'Paid'
+        }
+      }
+    })
+
+    if (Object.keys(initialPaidStatus).length > 0) {
+      setPaidStatus(initialPaidStatus)
+      const initialPaidNets: Record<string, number> = {}
+      Object.keys(initialPaidStatus).forEach(eid => {
+        const mins = (empApprovedSecs[eid] || 0) / 60
+        const gross = mins * 5000
+        initialPaidNets[eid] = gross - (gross * tdsPercent / 100)
+      })
+      setPaidNets(initialPaidNets)
+    }
+  }, [projects])
+
   useEffect(() => {
     apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
       // Sort to get the latest payment details per animator
