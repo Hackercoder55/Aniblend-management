@@ -1389,6 +1389,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
             .eq('Employee_ID', project.Employee_ID)
         }
       }
+      // Sync Approved_Date to payments table for this project
+      await apiClient.from('payments')
+        .update({ Approved_Date: formatDate() })
+        .eq('Project ID', project.Project_ID)
       addToast(`✅ Approved: ${project.Project_title || project.Project_ID}`)
       onRefresh()
     } else {
@@ -1506,6 +1510,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
             .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
             .eq('Employee_ID', project.Employee_ID)
         }
+        // Sync Approved_Date to payments table when status changes to Approved
+        await apiClient.from('payments')
+          .update({ Approved_Date: formatDate() })
+          .eq('Project ID', project.Project_ID)
       }
       addToast(`✅ Status updated to ${newStatus}`)
       onRefresh()
@@ -3177,8 +3185,16 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
 
   const handleSave = async (id: number) => {
     setSaving(true); setSaveMsg('')
+    const sub = submissions.find(s => s.id === id)
     const { error } = await apiClient.from('form_submissions').update({ status: editStatus, feedback: editFeedback }).eq('id', id)
     if (!error) {
+      // If moving to Approved, also stamp Date Approved on the project
+      if (editStatus === 'Approved' && sub?.project_id) {
+        const todayStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+        await apiClient.from('projects')
+          .update({ 'Date Approved': todayStr, 'Status': 'Approved' })
+          .eq('Project_ID', sub.project_id)
+      }
       setSaveMsg('Saved!')
       setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: editStatus, feedback: editFeedback } : s))
       setTimeout(() => { setEditingId(null); setSaveMsg('') }, 800)
@@ -4679,36 +4695,25 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const handleMarkPaid = async (eid: string, animatorName: string, net: number) => {
     setPayingId(eid)
     try {
-      // Find the animator's approved projects to get Thread_ID
-      const animProjects = projects.filter(p =>
-        p.Status === 'Approved' && (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animatorName.toLowerCase()))
-      )
-      const threadProject = animProjects.find((p: any) => p.Thread_ID)
-      const threadId: string | undefined = (threadProject as any)?.Thread_ID
-      const netFormatted = net.toLocaleString(undefined, { maximumFractionDigits: 0 })
-      const tdsAmount = (net / (1 - tdsPercent / 100) * tdsPercent / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })
+      const today = formatDate()
 
-      // Update Payment_Status on all approved projects for this animator
+      // 1. Set Payment_Status = 'Paid' on all approved projects for this animator
       await apiClient.from('projects')
         .update({ Payment_Status: 'Paid' })
         .eq('Employee_ID', eid)
         .eq('Status', 'Approved')
 
-      // Send Discord notification to the thread
-      if (threadId) {
-        await fetch('/api/discord/delete-thread', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'send_message',
-            threadId,
-            message: `💸 **Payment Processed!**\n\nHi ${animatorName},\n\nYour payment of **₹${netFormatted}** (after TDS deduction of ₹${tdsAmount}) has been processed and sent to your registered account.\n\nThank you for your work! 🎉`
-          })
-        })
-      }
+      // 2. Set Payment_Status = 'Paid' + paid_date in payments table
+      //    (agency_bot.py polls payment_Status='Paid' → sends payment details message → sets Discord_Notified='Paid_Sent')
+      //    (then check_archive_notifications sends archive warning → sets Archieve='Sent')
+      //    (then check_locks 12h idle → archives thread)
+      await apiClient.from('payments')
+        .update({ Payment_Status: 'Paid', paid_date: today })
+        .eq('Employee ID', eid)
+
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
       setPaidNets(prev => ({ ...prev, [eid]: net }))
-      addToast(`✅ Marked ${animatorName} as Paid${threadId ? ' & notified on Discord' : ''}`)
+      addToast(`✅ Marked ${animatorName} as Paid — Discord notification will be sent by bot shortly`)
     } catch {
       addToast('❌ Failed to mark as paid', 'error')
     }
