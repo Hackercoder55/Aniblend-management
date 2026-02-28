@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     });
 
     const body = await request.json();
-    const { action, payload, match, inMatch, order, single } = body;
-    
+    const { action, payload, match, inMatch, order, single, isMatch } = body;
+
     let query: any = supabaseAdmin.from('projects');
 
     if (action === 'select') {
@@ -31,6 +31,11 @@ export async function POST(request: Request) {
 
     if (match) {
       query = query.match(match);
+    }
+    if (isMatch) {
+      for (const [col, val] of Object.entries(isMatch)) {
+        query = query.is(col, val);
+      }
     }
     if (inMatch) {
       query = query.in(inMatch.column, inMatch.values);
