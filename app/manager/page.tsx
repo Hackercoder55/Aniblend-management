@@ -4726,13 +4726,15 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   useEffect(() => {
     if (!projects.length) return
     const initialPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
-    const empApprovedSecs: Record<string, number> = {}
+    const empSecs: Record<string, number> = {}
 
-    projects.filter(p => p.Status === 'Approved').forEach((p: any) => {
+    // Include both Approved (pending payment) and Paid (already paid) projects
+    projects.filter(p => p.Status === 'Approved' || p.Status === 'Paid').forEach((p: any) => {
       const secs = parseDurationSec(p.Duration || '', p.Project_ID)
       if (p.Employee_ID) {
-        empApprovedSecs[p.Employee_ID] = (empApprovedSecs[p.Employee_ID] || 0) + secs
-        if (p.Payment_Status === 'Paid') {
+        empSecs[p.Employee_ID] = (empSecs[p.Employee_ID] || 0) + secs
+        // Mark as paid if Payment_Status='Paid' OR Status='Paid'
+        if (p.Payment_Status === 'Paid' || p.Status === 'Paid') {
           initialPaidStatus[p.Employee_ID] = 'Paid'
         }
       }
@@ -4742,7 +4744,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       setPaidStatus(initialPaidStatus)
       const initialPaidNets: Record<string, number> = {}
       Object.keys(initialPaidStatus).forEach(eid => {
-        const mins = (empApprovedSecs[eid] || 0) / 60
+        const mins = (empSecs[eid] || 0) / 60
         const gross = mins * 5000
         initialPaidNets[eid] = gross - (gross * tdsPercent / 100)
       })
@@ -4771,9 +4773,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // 2. Aggregate approved seconds per animator (skip deferred projects)
+  // 2. Aggregate approved seconds per animator (Approved OR Paid status, skip deferred)
   const approvedSecondsByEmpId: Record<string, number> = {}
-  projects.filter(p => p.Status === 'Approved' && !deferredProjects.has(p.Project_ID)).forEach(p => {
+  projects.filter(p => (p.Status === 'Approved' || p.Status === 'Paid') && !deferredProjects.has(p.Project_ID)).forEach(p => {
     // Collect all unique Employee IDs for this project (both primary and shared group animators)
     const empIds = new Set<string>()
     if (p.Employee_ID) empIds.add(p.Employee_ID)
@@ -4859,11 +4861,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // Helper: check if animator has any approved project in the selected month
+  // Helper: check if animator has any approved/paid project in the selected month
   const animatorInMonth = (eid: string, animName: string) => {
     if (selectedMonth === 'All') return true
     return projects.some(p =>
-      p.Status === 'Approved' &&
+      (p.Status === 'Approved' || p.Status === 'Paid') &&
       (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase())) &&
       (p['Date Approved'] || '').includes(selectedMonth)
     )
@@ -4890,7 +4892,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
       const animatorProjects = [
         ...projects.filter(p =>
-          p.Status === 'Approved' &&
+          (p.Status === 'Approved' || p.Status === 'Paid') &&
           (p.Employee_ID === eid ||
             (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
