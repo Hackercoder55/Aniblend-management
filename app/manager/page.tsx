@@ -4699,9 +4699,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     try {
       const today = formatDate()
 
-      // 1. Set Payment_Status = 'Paid' on all approved projects for this animator
+      // 1. Set Payment_Status = 'Paid' AND Status = 'Paid' on all approved projects for this animator
       await apiClient.from('projects')
-        .update({ Payment_Status: 'Paid' })
+        .update({ Payment_Status: 'Paid', Status: 'Paid' })
         .eq('Employee_ID', eid)
         .eq('Status', 'Approved')
 
