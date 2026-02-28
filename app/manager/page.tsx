@@ -38,6 +38,7 @@ interface Project {
   warning?: string
   acknowledgement?: string
   output_history?: { date: string; empId: string; seconds: number }[]
+  viewport_date?: string
 }
 
 interface Animator {
@@ -1497,6 +1498,9 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     payload['warning'] = newWarning
     payload['acknowledgement'] = newAcknowledgement
 
+    if (newStatus === 'Review' && project.Status !== 'Review') {
+      payload['viewport_date'] = formatDate()
+    }
     if (newStatus === 'Approved') {
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
@@ -4402,6 +4406,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           <p>🎬 {project.Animator || '—'}</p>
           <p>⏱ {durStr}</p>
           {project['Date Assigned'] && <p>📅 Assigned: {project['Date Assigned']}</p>}
+          {project.Status === 'Review' && project.viewport_date && <p>👁️ Viewport: {project.viewport_date}</p>}
           {project.Status === 'Approved' && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
           {project.Status === 'Paid' && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
         </div>
@@ -4426,6 +4431,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     const filteredByMonth = m ? projs.filter(p => {
       if (stage === 'Approved') return inMonth(p['Date Approved'], m)
       if (stage === 'Paid') return inMonth(p.client_paid_date, m)
+      if (stage === 'Review') return inMonth(p.viewport_date || p['Date Assigned'], m)
       return inMonth(p['Date Assigned'], m)
     }) : projs
     return filteredByMonth
@@ -4529,6 +4535,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
             stageProjects = stageProjects.filter(p => {
               if (stage === 'Approved') return inMonth(p['Date Approved'], monthFilterValue)
               if (stage === 'Paid') return inMonth(p.client_paid_date, monthFilterValue)
+              if (stage === 'Review') return inMonth(p.viewport_date || p['Date Assigned'], monthFilterValue)
               return inMonth(p['Date Assigned'], monthFilterValue)
             })
           }
