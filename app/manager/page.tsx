@@ -4701,30 +4701,39 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setShowAddMenu(false)
   }
 
-  const handleMarkPaid = async (eid: string, animatorName: string, net: number) => {
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = []) => {
     setPayingId(eid)
     try {
-      const today = formatDate()
+      // Get all Approved project IDs for this animator (covers group projects matched by name too)
+      const projectIds = animatorProjects
+        .filter(p => p.Status === 'Approved')
+        .map(p => p.Project_ID)
+        .filter(Boolean)
 
-      // 1. Set Payment_Status = 'Paid' AND Status = 'Paid' on all approved projects for this animator
-      await apiClient.from('projects')
+      if (projectIds.length === 0) {
+        addToast(`⚠️ No Approved projects found for ${animatorName}`, 'error')
+        setPayingId(null)
+        return
+      }
+
+      // 1. Update all matched Approved projects by Project_ID (handles group projects too)
+      const { error: projError } = await apiClient.from('projects')
         .update({ Payment_Status: 'Paid', Status: 'Paid' })
-        .eq('Employee_ID', eid)
-        .eq('Status', 'Approved')
+        .in('Project_ID', projectIds)
 
-      // 2. Set Payment_Status = 'Paid' + paid_date in payments table
-      //    (agency_bot.py polls payment_Status='Paid' → sends payment details message → sets Discord_Notified='Paid_Sent')
-      //    (then check_archive_notifications sends archive warning → sets Archieve='Sent')
-      //    (then check_locks 12h idle → archives thread)
+      if (projError) throw new Error(projError.message || 'Failed to update projects')
+
+      // 2. Update payment row with Paid status
+      //    (agency_bot.py polls Payment_Status='Paid' → sends payment confirmation → sets Discord_Notified='Paid_Sent')
       await apiClient.from('payments')
-        .update({ Payment_Status: 'Paid', paid_date: today })
+        .update({ Payment_Status: 'Paid' })
         .eq('Employee ID', eid)
 
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
       setPaidNets(prev => ({ ...prev, [eid]: net }))
       addToast(`✅ Marked ${animatorName} as Paid — Discord notification will be sent by bot shortly`)
-    } catch {
-      addToast('❌ Failed to mark as paid', 'error')
+    } catch (err: any) {
+      addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
     }
     setPayingId(null)
   }
@@ -5047,7 +5056,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           </span>
                         ) : (
                           <button
-                            onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net)}
+                            onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects)}
                             disabled={payingId === r.animator.Employee_ID}
                             className="px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
                             style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
