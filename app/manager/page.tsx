@@ -4746,22 +4746,19 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         const SANTOSH = '570255526219481109'
         const totalNet = net + bonus
         const paidMsg =
-          `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `💸 **PAYMENT SENT!**\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-          `🎉 Great news ${tag}!\n\n` +
-          (ongoingProjects.length > 0
-            ? `Your **advance payment** has been successfully processed and sent! 💰\n\n` +
-            `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
-            : `Your payment has been **successfully processed and sent**! 💰\n\n` +
-            `Please check your account — it should reflect within 1–2 business days.\n\n`) +
+          `Hi ${tag},\n\n` +
+          `Your payment has been **successfully processed**. 🎉\n\n` +
+          `> 💰 **Total payable amount:** ₹${net.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
           (bonus > 0
-            ? `🎁 **Bonus included:** ₹${bonus.toLocaleString()} has been added to your payment as a bonus!\n\n`
+            ? `> 🎁 **Bonus added:** ₹${bonus.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n`
             : '') +
-          `💰 **Total Amount Sent: ₹${totalNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}**\n\n` +
-          `Thank you for your excellent work! 🚀\n\n` +
-          `cc: <@${ANMOL}> <@${SANTOSH}>\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━`
+          `> ✅ **Final amount transferred:** ₹${totalNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n\n` +
+          (ongoingProjects.length > 0
+            ? `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
+            : '') +
+          `Kindly check your bank account for confirmation. The amount should reflect within **24 hours**.\n\n` +
+          `If you have any questions, feel free to reach out. 😊\n\n` +
+          `cc: <@${ANMOL}> <@${SANTOSH}>`
 
         try {
           await fetch('/api/discord/send-message', {
