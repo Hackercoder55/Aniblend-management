@@ -4663,6 +4663,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [paidStatus, setPaidStatus] = useState<Record<string, 'Pending' | 'Paid'>>({})
   const [paidNets, setPaidNets] = useState<Record<string, number>>({})
   const [payingId, setPayingId] = useState<string | null>(null)
+  const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({}) // bonus per animator in ₹
 
   // Month filter
   const monthOptions = (() => {
@@ -4701,7 +4702,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setShowAddMenu(false)
   }
 
-  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = []) => {
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0) => {
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
@@ -4730,9 +4731,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
 
-      // 2. Mark payments row as Paid (bot uses this for its own tracking)
+      // 2. Mark payments row as Paid + save bonus
       await apiClient.from('payments')
-        .update({ Payment_Status: 'Paid' })
+        .update({ Payment_Status: 'Paid', ...(bonus > 0 ? { bonus } : {}) })
         .eq('Employee ID', eid)
 
       // 3. Send payment confirmation directly to Discord thread (don't wait for bot loop)
@@ -4743,6 +4744,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         const tag = discordId ? `<@${discordId}>` : `**${animatorName}**`
         const ANMOL = '754005287119225022'
         const SANTOSH = '570255526219481109'
+        const totalNet = net + bonus
         const paidMsg =
           `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
           `💸 **PAYMENT SENT!**\n` +
@@ -4753,6 +4755,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
             : `Your payment has been **successfully processed and sent**! 💰\n\n` +
             `Please check your account — it should reflect within 1–2 business days.\n\n`) +
+          (bonus > 0
+            ? `🎁 **Bonus included:** ₹${bonus.toLocaleString()} has been added to your payment as a bonus!\n\n`
+            : '') +
+          `💰 **Total Amount Sent: ₹${totalNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}**\n\n` +
           `Thank you for your excellent work! 🚀\n\n` +
           `cc: <@${ANMOL}> <@${SANTOSH}>\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━`
@@ -4767,8 +4773,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
 
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
-      setPaidNets(prev => ({ ...prev, [eid]: net }))
-      addToast(`✅ Marked ${animatorName} as Paid — payment confirmation sent to Discord thread`)
+      setPaidNets(prev => ({ ...prev, [eid]: net + bonus }))
+      addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} — confirmation sent to Discord`)
     } catch (err: any) {
       addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
     }
@@ -4980,6 +4986,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         currentMinsStr,
         gross,
         net,
+        bonusAmt: parseFloat(bonusAmounts[eid] || '0') || 0,
         bankDisplay,
         animatorProjects: animatorProjects as Project[]
       }
@@ -5037,6 +5044,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   <th className="px-4 py-3">Bank / UPI</th>
                   <th className="px-4 py-3 text-right">Gross (₹)</th>
                   <th className="px-4 py-3 text-right">Net (₹)</th>
+                  <th className="px-4 py-3 text-right">Bonus (₹)</th>
                   <th className="px-4 py-3 text-center">Status</th>
                 </tr>
               </thead>
@@ -5086,6 +5094,19 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-xs text-gray-400">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={bonusAmounts[r.animator.Employee_ID] || ''}
+                            onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                            className="w-24 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
+                          />
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-center">
                         {paidStatus[r.animator.Employee_ID] === 'Paid' ? (
                           <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold">
@@ -5093,7 +5114,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           </span>
                         ) : (
                           <button
-                            onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects)}
+                            onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt)}
                             disabled={payingId === r.animator.Employee_ID}
                             className="px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
                             style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
@@ -5244,6 +5265,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   <td className="px-4 py-3 text-right">
                     <span className="font-mono font-bold text-xl text-indigo-700">
                       ₹{rows.reduce((s, r) => s + r.net, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono font-bold text-amber-600">
+                      +₹{rows.reduce((s, r) => s + r.bonusAmt, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </span>
                   </td>
                   <td />
