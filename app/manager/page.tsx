@@ -4704,34 +4704,71 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = []) => {
     setPayingId(eid)
     try {
-      // Get all Approved project IDs for this animator (covers group projects matched by name too)
-      const projectIds = animatorProjects
-        .filter(p => p.Status === 'Approved')
-        .map(p => p.Project_ID)
-        .filter(Boolean)
+      const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
+      const ongoingProjects = animatorProjects.filter(p => !['Approved', 'Paid'].includes(p.Status))
 
-      if (projectIds.length === 0) {
-        addToast(`⚠️ No Approved projects found for ${animatorName}`, 'error')
+      if (approvedProjects.length === 0 && ongoingProjects.length === 0) {
+        addToast(`⚠️ No projects found for ${animatorName}`, 'error')
         setPayingId(null)
         return
       }
 
-      // 1. Update all matched Approved projects by Project_ID (handles group projects too)
-      const { error: projError } = await apiClient.from('projects')
-        .update({ Payment_Status: 'Paid', Status: 'Paid' })
-        .in('Project_ID', projectIds)
+      // 1a. Approved projects → Status + Payment_Status = Paid (full close cycle)
+      if (approvedProjects.length > 0) {
+        const { error: e1 } = await apiClient.from('projects')
+          .update({ Payment_Status: 'Paid', Status: 'Paid' })
+          .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
+        if (e1) throw new Error(e1.message || 'Failed to update approved projects')
+      }
 
-      if (projError) throw new Error(projError.message || 'Failed to update projects')
+      // 1b. Ongoing/advance projects → only Payment_Status = Paid, Status stays unchanged
+      //     Thread stays open since animator is still working
+      if (ongoingProjects.length > 0) {
+        const { error: e2 } = await apiClient.from('projects')
+          .update({ Payment_Status: 'Paid' })
+          .in('Project_ID', ongoingProjects.map(p => p.Project_ID).filter(Boolean))
+        if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
+      }
 
-      // 2. Update payment row with Paid status
-      //    (agency_bot.py polls Payment_Status='Paid' → sends payment confirmation → sets Discord_Notified='Paid_Sent')
+      // 2. Mark payments row as Paid (bot uses this for its own tracking)
       await apiClient.from('payments')
         .update({ Payment_Status: 'Paid' })
         .eq('Employee ID', eid)
 
+      // 3. Send payment confirmation directly to Discord thread (don't wait for bot loop)
+      //    Use the first project that has a Thread_ID
+      const threadProject = animatorProjects.find(p => p.Thread_ID)
+      if (threadProject?.Thread_ID) {
+        const discordId = threadProject.Discord_ID
+        const tag = discordId ? `<@${discordId}>` : `**${animatorName}**`
+        const ANMOL = '754005287119225022'
+        const SANTOSH = '570255526219481109'
+        const paidMsg =
+          `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💸 **PAYMENT SENT!**\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `🎉 Great news ${tag}!\n\n` +
+          (ongoingProjects.length > 0
+            ? `Your **advance payment** has been successfully processed and sent! 💰\n\n` +
+            `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
+            : `Your payment has been **successfully processed and sent**! 💰\n\n` +
+            `Please check your account — it should reflect within 1–2 business days.\n\n`) +
+          `Thank you for your excellent work! 🚀\n\n` +
+          `cc: <@${ANMOL}> <@${SANTOSH}>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━`
+
+        try {
+          await fetch('/api/discord/send-message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId: threadProject.Thread_ID, message: paidMsg })
+          })
+        } catch { /* Discord message failure is non-fatal */ }
+      }
+
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
       setPaidNets(prev => ({ ...prev, [eid]: net }))
-      addToast(`✅ Marked ${animatorName} as Paid — Discord notification will be sent by bot shortly`)
+      addToast(`✅ Marked ${animatorName} as Paid — payment confirmation sent to Discord thread`)
     } catch (err: any) {
       addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
     }
