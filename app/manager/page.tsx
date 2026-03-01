@@ -4769,8 +4769,16 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         } catch { /* Discord message failure is non-fatal */ }
       }
 
-      setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' }))
-      setPaidNets(prev => ({ ...prev, [eid]: net + bonus }))
+      setPaidStatus(prev => {
+        const next = { ...prev, [eid]: 'Paid' as const }
+        try { localStorage.setItem('tfa_paidStatus', JSON.stringify(next)) } catch { }
+        return next
+      })
+      setPaidNets(prev => {
+        const next = { ...prev, [eid]: net + bonus }
+        try { localStorage.setItem('tfa_paidNets', JSON.stringify(next)) } catch { }
+        return next
+      })
       addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} — confirmation sent to Discord`)
     } catch (err: any) {
       addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
@@ -4778,33 +4786,44 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setPayingId(null)
   }
 
-  // Pre-populate paid status from DB (persists across refreshes)
+  // Pre-populate paid status — merges DB data with localStorage so paid section survives hard refresh
   useEffect(() => {
     if (!projects.length) return
-    const initialPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
+    const dbPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
     const empSecs: Record<string, number> = {}
 
-    // Include both Approved (pending payment) and Paid (already paid) projects
     projects.filter(p => p.Status === 'Approved' || p.Status === 'Paid').forEach((p: any) => {
       const secs = parseDurationSec(p.Duration || '', p.Project_ID)
       if (p.Employee_ID) {
         empSecs[p.Employee_ID] = (empSecs[p.Employee_ID] || 0) + secs
-        // Mark as paid if Payment_Status='Paid' OR Status='Paid'
         if (p.Payment_Status === 'Paid' || p.Status === 'Paid') {
-          initialPaidStatus[p.Employee_ID] = 'Paid'
+          dbPaidStatus[p.Employee_ID] = 'Paid'
         }
       }
     })
 
-    if (Object.keys(initialPaidStatus).length > 0) {
-      setPaidStatus(initialPaidStatus)
-      const initialPaidNets: Record<string, number> = {}
-      Object.keys(initialPaidStatus).forEach(eid => {
-        const mins = (empSecs[eid] || 0) / 60
-        const gross = mins * 5000
-        initialPaidNets[eid] = gross - (gross * tdsPercent / 100)
+    // Load from localStorage as fallback for animators whose DB update may have missed
+    let lsStatus: Record<string, 'Pending' | 'Paid'> = {}
+    let lsNets: Record<string, number> = {}
+    try {
+      lsStatus = JSON.parse(localStorage.getItem('tfa_paidStatus') || '{}')
+      lsNets = JSON.parse(localStorage.getItem('tfa_paidNets') || '{}')
+    } catch { }
+
+    // Merge: localStorage provides base, DB data takes priority (DB is ground truth)
+    const merged = { ...lsStatus, ...dbPaidStatus }
+    if (Object.keys(merged).length > 0) {
+      setPaidStatus(merged)
+      const mergedNets: Record<string, number> = { ...lsNets }
+      // Recalculate from DB for animators whose seconds we know
+      Object.keys(dbPaidStatus).forEach(eid => {
+        if (empSecs[eid]) {
+          const mins = empSecs[eid] / 60
+          const gross = mins * 5000
+          mergedNets[eid] = gross - (gross * tdsPercent / 100)
+        }
       })
-      setPaidNets(initialPaidNets)
+      setPaidNets(mergedNets)
     }
   }, [projects])
 
