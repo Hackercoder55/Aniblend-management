@@ -1504,20 +1504,41 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     if (newStatus === 'Approved') {
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
+      payload['approval_notified'] = true  // mark immediately — bot's loop will skip it, we notify directly below
+      payload['Payment_Status'] = 'Pending'
     }
     const { error } = await apiClient.from('projects').update(payload).eq('Project_ID', project.Project_ID)
     if (!error) {
-      if (newStatus === 'Approved' && project.Status !== 'Approved' && project.Employee_ID) {
-        const { data: anim } = await apiClient.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
-        if (anim) {
-          await apiClient.from('animators')
-            .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
-            .eq('Employee_ID', project.Employee_ID)
+      if (newStatus === 'Approved' && project.Status !== 'Approved') {
+        if (project.Employee_ID) {
+          const { data: anim } = await apiClient.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
+          if (anim) {
+            await apiClient.from('animators')
+              .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
+              .eq('Employee_ID', project.Employee_ID)
+          }
+          await apiClient.from('payments')
+            .update({ Approved_Date: formatDate() })
+            .eq('Project ID', project.Project_ID)
         }
-        // Sync Approved_Date to payments table when status changes to Approved
-        await apiClient.from('payments')
-          .update({ Approved_Date: formatDate() })
-          .eq('Project ID', project.Project_ID)
+
+        // Send Discord approval notification immediately
+        try {
+          if (project.Thread_ID) {
+            const animTag = project.Discord_ID ? `<@${project.Discord_ID}>` : '@Animator'
+            const titleLine = project.Project_title
+              ? `**Project:** ${project.Project_title} (\`${project.Project_ID}\`)\n`
+              : `**Project ID:** \`${project.Project_ID}\`\n`
+            const msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}Your video has been approved! 🙌\n\n📌 **Next Step:** Please submit your **payment form** through the submission channel to initiate your payment process.\n\nThank you for your great work!\n━━━━━━━━━━━━━━━━━━━━━━━━`
+            await fetch('/api/discord/send-message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ threadId: project.Thread_ID, message: msg }),
+            })
+          }
+        } catch {
+          // Notification failure doesn't block the status update
+        }
       }
       addToast(`✅ Status updated to ${newStatus}`)
       onRefresh()
@@ -3192,14 +3213,47 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
   const handleSave = async (id: number) => {
     setSaving(true); setSaveMsg('')
     const sub = submissions.find(s => s.id === id)
-    const { error } = await apiClient.from('form_submissions').update({ status: editStatus, feedback: editFeedback }).eq('id', id)
+    const { error } = await apiClient.from('form_submissions').update({ status: editStatus, feedback: editFeedback, animator_notified: true }).eq('id', id)
     if (!error) {
-      // If moving to Approved, also stamp Date Approved on the project
-      if (editStatus === 'Approved' && sub?.project_id) {
+      // If moving to Approved or Changes Requested, also update project + notify Discord thread
+      if ((editStatus === 'Approved' || editStatus === 'Changes Requested') && sub?.project_id) {
         const todayStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-        await apiClient.from('projects')
-          .update({ 'Date Approved': todayStr, 'Status': 'Approved' })
-          .eq('Project_ID', sub.project_id)
+
+        const projectUpdate: Record<string, any> = { Status: editStatus }
+        if (editStatus === 'Approved') {
+          projectUpdate['Date Approved'] = todayStr
+          projectUpdate['Approved_Date'] = todayStr
+          projectUpdate['approval_notified'] = true  // prevent bot loop from double-notifying
+          projectUpdate['Payment_Status'] = 'Pending'
+        }
+        await apiClient.from('projects').update(projectUpdate).eq('Project_ID', sub.project_id)
+
+        // Send Discord notification to the animator's thread
+        try {
+          const { data: projData } = await apiClient.from('projects').select('Thread_ID, Discord_ID, Project_title').eq('Project_ID', sub.project_id).single()
+          if (projData?.Thread_ID) {
+            const animTag = projData.Discord_ID ? `<@${projData.Discord_ID}>` : '@Animator'
+            const titleLine = projData.Project_title
+              ? `**Project:** ${projData.Project_title} (\`${sub.project_id}\`)\n`
+              : `**Project ID:** \`${sub.project_id}\`\n`
+            const feedbackLine = editFeedback ? `**Notes:**\n> ${editFeedback}\n\n` : ''
+
+            let msg = ''
+            if (editStatus === 'Approved') {
+              msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}${feedbackLine}Your video has been approved! 🙌\n\n📌 **Next Step:** Please submit your **payment form** through the submission channel to initiate your payment process.\n\nThank you for your great work!\n━━━━━━━━━━━━━━━━━━━━━━━━`
+            } else {
+              msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n📢 **REVISION REQUESTED**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\nHey ${animTag}, your submission has been reviewed.\n\n${titleLine}${feedbackLine}📌 Please go through the feedback carefully, make the necessary changes, and resubmit your updated draft.\n\nIf you have any questions about the feedback, feel free to ask here.\n━━━━━━━━━━━━━━━━━━━━━━━━`
+            }
+
+            await fetch('/api/discord/send-message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ threadId: projData.Thread_ID, message: msg }),
+            })
+          }
+        } catch {
+          // Notification failure doesn't block the save
+        }
       }
       setSaveMsg('Saved!')
       setSubmissions(prev => prev.map(s => s.id === id ? { ...s, status: editStatus, feedback: editFeedback } : s))
@@ -4719,13 +4773,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       // 1a. Approved projects → Status=Closed + Payment_Status=Paid
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Closed', paid_date: new Date().toISOString().split('T')[0] })
+          .update({ Payment_Status: 'Paid', Status: 'Closed' })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
 
       // 1b. Ongoing/advance projects → only Payment_Status=Paid, Status stays unchanged
-      //     Thread stays open since animator is still working
       if (ongoingProjects.length > 0) {
         const { error: e2 } = await apiClient.from('projects')
           .update({ Payment_Status: 'Paid' })
@@ -4733,105 +4786,26 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
 
-      // 2. Mark payments row as Paid + save bonus + mark Discord_Notified so bot doesn't resend
+      // 2. Mark payments row as Paid (Keep it simple to prevent column missing errors)
       await apiClient.from('payments')
-        .update({ Payment_Status: 'Paid', Discord_Notified: 'Paid_Sent', ...(bonus > 0 ? { bonus } : {}) })
+        .update({ Payment_Status: 'Paid' })
         .eq('Employee ID', eid)
 
-      // 3. Build the payment message
-      const ANMOL = '754005287119225022'
-      const SANTOSH = '570255526219481109'
-      const totalNet = net + bonus
-
-      // Build project details line (project ID + title for each approved project)
-      const projectLines = approvedProjects
-        .slice(0, 5) // cap at 5 to avoid too-long messages
-        .map(p => `• **${p.Project_title || p.Project_ID}** \`${p.Project_ID}\``)
-        .join('\n')
-
-      const buildMsg = (tag: string) =>
-        `Hi ${tag},\n\n` +
-        `Your payment has been **successfully processed**. 🎉\n\n` +
-        (projectLines ? `**Projects:**\n${projectLines}\n\n` : '') +
-        `> 💰 **Total payable amount:** ₹${net.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
-        (bonus > 0
-          ? `> 🎁 **Bonus added:** ₹${bonus.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n`
-          : '') +
-        `> ✅ **Final amount transferred:** ₹${totalNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n\n` +
-        (ongoingProjects.length > 0
-          ? `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
-          : '') +
-        `Kindly check your bank account for confirmation. The amount should reflect within **24 hours**.\n\n` +
-        `If you have any questions, feel free to reach out. 😊\n\n` +
-        `cc: <@${ANMOL}> <@${SANTOSH}>`
-
-      // 4a. Send to thread (if exists)
-      const threadProject = animatorProjects.find(p => p.Thread_ID)
-      if (threadProject?.Thread_ID) {
-        const discordId = threadProject.Discord_ID
-        const tag = discordId ? `<@${discordId}>` : `**${animatorName}**`
-        try {
-          await fetch('/api/discord/send-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ threadId: threadProject.Thread_ID, message: buildMsg(tag) })
-          })
-        } catch { /* non-fatal */ }
-      }
-
-      // 4b. ALSO send to animator's personal Channel_ID (main workspace)
-      const animatorInfo = animators.find(a => a.Employee_ID === eid)
-      if (animatorInfo?.Channel_ID) {
-        const discordId = animatorInfo.Discord_ID
-        const tag = discordId ? `<@${discordId}>` : `**${animatorName}**`
-        try {
-          await fetch('/api/discord/send-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ threadId: animatorInfo.Channel_ID, message: buildMsg(tag) })
-          })
-        } catch { /* non-fatal */ }
-      }
+      // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
+      // This guarantees no double messages and relies on the python bot's permissions
 
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' as const }))
       setPaidNets(prev => ({ ...prev, [eid]: net + bonus }))
-      addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} — confirmation sent to Discord`)
+      addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} (Bot will notify)`)
     } catch (err: any) {
       addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
     }
     setPayingId(null)
   }
 
-  // Pre-populate paid status — derive from DB (Status=Closed OR Status=Paid with Payment_Status=Paid)
-  useEffect(() => {
-    if (!projects.length) return
-    const dbPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
-    const empNets: Record<string, number> = {}
-
-    // Include BOTH old Status='Paid' records AND new Status='Closed' records
-    const empSecs: Record<string, number> = {}
-    projects
-      .filter(p => p.Payment_Status === 'Paid' && (p.Status === 'Closed' || p.Status === 'Paid'))
-      .forEach((p: any) => {
-        const secs = parseDurationSec(p.Duration || '', p.Project_ID)
-        if (p.Employee_ID) {
-          empSecs[p.Employee_ID] = (empSecs[p.Employee_ID] || 0) + secs
-          dbPaidStatus[p.Employee_ID] = 'Paid'
-        }
-      })
-
-    if (Object.keys(dbPaidStatus).length > 0) {
-      setPaidStatus(prev => ({ ...prev, ...dbPaidStatus }))
-      Object.keys(dbPaidStatus).forEach(eid => {
-        if (empSecs[eid]) {
-          const mins = empSecs[eid] / 60
-          const gross = mins * 5000
-          empNets[eid] = gross - (gross * tdsPercent / 100)
-        }
-      })
-      setPaidNets(prev => ({ ...prev, ...empNets }))
-    }
-  }, [projects, tdsPercent])
+  // Effect removed: Don't prepopulate paidStatus from DB based on ANY historical paid project.
+  // This ensures an animator with a past paid project still shows up for NEW approved projects.
+  // paidStatus is now just UI state for the current session's "Mark Paid" clicks.
 
   useEffect(() => {
     apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
@@ -4973,7 +4947,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
       const animatorProjects = [
         ...projects.filter(p =>
-          (p.Status === 'Approved' || p.Status === 'Paid') &&
+          p.Status === 'Approved' &&
           (p.Employee_ID === eid ||
             (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
