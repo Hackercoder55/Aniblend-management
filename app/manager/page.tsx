@@ -1508,8 +1508,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     if (newStatus === 'Approved') {
       payload['Date Approved'] = formatDate()
       payload['Approved_Date'] = formatDate()
-      payload['approval_notified'] = true  // mark immediately — bot's loop will skip it, we notify directly below
-      payload['Payment_Status'] = 'Pending'
+      payload['approval_notified'] = true  // mark immediately — bot loop will skip, we notify directly below
     }
     const { error } = await apiClient.from('projects').update(payload).eq('Project_ID', project.Project_ID)
     if (!error) {
@@ -1533,7 +1532,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
             const titleLine = project.Project_title
               ? `**Project:** ${project.Project_title} (\`${project.Project_ID}\`)\n`
               : `**Project ID:** \`${project.Project_ID}\`\n`
-            const msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}Your video has been approved! 🙌\n\n📌 **Next Step:** Please submit your **payment form** through the submission channel to initiate your payment process.\n\nThank you for your great work!\n━━━━━━━━━━━━━━━━━━━━━━━━`
+            const msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}Your video has been reviewed and officially approved! 🙌\n\n💰 **Regarding Payment:**\nThere is no need to fill any payment form. Your payment will be automatically processed and released at the **end of the month**.\n\nWe will notify you here once the payment has been sent. Thank you for your excellent work! 🚀\n━━━━━━━━━━━━━━━━━━━━━━━━`
             await fetch('/api/discord/send-message', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -3228,7 +3227,6 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
           projectUpdate['Date Approved'] = todayStr
           projectUpdate['Approved_Date'] = todayStr
           projectUpdate['approval_notified'] = true  // prevent bot loop from double-notifying
-          projectUpdate['Payment_Status'] = 'Pending'
         }
         await apiClient.from('projects').update(projectUpdate).eq('Project_ID', sub.project_id)
 
@@ -3244,7 +3242,7 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
 
             let msg = ''
             if (editStatus === 'Approved') {
-              msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}${feedbackLine}Your video has been approved! 🙌\n\n📌 **Next Step:** Please submit your **payment form** through the submission channel to initiate your payment process.\n\nThank you for your great work!\n━━━━━━━━━━━━━━━━━━━━━━━━`
+              msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}${feedbackLine}Your video has been reviewed and officially approved! 🙌\n\n💰 **Regarding Payment:**\nThere is no need to fill any payment form. Your payment will be automatically processed and released at the **end of the month**.\n\nWe will notify you here once the payment has been sent. Thank you for your excellent work! 🚀\n━━━━━━━━━━━━━━━━━━━━━━━━`
             } else {
               msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n📢 **REVISION REQUESTED**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\nHey ${animTag}, your submission has been reviewed.\n\n${titleLine}${feedbackLine}📌 Please go through the feedback carefully, make the necessary changes, and resubmit your updated draft.\n\nIf you have any questions about the feedback, feel free to ask here.\n━━━━━━━━━━━━━━━━━━━━━━━━`
             }
