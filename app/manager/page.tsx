@@ -104,6 +104,10 @@ interface Payment {
   Discord_Username: string
   Discord_Notified: string
   paid_date?: string
+  gross?: number          // stored on Mark Paid
+  tds_percent?: number    // stored on Mark Paid
+  net_paid?: number       // stored on Mark Paid
+  bonus?: number          // stored on Mark Paid
 }
 
 interface Note {
@@ -4786,9 +4790,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
 
-      // 2. Mark payments row as Paid (Keep it simple to prevent column missing errors)
+      // 2. Mark payments row as Paid + store gross/tds/net for Paid section display
+      const grossAmt = net / (1 - tdsPercent / 100)
+      const netWithBonus = net + bonus
       await apiClient.from('payments')
-        .update({ Payment_Status: 'Paid' })
+        .update({
+          Payment_Status: 'Paid',
+          gross: Math.round(grossAmt),
+          tds_percent: tdsPercent,
+          net_paid: Math.round(netWithBonus),
+          bonus: bonus > 0 ? bonus : 0,
+          paid_date: formatDate()
+        })
         .eq('Employee ID', eid)
 
       // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
@@ -5431,9 +5444,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                 <tbody>
                   {paidRows.map((a, i) => {
                     const payInfo = latestPaymentByEmpId[a.Employee_ID]
-                    const net = paidNets[a.Employee_ID] || 0
-                    const gross = net / (1 - tdsPercent / 100)
-                    const tdsAmt = gross - net
+                    // Use stored DB values first (persist across refresh), fall back to session paidNets
+                    const storedNet = payInfo?.net_paid ?? null
+                    const storedGross = payInfo?.gross ?? null
+                    const storedTds = payInfo?.tds_percent ?? tdsPercent
+                    const storedBonus = payInfo?.bonus ?? 0
+                    const net = storedNet !== null ? storedNet : (paidNets[a.Employee_ID] || 0)
+                    const gross = storedGross !== null ? storedGross : (net / (1 - tdsPercent / 100))
+                    const tdsAmt = gross - (net - storedBonus)
                     return (
                       <tr key={a.Employee_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
                         <td className="px-3 py-3">
