@@ -4733,9 +4733,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
 
-      // 2. Mark payments row as Paid + save bonus
+      // 2. Mark payments row as Paid + save bonus + mark Discord_Notified so bot doesn't resend
       await apiClient.from('payments')
-        .update({ Payment_Status: 'Paid', ...(bonus > 0 ? { bonus } : {}) })
+        .update({ Payment_Status: 'Paid', Discord_Notified: 'Paid_Sent', ...(bonus > 0 ? { bonus } : {}) })
         .eq('Employee ID', eid)
 
       // 3. Build the payment message
@@ -4802,25 +4802,26 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setPayingId(null)
   }
 
-  // Pre-populate paid status — derive from DB (projects with Status=Closed + Payment_Status=Paid)
+  // Pre-populate paid status — derive from DB (Status=Closed OR Status=Paid with Payment_Status=Paid)
   useEffect(() => {
     if (!projects.length) return
     const dbPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
     const empNets: Record<string, number> = {}
 
-    // Group Closed+Paid projects by Employee_ID and accumulate seconds
+    // Include BOTH old Status='Paid' records AND new Status='Closed' records
     const empSecs: Record<string, number> = {}
-    projects.filter(p => p.Status === 'Closed' && p.Payment_Status === 'Paid').forEach((p: any) => {
-      const secs = parseDurationSec(p.Duration || '', p.Project_ID)
-      if (p.Employee_ID) {
-        empSecs[p.Employee_ID] = (empSecs[p.Employee_ID] || 0) + secs
-        dbPaidStatus[p.Employee_ID] = 'Paid'
-      }
-    })
+    projects
+      .filter(p => p.Payment_Status === 'Paid' && (p.Status === 'Closed' || p.Status === 'Paid'))
+      .forEach((p: any) => {
+        const secs = parseDurationSec(p.Duration || '', p.Project_ID)
+        if (p.Employee_ID) {
+          empSecs[p.Employee_ID] = (empSecs[p.Employee_ID] || 0) + secs
+          dbPaidStatus[p.Employee_ID] = 'Paid'
+        }
+      })
 
     if (Object.keys(dbPaidStatus).length > 0) {
       setPaidStatus(prev => ({ ...prev, ...dbPaidStatus }))
-      // Calculate net from accumulated seconds
       Object.keys(dbPaidStatus).forEach(eid => {
         if (empSecs[eid]) {
           const mins = empSecs[eid] / 60
@@ -5014,13 +5015,22 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     })
 
   const availableToAdd = animators.filter(a => !approvedSecondsByEmpId[a.Employee_ID] && !manuallyAddedAnimators.has(a.Employee_ID))
-  // paidRows: animators who have at least one Closed+Paid project in DB
+  // paidRows: animators who have ANY project with Payment_Status='Paid' (both old Status='Paid' and new 'Closed')
   const paidEmpIds = new Set(
     projects
-      .filter(p => p.Status === 'Closed' && p.Payment_Status === 'Paid' && p.Employee_ID)
+      .filter(p => p.Payment_Status === 'Paid' && (p.Status === 'Closed' || p.Status === 'Paid') && p.Employee_ID)
       .map(p => p.Employee_ID)
   )
   const paidRows = animators.filter(a => paidEmpIds.has(a.Employee_ID) || paidStatus[a.Employee_ID] === 'Paid')
+
+  // For each paid animator, get their paid projects
+  const getPaidProjects = (a: Animator) =>
+    projects.filter(p =>
+      p.Payment_Status === 'Paid' &&
+      (p.Status === 'Closed' || p.Status === 'Paid') &&
+      (p.Employee_ID === a.Employee_ID ||
+        (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase()))
+    )
 
   return (
     <div className="space-y-4">
