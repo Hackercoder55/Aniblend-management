@@ -4702,11 +4702,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setShowAddMenu(false)
   }
 
+  const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
+
   const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0) => {
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
-      const ongoingProjects = animatorProjects.filter(p => !['Approved', 'Paid'].includes(p.Status))
+      const ongoingProjects = animatorProjects.filter(p => !['Approved', 'Paid', 'Closed'].includes(p.Status))
 
       if (approvedProjects.length === 0 && ongoingProjects.length === 0) {
         addToast(`⚠️ No projects found for ${animatorName}`, 'error')
@@ -4714,15 +4716,15 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         return
       }
 
-      // 1a. Approved projects → Status + Payment_Status = Paid (full close cycle)
+      // 1a. Approved projects → Status=Closed + Payment_Status=Paid
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Paid' })
+          .update({ Payment_Status: 'Paid', Status: 'Closed', paid_date: new Date().toISOString().split('T')[0] })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
 
-      // 1b. Ongoing/advance projects → only Payment_Status = Paid, Status stays unchanged
+      // 1b. Ongoing/advance projects → only Payment_Status=Paid, Status stays unchanged
       //     Thread stays open since animator is still working
       if (ongoingProjects.length > 0) {
         const { error: e2 } = await apiClient.from('projects')
@@ -4736,49 +4738,63 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         .update({ Payment_Status: 'Paid', ...(bonus > 0 ? { bonus } : {}) })
         .eq('Employee ID', eid)
 
-      // 3. Send payment confirmation directly to Discord thread (don't wait for bot loop)
-      //    Use the first project that has a Thread_ID
+      // 3. Build the payment message
+      const ANMOL = '754005287119225022'
+      const SANTOSH = '570255526219481109'
+      const totalNet = net + bonus
+
+      // Build project details line (project ID + title for each approved project)
+      const projectLines = approvedProjects
+        .slice(0, 5) // cap at 5 to avoid too-long messages
+        .map(p => `• **${p.Project_title || p.Project_ID}** \`${p.Project_ID}\``)
+        .join('\n')
+
+      const buildMsg = (tag: string) =>
+        `Hi ${tag},\n\n` +
+        `Your payment has been **successfully processed**. 🎉\n\n` +
+        (projectLines ? `**Projects:**\n${projectLines}\n\n` : '') +
+        `> 💰 **Total payable amount:** ₹${net.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
+        (bonus > 0
+          ? `> 🎁 **Bonus added:** ₹${bonus.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n`
+          : '') +
+        `> ✅ **Final amount transferred:** ₹${totalNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n\n` +
+        (ongoingProjects.length > 0
+          ? `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
+          : '') +
+        `Kindly check your bank account for confirmation. The amount should reflect within **24 hours**.\n\n` +
+        `If you have any questions, feel free to reach out. 😊\n\n` +
+        `cc: <@${ANMOL}> <@${SANTOSH}>`
+
+      // 4a. Send to thread (if exists)
       const threadProject = animatorProjects.find(p => p.Thread_ID)
       if (threadProject?.Thread_ID) {
         const discordId = threadProject.Discord_ID
         const tag = discordId ? `<@${discordId}>` : `**${animatorName}**`
-        const ANMOL = '754005287119225022'
-        const SANTOSH = '570255526219481109'
-        const totalNet = net + bonus
-        const paidMsg =
-          `Hi ${tag},\n\n` +
-          `Your payment has been **successfully processed**. 🎉\n\n` +
-          `> 💰 **Total payable amount:** ₹${net.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
-          (bonus > 0
-            ? `> 🎁 **Bonus added:** ₹${bonus.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n`
-            : '') +
-          `> ✅ **Final amount transferred:** ₹${totalNet.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n\n` +
-          (ongoingProjects.length > 0
-            ? `📌 Your ongoing project workspace stays open — keep up the great work!\n\n`
-            : '') +
-          `Kindly check your bank account for confirmation. The amount should reflect within **24 hours**.\n\n` +
-          `If you have any questions, feel free to reach out. 😊\n\n` +
-          `cc: <@${ANMOL}> <@${SANTOSH}>`
-
         try {
           await fetch('/api/discord/send-message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ threadId: threadProject.Thread_ID, message: paidMsg })
+            body: JSON.stringify({ threadId: threadProject.Thread_ID, message: buildMsg(tag) })
           })
-        } catch { /* Discord message failure is non-fatal */ }
+        } catch { /* non-fatal */ }
       }
 
-      setPaidStatus(prev => {
-        const next = { ...prev, [eid]: 'Paid' as const }
-        try { localStorage.setItem('tfa_paidStatus', JSON.stringify(next)) } catch { }
-        return next
-      })
-      setPaidNets(prev => {
-        const next = { ...prev, [eid]: net + bonus }
-        try { localStorage.setItem('tfa_paidNets', JSON.stringify(next)) } catch { }
-        return next
-      })
+      // 4b. ALSO send to animator's personal Channel_ID (main workspace)
+      const animatorInfo = animators.find(a => a.Employee_ID === eid)
+      if (animatorInfo?.Channel_ID) {
+        const discordId = animatorInfo.Discord_ID
+        const tag = discordId ? `<@${discordId}>` : `**${animatorName}**`
+        try {
+          await fetch('/api/discord/send-message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId: animatorInfo.Channel_ID, message: buildMsg(tag) })
+          })
+        } catch { /* non-fatal */ }
+      }
+
+      setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' as const }))
+      setPaidNets(prev => ({ ...prev, [eid]: net + bonus }))
       addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} — confirmation sent to Discord`)
     } catch (err: any) {
       addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
@@ -4786,46 +4802,35 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setPayingId(null)
   }
 
-  // Pre-populate paid status — merges DB data with localStorage so paid section survives hard refresh
+  // Pre-populate paid status — derive from DB (projects with Status=Closed + Payment_Status=Paid)
   useEffect(() => {
     if (!projects.length) return
     const dbPaidStatus: Record<string, 'Pending' | 'Paid'> = {}
-    const empSecs: Record<string, number> = {}
+    const empNets: Record<string, number> = {}
 
-    projects.filter(p => p.Status === 'Approved' || p.Status === 'Paid').forEach((p: any) => {
+    // Group Closed+Paid projects by Employee_ID and accumulate seconds
+    const empSecs: Record<string, number> = {}
+    projects.filter(p => p.Status === 'Closed' && p.Payment_Status === 'Paid').forEach((p: any) => {
       const secs = parseDurationSec(p.Duration || '', p.Project_ID)
       if (p.Employee_ID) {
         empSecs[p.Employee_ID] = (empSecs[p.Employee_ID] || 0) + secs
-        if (p.Payment_Status === 'Paid' || p.Status === 'Paid') {
-          dbPaidStatus[p.Employee_ID] = 'Paid'
-        }
+        dbPaidStatus[p.Employee_ID] = 'Paid'
       }
     })
 
-    // Load from localStorage as fallback for animators whose DB update may have missed
-    let lsStatus: Record<string, 'Pending' | 'Paid'> = {}
-    let lsNets: Record<string, number> = {}
-    try {
-      lsStatus = JSON.parse(localStorage.getItem('tfa_paidStatus') || '{}')
-      lsNets = JSON.parse(localStorage.getItem('tfa_paidNets') || '{}')
-    } catch { }
-
-    // Merge: localStorage provides base, DB data takes priority (DB is ground truth)
-    const merged = { ...lsStatus, ...dbPaidStatus }
-    if (Object.keys(merged).length > 0) {
-      setPaidStatus(merged)
-      const mergedNets: Record<string, number> = { ...lsNets }
-      // Recalculate from DB for animators whose seconds we know
+    if (Object.keys(dbPaidStatus).length > 0) {
+      setPaidStatus(prev => ({ ...prev, ...dbPaidStatus }))
+      // Calculate net from accumulated seconds
       Object.keys(dbPaidStatus).forEach(eid => {
         if (empSecs[eid]) {
           const mins = empSecs[eid] / 60
           const gross = mins * 5000
-          mergedNets[eid] = gross - (gross * tdsPercent / 100)
+          empNets[eid] = gross - (gross * tdsPercent / 100)
         }
       })
-      setPaidNets(mergedNets)
+      setPaidNets(prev => ({ ...prev, ...empNets }))
     }
-  }, [projects])
+  }, [projects, tdsPercent])
 
   useEffect(() => {
     apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
@@ -4848,9 +4853,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // 2. Aggregate approved seconds per animator (Approved OR Paid status, skip deferred)
+  // 2. Aggregate approved seconds per animator (Only Approved status — Closed=already paid, skip deferred)
   const approvedSecondsByEmpId: Record<string, number> = {}
-  projects.filter(p => (p.Status === 'Approved' || p.Status === 'Paid') && !deferredProjects.has(p.Project_ID)).forEach(p => {
+  projects.filter(p => p.Status === 'Approved' && !deferredProjects.has(p.Project_ID)).forEach(p => {
     // Collect all unique Employee IDs for this project (both primary and shared group animators)
     const empIds = new Set<string>()
     if (p.Employee_ID) empIds.add(p.Employee_ID)
@@ -4936,17 +4941,17 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // Helper: check if animator has any approved/paid project in the selected month
+  // Helper: check if animator has any approved project in the selected month
   const animatorInMonth = (eid: string, animName: string) => {
     if (selectedMonth === 'All') return true
     return projects.some(p =>
-      (p.Status === 'Approved' || p.Status === 'Paid') &&
+      p.Status === 'Approved' &&
       (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase())) &&
       (p['Date Approved'] || '').includes(selectedMonth)
     )
   }
 
-  // 3. Build data rows — hide paid, filter by month
+  // 3. Build data rows — hide paid (Closed+Paid in DB), filter by month
   const rows = animators
     .filter(a => (approvedSecondsByEmpId[a.Employee_ID] > 0 || manuallyAddedAnimators.has(a.Employee_ID)))
     .filter(a => paidStatus[a.Employee_ID] !== 'Paid')
@@ -5009,7 +5014,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     })
 
   const availableToAdd = animators.filter(a => !approvedSecondsByEmpId[a.Employee_ID] && !manuallyAddedAnimators.has(a.Employee_ID))
-  const paidRows = animators.filter(a => paidStatus[a.Employee_ID] === 'Paid')
+  // paidRows: animators who have at least one Closed+Paid project in DB
+  const paidEmpIds = new Set(
+    projects
+      .filter(p => p.Status === 'Closed' && p.Payment_Status === 'Paid' && p.Employee_ID)
+      .map(p => p.Employee_ID)
+  )
+  const paidRows = animators.filter(a => paidEmpIds.has(a.Employee_ID) || paidStatus[a.Employee_ID] === 'Paid')
 
   return (
     <div className="space-y-4">
@@ -5374,6 +5385,44 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
         return (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            {/* Project List Modal */}
+            {paidProjectsModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+                  <div className="p-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+                    <div>
+                      <h3 className="font-bold text-gray-800">Paid Projects — {paidProjectsModal.name}</h3>
+                      <p className="text-xs text-gray-400 mt-0.5">{paidProjectsModal.projects.length} project(s) marked as paid</p>
+                    </div>
+                    <button onClick={() => setPaidProjectsModal(null)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-emerald-50 border-b border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
+                          <th className="px-4 py-2 text-left">Project ID</th>
+                          <th className="px-4 py-2 text-left">Title</th>
+                          <th className="px-4 py-2 text-left">Date Approved</th>
+                          <th className="px-4 py-2 text-right">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paidProjectsModal.projects.map((p, i) => (
+                          <tr key={p.Project_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
+                            <td className="px-4 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
+                            <td className="px-4 py-2 text-xs text-gray-800 max-w-[200px] truncate">{p.Project_title || '—'}</td>
+                            <td className="px-4 py-2 text-xs text-gray-500">{p['Date Approved'] || '—'}</td>
+                            <td className="px-4 py-2 text-right text-xs font-mono text-indigo-600">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-bold text-gray-800">🟢 Paid — {selectedMonth}</h2>
               <button onClick={downloadCsv}
@@ -5410,7 +5459,20 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                               {(a.Name || '?')[0]}
                             </div>
                             <div>
-                              <p className="font-semibold text-gray-800 text-xs">{payInfo?.['Account Holder Name'] || a.Name}</p>
+                              {/* Clickable name — opens project list modal */}
+                              <button
+                                onClick={() => {
+                                  const animProjects = projects.filter(p =>
+                                    p.Status === 'Closed' && p.Payment_Status === 'Paid' &&
+                                    (p.Employee_ID === a.Employee_ID ||
+                                      (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase()))
+                                  )
+                                  setPaidProjectsModal({ name: payInfo?.['Account Holder Name'] || a.Name, projects: animProjects })
+                                }}
+                                className="font-semibold text-gray-800 text-xs hover:text-indigo-600 hover:underline transition-colors text-left"
+                              >
+                                {payInfo?.['Account Holder Name'] || a.Name}
+                              </button>
                               <p className="text-[10px] text-gray-400">{a.Employee_ID}</p>
                             </div>
                           </div>
