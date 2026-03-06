@@ -4759,6 +4759,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     const map: Record<string, Project[]> = {}
     for (const p of projects) {
       if (p.Status === 'Approved' && p.Payment_Status !== 'Paid') {
+        const d = new Date(p.Date_Approved || p.Assigned_Date || '')
+        const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+        if (pMonth !== selectedMonth && pMonth !== '') continue
+
         const eid = p.Employee_ID || ''
         if (!eid) continue
         if (!map[eid]) map[eid] = []
