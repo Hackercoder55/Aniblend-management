@@ -4674,6 +4674,7 @@ const apiClient = {
       upsert(payload: any) { _action = 'upsert'; _payload = payload; return builder; },
       delete() { _action = 'delete'; return builder; },
       eq(col: string, val: any) { _match = _match || {}; _match[col] = val; return builder; },
+      match(obj: any) { _match = { ...(_match || {}), ...obj }; return builder; },
       is(col: string, val: any) { _isMatch = _isMatch || {}; _isMatch[col] = val; return builder; },
       in(col: string, vals: any[]) { _inMatch = { column: col, values: vals }; return builder; },
       order(col: string, opts?: any) { _order = { column: col, options: opts }; return builder; },
