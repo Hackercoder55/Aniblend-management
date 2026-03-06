@@ -264,12 +264,12 @@ function Toast({ toasts, onDismiss }: { toasts: ToastMsg[]; onDismiss: (id: numb
 
 function useToast() {
   const [toasts, setToasts] = useState<ToastMsg[]>([])
-  const addToast = (text: string, type: 'success' | 'error' = 'success') => {
+  const addToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
     const id = Date.now()
     setToasts(prev => [...prev, { id, text, type }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500)
-  }
-  const dismiss = (id: number) => setToasts(prev => prev.filter(t => t.id !== id))
+  }, [])
+  const dismiss = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), [])
   return { toasts, addToast, dismiss }
 }
 
@@ -4976,45 +4976,46 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       </div>
 
       {/* SECTION: Send Invoices */}
-      {section === 'send' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
-          <h3 className="font-bold text-gray-800">📤 Send Invoice Requests</h3>
-          <p className="text-sm text-gray-500">Select animators with approved unpaid projects for <strong>{selectedMonth}</strong>. Bot will send invoices to their workspace threads within 2 minutes.</p>
-          <div className="space-y-2">
-            {Object.keys(approvedUnpaidByEid).length === 0 ? (
-              <p className="text-sm text-gray-400">No animators with approved unpaid projects found.</p>
-            ) : Object.entries(approvedUnpaidByEid).map(([eid, projs]) => {
-              const anim = animatorByEid[eid]
-              const alreadySent = sentEids.has(eid)
-              return (
-                <label key={eid} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" disabled={alreadySent} checked={selectedEids.has(eid) || alreadySent}
-                    onChange={e => {
-                      const s = new Set(selectedEids)
-                      e.target.checked ? s.add(eid) : s.delete(eid)
-                      setSelectedEids(s)
-                    }}
-                    className="w-4 h-4 rounded"
-                  />
-                  <div>
-                    <span className="text-sm font-medium text-gray-800">{anim?.Name || eid}</span>
-                    <span className="ml-2 text-xs text-gray-400">({projs.length} project{projs.length > 1 ? 's' : ''})</span>
-                    {alreadySent && <span className="ml-2 text-xs text-green-600 font-medium">✓ Already sent</span>}
-                  </div>
-                </label>
-              )
-            })}
+      {section === 'send' && (() => {
+        const notSentEntries = Object.entries(approvedUnpaidByEid).filter(([eid]) => !sentEids.has(eid))
+        return (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
+            <h3 className="font-bold text-gray-800">📤 Send Invoice Requests</h3>
+            <p className="text-sm text-gray-500">Select animators with approved unpaid projects for <strong>{selectedMonth}</strong>. Bot will send invoices to their workspace threads within 2 minutes.</p>
+            <div className="space-y-2">
+              {notSentEntries.length === 0 ? (
+                <p className="text-sm text-gray-400">No animators with approved unpaid projects found for this month (or invoices already sent).</p>
+              ) : notSentEntries.map(([eid, projs]) => {
+                const anim = animatorByEid[eid]
+                return (
+                  <label key={eid} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedEids.has(eid)}
+                      onChange={e => {
+                        const s = new Set(selectedEids)
+                        e.target.checked ? s.add(eid) : s.delete(eid)
+                        setSelectedEids(s)
+                      }}
+                      className="w-4 h-4 rounded"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">{anim?.Name || eid}</span>
+                      <span className="ml-2 text-xs text-gray-400">({projs.length} project{projs.length > 1 ? 's' : ''})</span>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+            <button
+              disabled={sending || selectedEids.size === 0}
+              onClick={handleSendInvoices}
+              className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
+            >
+              {sending ? 'Creating...' : `📤 Send to ${selectedEids.size} Animator(s)`}
+            </button>
           </div>
-          <button
-            disabled={sending || selectedEids.size === 0}
-            onClick={handleSendInvoices}
-            className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
-          >
-            {sending ? 'Creating...' : `📤 Send to ${selectedEids.size} Animator(s)`}
-          </button>
-        </div>
-      )}
+        )
+      })()}
 
       {/* SECTION: Pending Acknowledgement */}
       {section === 'pending' && (
@@ -5026,7 +5027,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             )}
           </div>
           {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : pendingInvoices.length === 0 ? (
-            <p className="p-6 text-sm text-gray-400">🎉 All animators have acknowledged their invoices for {selectedMonth}.</p>
+            <p className="p-6 text-sm text-gray-400">
+              {monthInvoices.length === 0 ? `No invoices have been sent for ${selectedMonth} yet.` : `🎉 All sent invoices for ${selectedMonth} have been acknowledged.`}
+            </p>
           ) : (
             <table className="w-full text-sm">
               <thead>
