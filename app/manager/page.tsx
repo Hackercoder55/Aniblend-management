@@ -4796,12 +4796,29 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const invoiceNumber = `${eid}${String(newSeq).padStart(2, '0')}`
 
         // Build line items from approved projects
-        const lineItems = projs.map(p => ({
-          project_id: p.Project_ID,
-          title: p.Project_title || p.Project_ID,
-          seconds: 0, // animator/manager fills in via edit if needed
-          amount: 0,
-        }))
+        let totalVal = 0
+        const lineItems = projs.map(p => {
+          const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+          const empSet = new Set<string>()
+          if (p.Employee_ID) empSet.add(p.Employee_ID)
+            ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
+              const found = animators.find(a => a.Name.toLowerCase() === name.toLowerCase())
+              if (found) empSet.add(found.Employee_ID)
+            })
+          const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
+          const amt = Math.round((finalSec / 60) * 5000)
+          totalVal += amt
+
+          return {
+            project_id: p.Project_ID,
+            title: p.Project_title || p.Project_ID,
+            seconds: finalSec,
+            amount: amt,
+          }
+        })
+
+        const tdsAmt = Math.round(totalVal * 0.10)
+        const netPay = Math.round(totalVal - tdsAmt)
 
         const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || ''
 
@@ -4812,10 +4829,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           month_label: selectedMonth,
           invoice_date: invoiceDate,
           line_items: lineItems,
-          total_amount: 0,
+          total_amount: totalVal,
           tds_percent: 10,
-          tds_amount: 0,
-          net_payable: 0,
+          tds_amount: tdsAmt,
+          net_payable: netPay,
           status: 'Draft',
           thread_id,
         })
