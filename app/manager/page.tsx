@@ -1668,7 +1668,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Manager', 'Progress', 'Emp Type', 'Warning', 'Acknowledgement', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Manager', 'Progress', 'Emp Type', 'Warning', 'Date Approved', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -1752,21 +1752,7 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
-                      <input
-                        type="text"
-                        value={newAcknowledgement}
-                        onChange={e => setNewAcknowledgement(e.target.value)}
-                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
-                        placeholder="Acknowledgement..."
-                      />
-                    ) : (
-                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.acknowledgement || ''}>
-                        {p.acknowledgement || '—'}
-                      </p>
-                    )}
-                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{p['Date Approved'] || '—'}</td>
                   <td className="px-4 py-3">
                     {editingProjectId === p.Project_ID ? (
                       <select
@@ -4651,7 +4637,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'notes' | 'budget'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -4662,7 +4648,8 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'submissions', label: 'Form Submissions', icon: '📋' },
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payments', label: 'Payments', icon: '💳', managerOnly: true },
-  { id: 'payouts', label: 'Payout Calculator', icon: '🧮', managerOnly: true },
+  { id: 'payouts', label: 'Payout Calculator', icon: '🧭', managerOnly: true },
+  { id: 'invoices', label: 'Invoices', icon: '📄' },
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
 ]
@@ -4684,6 +4671,7 @@ const apiClient = {
       select(params?: string) { _action = 'select'; _payload = params; return builder; },
       insert(payload: any) { _action = 'insert'; _payload = payload; return builder; },
       update(payload: any) { _action = 'update'; _payload = payload; return builder; },
+      upsert(payload: any) { _action = 'upsert'; _payload = payload; return builder; },
       delete() { _action = 'delete'; return builder; },
       eq(col: string, val: any) { _match = _match || {}; _match[col] = val; return builder; },
       is(col: string, val: any) { _isMatch = _isMatch || {}; _isMatch[col] = val; return builder; },
@@ -4705,6 +4693,432 @@ const apiClient = {
   }
 };
 // ----------------------------------------
+
+// ─── Invoice Types ────────────────────────────────────────────────────────────
+interface Invoice {
+  id: string
+  invoice_number: string
+  employee_id: string
+  legal_name: string
+  month_label: string
+  invoice_date: string
+  artist_address: string
+  artist_pan: string
+  line_items: { project_id: string; title: string; seconds: number; amount: number }[]
+  total_amount: number
+  tds_percent: number
+  tds_amount: number
+  net_payable: number
+  status: string // Draft | Awaiting Details | Sent | Edit Requested | Acknowledged | Paid | Downloaded
+  sent_at: string
+  acknowledged_at: string
+  paid_at: string
+  downloaded_at: string
+  thread_id: string
+  edit_comment: string
+  edit_status: string
+}
+
+// ─── InvoicesTab ──────────────────────────────────────────────────────────────
+function InvoicesTab({ animators, projects }: { animators: Animator[]; projects: Project[] }) {
+  const { addToast } = useToast()
+  const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
+  const [section, setSection] = useState<'send' | 'pending' | 'done'>('pending')
+  const [selectedEids, setSelectedEids] = useState<Set<string>>(new Set())
+  const [printInvoice, setPrintInvoice] = useState<Invoice | null>(null)
+
+  const monthOptions = (() => {
+    const opts: string[] = []
+    const now = new Date()
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0])
+
+  const fetchInvoices = useCallback(async () => {
+    setLoading(true)
+    try {
+      const { data } = await apiClient.from('invoices').select('*')
+      setInvoices((data as Invoice[]) || [])
+    } catch (e: any) {
+      addToast('Failed to load invoices', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }, [addToast])
+
+  useEffect(() => { fetchInvoices() }, [fetchInvoices])
+
+  // Approved projects not yet paid (for the send panel)
+  const approvedUnpaidByEid = (() => {
+    const map: Record<string, Project[]> = {}
+    for (const p of projects) {
+      if (p.Status === 'Approved' && p.Payment_Status !== 'Paid') {
+        const eid = p.Employee_ID || ''
+        if (!eid) continue
+        if (!map[eid]) map[eid] = []
+        map[eid].push(p)
+      }
+    }
+    return map
+  })()
+
+  const animatorByEid: Record<string, Animator> = {}
+  for (const a of animators) animatorByEid[a.Employee_ID] = a
+
+  const handleSendInvoices = async () => {
+    if (selectedEids.size === 0) { addToast('Select at least one animator', 'error'); return }
+    setSending(true)
+    try {
+      const now = new Date()
+      const invoiceDate = now.toISOString().split('T')[0]
+
+      for (const eid of Array.from(selectedEids)) {
+        const projs = approvedUnpaidByEid[eid] || []
+        const anim = animatorByEid[eid]
+        if (!anim) continue
+
+        // Get or create invoice counter
+        const { data: ctrData } = await apiClient.from('invoice_counter').select('*').match({ employee_id: eid })
+        const currentSeq = (ctrData && ctrData[0]?.last_seq) || 0
+        const newSeq = currentSeq + 1
+        await apiClient.from('invoice_counter').upsert({ employee_id: eid, last_seq: newSeq })
+        const invoiceNumber = `${eid}${String(newSeq).padStart(2, '0')}`
+
+        // Build line items from approved projects
+        const lineItems = projs.map(p => ({
+          project_id: p.Project_ID,
+          title: p.Project_title || p.Project_ID,
+          seconds: 0, // animator/manager fills in via edit if needed
+          amount: 0,
+        }))
+
+        const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || ''
+
+        await apiClient.from('invoices').insert({
+          invoice_number: invoiceNumber,
+          employee_id: eid,
+          legal_name: (anim as any).legal_name || anim.Name,
+          month_label: selectedMonth,
+          invoice_date: invoiceDate,
+          line_items: lineItems,
+          total_amount: 0,
+          tds_percent: 10,
+          tds_amount: 0,
+          net_payable: 0,
+          status: 'Draft',
+          thread_id,
+        })
+      }
+      addToast(`Invoice drafts created for ${selectedEids.size} animator(s). Bot will send them within 2 minutes.`, 'success')
+      setSelectedEids(new Set())
+      fetchInvoices()
+    } catch (e: any) {
+      addToast('Error creating invoices: ' + e.message, 'error')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleDownload = async (inv: Invoice) => {
+    setPrintInvoice(inv)
+    // Mark downloaded
+    try {
+      await apiClient.from('invoices').update({ status: 'Downloaded', downloaded_at: new Date().toISOString() }).match({ id: inv.id })
+      fetchInvoices()
+    } catch { }
+  }
+
+  const monthInvoices = invoices.filter(inv => inv.month_label === selectedMonth)
+  const pendingInvoices = monthInvoices.filter(inv => ['Sent', 'Edit Requested', 'Awaiting Details', 'Draft'].includes(inv.status))
+  const doneInvoices = invoices.filter(inv => ['Acknowledged', 'Paid', 'Downloaded'].includes(inv.status))
+
+  // Animators who have not yet acknowledged for selected month
+  const pendingEids = new Set(pendingInvoices.map(i => i.employee_id))
+  const sentEids = new Set(monthInvoices.map(i => i.employee_id))
+  const notSentEids = Object.keys(approvedUnpaidByEid).filter(eid => !sentEids.has(eid))
+
+  const tabStyle = (s: string) => ({
+    padding: '6px 14px',
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    border: 'none',
+    background: section === s ? '#667eea' : '#f1f5f9',
+    color: section === s ? '#fff' : '#64748b',
+  })
+
+  return (
+    <div className="space-y-6">
+      {printInvoice && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setPrintInvoice(null)}
+        >
+          <div
+            style={{ background: '#fff', borderRadius: 12, padding: 40, maxWidth: 720, width: '90%', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Arial, sans-serif' }}
+            onClick={e => e.stopPropagation()}
+            id="invoice-print-area"
+          >
+            {/* Header: INVOICE title only — this is animator's invoice */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginBottom: 24 }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 32, fontWeight: 900, color: '#111', letterSpacing: 2 }}>INVOICE</div>
+                <div style={{ fontSize: 14, color: '#667eea', fontWeight: 700 }}>#{printInvoice.invoice_number}</div>
+                <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>Date: {printInvoice.invoice_date}</div>
+                <div style={{ fontSize: 12, color: '#888' }}>Period: {printInvoice.month_label}</div>
+              </div>
+            </div>
+
+            <hr style={{ margin: '16px 0', borderColor: '#e5e7eb' }} />
+
+            {/* From / To */}
+            <div style={{ display: 'flex', gap: 40, marginBottom: 24 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>From</div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{printInvoice.legal_name || '—'}</div>
+                <div style={{ fontSize: 12, color: '#555', whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || '—'}</div>
+                <div style={{ fontSize: 12, color: '#555' }}>PAN: {printInvoice.artist_pan || '—'}</div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>To</div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                <div style={{ fontSize: 12, color: '#555' }}>GSTIN: 07AAGCF2334M1ZJ</div>
+                <div style={{ fontSize: 12, color: '#555' }}>PAN: AAGCF2334M</div>
+                <div style={{ fontSize: 12, color: '#555' }}>India | +91 8595833751</div>
+              </div>
+            </div>
+
+            {/* Line items table */}
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+              <thead>
+                <tr style={{ background: '#1f2937', color: '#fff' }}>
+                  {['#', 'Project ID', 'Video Title', 'Seconds', 'Amount (₹)'].map(h => (
+                    <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 12, fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(printInvoice.line_items || []).map((item, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#f9fafb' : '#fff', borderBottom: '1px solid #e5e7eb' }}>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{i + 1}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 600 }}>{item.project_id}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.title}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12, textAlign: 'right' }}>{item.seconds || '—'}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12, textAlign: 'right' }}>₹{Number(item.amount || 0).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Totals */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ width: 280 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 13 }}>
+                  <span>Gross Total:</span>
+                  <span style={{ fontWeight: 600 }}>₹{Math.round(printInvoice.total_amount || 0).toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 13, color: '#dc2626' }}>
+                  <span>TDS @{printInvoice.tds_percent || 10}% (Sec 194J):</span>
+                  <span>−₹{Math.round(printInvoice.tds_amount || 0).toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#1f2937', color: '#fff', borderRadius: 6, fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                  <span>Net Payable:</span>
+                  <span>₹{Math.round(printInvoice.net_payable || 0).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 32, fontSize: 11, color: '#9ca3af', borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+              This is a computer-generated invoice for professional animation services rendered. TDS deducted under Section 194J of the Income Tax Act, 1961.
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => window.print()}
+                style={{ padding: '8px 20px', background: '#667eea', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
+              >
+                🖨️ Print / Save PDF
+              </button>
+              <button
+                onClick={() => setPrintInvoice(null)}
+                style={{ padding: '8px 20px', background: '#f1f5f9', color: '#374151', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-nav */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <button style={tabStyle('pending')} onClick={() => setSection('pending')}>⚠️ Pending Acknowledgement {pendingInvoices.length > 0 && `(${pendingInvoices.length})`}</button>
+        <button style={tabStyle('send')} onClick={() => setSection('send')}>📤 Send Invoices</button>
+        <button style={tabStyle('done')} onClick={() => setSection('done')}>✅ Acknowledged / Paid</button>
+      </div>
+
+      {/* Month selector */}
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium text-gray-600">Month:</label>
+        <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+          className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-800 focus:outline-none">
+          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <button onClick={fetchInvoices} className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">🔄 Refresh</button>
+      </div>
+
+      {/* SECTION: Send Invoices */}
+      {section === 'send' && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
+          <h3 className="font-bold text-gray-800">📤 Send Invoice Requests</h3>
+          <p className="text-sm text-gray-500">Select animators with approved unpaid projects for <strong>{selectedMonth}</strong>. Bot will send invoices to their workspace threads within 2 minutes.</p>
+          <div className="space-y-2">
+            {Object.keys(approvedUnpaidByEid).length === 0 ? (
+              <p className="text-sm text-gray-400">No animators with approved unpaid projects found.</p>
+            ) : Object.entries(approvedUnpaidByEid).map(([eid, projs]) => {
+              const anim = animatorByEid[eid]
+              const alreadySent = sentEids.has(eid)
+              return (
+                <label key={eid} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
+                  <input type="checkbox" disabled={alreadySent} checked={selectedEids.has(eid) || alreadySent}
+                    onChange={e => {
+                      const s = new Set(selectedEids)
+                      e.target.checked ? s.add(eid) : s.delete(eid)
+                      setSelectedEids(s)
+                    }}
+                    className="w-4 h-4 rounded"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-gray-800">{anim?.Name || eid}</span>
+                    <span className="ml-2 text-xs text-gray-400">({projs.length} project{projs.length > 1 ? 's' : ''})</span>
+                    {alreadySent && <span className="ml-2 text-xs text-green-600 font-medium">✓ Already sent</span>}
+                  </div>
+                </label>
+              )
+            })}
+          </div>
+          <button
+            disabled={sending || selectedEids.size === 0}
+            onClick={handleSendInvoices}
+            className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
+          >
+            {sending ? 'Creating...' : `📤 Send to ${selectedEids.size} Animator(s)`}
+          </button>
+        </div>
+      )}
+
+      {/* SECTION: Pending Acknowledgement */}
+      {section === 'pending' && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="font-bold text-gray-800">⚠️ Pending Acknowledgement — {selectedMonth}</h3>
+            {notSentEids.length > 0 && (
+              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg font-medium">{notSentEids.length} animator(s) not yet sent invoice</span>
+            )}
+          </div>
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : pendingInvoices.length === 0 ? (
+            <p className="p-6 text-sm text-gray-400">🎉 All animators have acknowledged their invoices for {selectedMonth}.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  {['Animator', 'Invoice #', 'Projects', 'Total', 'Status', 'Sent At'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pendingInvoices.map(inv => (
+                  <tr key={inv.id} className="border-b border-gray-50 hover:bg-amber-50/30">
+                    <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
+                    <td className="px-4 py-3 text-gray-600">{(inv.line_items || []).length} project(s)</td>
+                    <td className="px-4 py-3 font-medium">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${inv.status === 'Edit Requested' ? 'bg-orange-100 text-orange-700' :
+                        inv.status === 'Awaiting Details' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-blue-100 text-blue-700'
+                        }`}>{inv.status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-400">{inv.sent_at ? new Date(inv.sent_at).toLocaleString('en-IN') : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* SECTION: Acknowledged / Paid / Downloaded */}
+      {section === 'done' && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h3 className="font-bold text-gray-800">✅ Acknowledged / Paid / Downloaded</h3>
+          </div>
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : doneInvoices.length === 0 ? (
+            <p className="p-6 text-sm text-gray-400">No acknowledged invoices yet.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  {['Animator', 'Invoice #', 'Month', 'Gross', 'TDS', 'Net', 'Status', 'Action'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {doneInvoices.map(inv => {
+                  const isPaid = ['Paid', 'Downloaded'].includes(inv.status)
+                  const isDownloaded = inv.status === 'Downloaded'
+                  return (
+                    <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{inv.month_label}</td>
+                      <td className="px-4 py-3">₹{Math.round(inv.total_amount || 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-red-600">−₹{Math.round(inv.tds_amount || 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 font-semibold text-emerald-700">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isDownloaded ? 'bg-gray-100 text-gray-600' :
+                          isPaid ? 'bg-emerald-100 text-emerald-700' :
+                            'bg-violet-100 text-violet-700'
+                          }`}>
+                          {isDownloaded ? '✓ Downloaded' : inv.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {isPaid ? (
+                          <button
+                            onClick={() => handleDownload(inv)}
+                            className="px-3 py-1.5 text-xs font-semibold rounded-lg"
+                            style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
+                          >
+                            {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-gray-400">Awaiting payment</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; projects: Project[] }) {
   const { addToast } = useToast()
@@ -4791,16 +5205,23 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       // 2. Mark payments row as Paid + store gross/tds/net for Paid section display
       const grossAmt = net / (1 - tdsPercent / 100)
       const netWithBonus = net + bonus
-      await apiClient.from('payments')
-        .update({
-          Payment_Status: 'Paid',
-          gross: Math.round(grossAmt),
-          tds_percent: tdsPercent,
-          net_paid: Math.round(netWithBonus),
-          bonus: bonus > 0 ? bonus : 0,
-          paid_date: formatDate()
-        })
+      const paymentUpdateData = {
+        Payment_Status: 'Paid',
+        gross: Math.round(grossAmt),
+        tds_percent: tdsPercent,
+        net_paid: Math.round(netWithBonus),
+        bonus: bonus > 0 ? bonus : 0,
+        paid_date: formatDate()
+      }
+      console.log('[Mark Paid] Updating payments row for Employee ID:', eid, paymentUpdateData)
+      const { error: payErr } = await apiClient.from('payments')
+        .update(paymentUpdateData)
         .eq('Employee ID', eid)
+      if (payErr) {
+        console.error('[Mark Paid] payments update failed:', payErr)
+        throw new Error('Payments DB update failed: ' + (payErr.message || JSON.stringify(payErr)))
+      }
+      console.log('[Mark Paid] payments row updated successfully for', eid)
 
       // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
       // This guarantees no double messages and relies on the python bot's permissions
@@ -5663,6 +6084,7 @@ export default function ManagerDashboard() {
               {activeTab === 'analytics' && <AnalyticsTab projects={projects} animators={animators} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
+              {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={projects} onRefresh={fetchData} />}
             </>
