@@ -4649,7 +4649,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payments', label: 'Payments', icon: '💳', managerOnly: true },
   { id: 'payouts', label: 'Payout Calculator', icon: '🧭', managerOnly: true },
-  { id: 'invoices', label: 'Invoices', icon: '📄' },
+  { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
 ]
