@@ -5248,6 +5248,16 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
       console.log('[Mark Paid] payments row updated successfully for', eid)
 
+      // 3. Mark the animator's open invoice as Paid
+      try {
+        await apiClient.from('invoices')
+          .update({ status: 'Paid' })
+          .eq('employee_id', eid)
+          .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details'])
+      } catch (invErr) {
+        console.error('Failed to update invoice status:', invErr)
+      }
+
       // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
       // This guarantees no double messages and relies on the python bot's permissions
 
