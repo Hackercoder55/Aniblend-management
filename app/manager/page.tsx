@@ -4854,9 +4854,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     let bonusToShow = 0;
     // Always fetch the latest bonus from payments for this animator
     try {
-      const { data } = await apiClient.from('payments').select('bonus').eq('Employee ID', inv.employee_id).order('Timestamp', { ascending: false }).limit(1)
-      if (data && data.length > 0 && data[0].bonus) {
-        bonusToShow = Number(data[0].bonus) || 0;
+      const { data } = await apiClient.from('payments').select('bonus').match({ 'Employee ID': inv.employee_id }).order('Timestamp', { ascending: false })
+      if (data && data.length > 0) {
+        // Sum all bonuses for this animator across all payment records
+        bonusToShow = data.reduce((sum: number, row: any) => sum + (Number(row.bonus) || 0), 0);
       }
     } catch { }
 
