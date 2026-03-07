@@ -4955,19 +4955,25 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                   </tr>
                 </thead>
                 <tbody>
-                  {(printInvoice.line_items || []).map((item, i) => (
-                    <tr key={i} style={{ background: i % 2 === 0 ? '#ffffff' : '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
-                      <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>{i + 1}</td>
-                      <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: '#111' }}>
-                        <div>{item.project_id}</div>
-                        <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400, marginTop: 2 }}>{item.title}</div>
-                      </td>
-                      <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{item.assigned_date || '—'}</td>
-                      <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{item.approved_date || '—'}</td>
-                      <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 500, color: '#374151' }}>{item.seconds || '—'}</td>
-                      <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 600, color: '#111' }}>₹{Number(item.amount || 0).toLocaleString()}</td>
-                    </tr>
-                  ))}
+                  {(printInvoice.line_items || []).map((item, i) => {
+                    const matchedProj = projects?.find(p => p.Project_ID === item.project_id);
+                    const assignedDate = item.assigned_date || matchedProj?.['Date Assigned'] || '—';
+                    const approvedDate = item.approved_date || matchedProj?.['Date Approved'] || '—';
+
+                    return (
+                      <tr key={i} style={{ background: i % 2 === 0 ? '#ffffff' : '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
+                        <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>{i + 1}</td>
+                        <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: '#111' }}>
+                          <div>{item.project_id}</div>
+                          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400, marginTop: 2 }}>{item.title}</div>
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{assignedDate}</td>
+                        <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{approvedDate}</td>
+                        <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 500, color: '#374151' }}>{item.seconds || '—'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 600, color: '#111' }}>₹{Number(item.amount || 0).toLocaleString()}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -4979,12 +4985,24 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                   <span style={{ color: '#4b5563' }}>Gross Total:</span>
                   <span style={{ fontWeight: 700, color: '#111' }}>₹{Math.round(printInvoice.total_amount || 0).toLocaleString()}</span>
                 </div>
-                {printInvoice.bonus_amount ? (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
-                    <span style={{ color: '#4b5563' }}>Bonus:</span>
-                    <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(printInvoice.bonus_amount).toLocaleString()}</span>
-                  </div>
-                ) : null}
+                {(() => {
+                  // Fallback to fetch bonus from payments data for old invoices
+                  let displayBonus = printInvoice.bonus_amount;
+                  if (displayBonus === undefined) {
+                    // Since payment state might be in parent Tab but we only get `projects` and `animators` props. We can't query payments directly here unless passed.
+                    // But old invoices had no bonus feature at all (except maybe manual).
+                    // However we can derive if `status` is Paid, but we don't know the exact bonus without payments prop.
+                    // So if `printInvoice.bonus_amount` is undefined, we assume 0 for older ones.
+                    displayBonus = 0;
+                  }
+
+                  return displayBonus && displayBonus > 0 ? (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                      <span style={{ color: '#4b5563' }}>Bonus:</span>
+                      <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(displayBonus).toLocaleString()}</span>
+                    </div>
+                  ) : null;
+                })()}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
                   <span style={{ color: '#4b5563' }}>TDS @{printInvoice.tds_percent || 10}% (Sec 194J):</span>
                   <span style={{ fontWeight: 600, color: '#dc2626' }}>−₹{Math.round(printInvoice.tds_amount || 0).toLocaleString()}</span>
