@@ -4925,12 +4925,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             onClick={e => e.stopPropagation()}
             id="invoice-print-area"
           >
-            {/* Header: INVOICE title only */}
+            {/* Header: Animator name left, INVOICE right */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
               <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: '#111', letterSpacing: 1, textTransform: 'uppercase' }}>Futurverse Animation</div>
-                <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>GSTIN: 07AAGCF2334M1ZJ</div>
-                <div style={{ fontSize: 13, color: '#666' }}>PAN: AAGCF2334M</div>
+                <div style={{ fontSize: 22, fontWeight: 900, color: '#111', letterSpacing: 0.5, textTransform: 'uppercase' }}>{printInvoice.legal_name || '—'}</div>
+                <div style={{ fontSize: 13, color: '#666', marginTop: 4, whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || ''}</div>
+                <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>PAN: {printInvoice.artist_pan || '—'}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 40, fontWeight: 900, color: '#111', letterSpacing: 2, lineHeight: 1 }}>INVOICE</div>
@@ -4942,21 +4942,22 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
             <hr style={{ margin: '24px 0', borderColor: '#f3f4f6', borderWidth: 2 }} />
 
-            {/* From / To */}
+            {/* From / To — animator is sender, company is recipient */}
             <div style={{ display: 'flex', gap: 40, marginBottom: 32 }}>
+              <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>From (Freelancer)</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>{printInvoice.legal_name || '—'}</div>
+                <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || '—'}</div>
+                <div style={{ fontSize: 13, color: '#4b5563', marginTop: 4 }}><strong>PAN:</strong> {printInvoice.artist_pan || '—'}</div>
+              </div>
               <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
                 <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
                 <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
-                  New Delhi, India<br />
-                  Phone: +91 8595833751
+                  GSTIN: 07AAGCF2334M1ZJ<br />
+                  PAN: AAGCF2334M<br />
+                  New Delhi, India
                 </div>
-              </div>
-              <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>From / Payee</div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>{printInvoice.legal_name || '—'}</div>
-                <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || '—'}</div>
-                <div style={{ fontSize: 13, color: '#4b5563', marginTop: 4 }}><strong>PAN:</strong> {printInvoice.artist_pan || '—'}</div>
               </div>
             </div>
 
