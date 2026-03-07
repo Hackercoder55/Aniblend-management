@@ -4851,11 +4851,21 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   }
 
   const handleDownload = async (inv: Invoice) => {
-    setPrintInvoice(inv)
+    // Dynamically fetch any bonus assigned to this animator from their latest payment record
+    try {
+      const { data } = await apiClient.from('payments').select('bonus').eq('Employee ID', inv.employee_id).order('Timestamp', { ascending: false }).limit(1)
+      if (data && data.length > 0) {
+        inv.bonus_amount = data[0].bonus || 0;
+      }
+    } catch { }
+
+    setPrintInvoice({ ...inv })
     // Mark downloaded
     try {
-      await apiClient.from('invoices').update({ status: 'Downloaded', downloaded_at: new Date().toISOString() }).match({ id: inv.id })
-      fetchInvoices()
+      if (inv.status !== 'Downloaded') {
+        await apiClient.from('invoices').update({ status: 'Downloaded', downloaded_at: new Date().toISOString() }).match({ id: inv.id })
+        fetchInvoices()
+      }
     } catch { }
   }
 
@@ -5310,10 +5320,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
       console.log('[Mark Paid] payments row updated successfully for', eid)
 
-      // 3. Mark the animator's open invoice as Paid and save bonus
+      // 3. Mark the animator's open invoice as Paid
       try {
         await apiClient.from('invoices')
-          .update({ status: 'Paid', bonus_amount: bonus > 0 ? bonus : 0 })
+          .update({ status: 'Paid' })
           .eq('employee_id', eid)
           .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details'])
       } catch (invErr) {
