@@ -4851,15 +4851,18 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   }
 
   const handleDownload = async (inv: Invoice) => {
+    let dynamicallyFetchedBonus = 0;
     // Dynamically fetch any bonus assigned to this animator from their latest payment record
     try {
       const { data } = await apiClient.from('payments').select('bonus').eq('Employee ID', inv.employee_id).order('Timestamp', { ascending: false }).limit(1)
       if (data && data.length > 0) {
-        inv.bonus_amount = data[0].bonus || 0;
+        dynamicallyFetchedBonus = data[0].bonus || 0;
       }
     } catch { }
 
-    setPrintInvoice({ ...inv })
+    const printObj = { ...inv, bonus_amount: inv.bonus_amount !== undefined ? inv.bonus_amount : dynamicallyFetchedBonus };
+    setPrintInvoice(printObj)
+
     // Mark downloaded
     try {
       if (inv.status !== 'Downloaded') {
@@ -4995,24 +4998,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                   <span style={{ color: '#4b5563' }}>Gross Total:</span>
                   <span style={{ fontWeight: 700, color: '#111' }}>₹{Math.round(printInvoice.total_amount || 0).toLocaleString()}</span>
                 </div>
-                {(() => {
-                  // Fallback to fetch bonus from payments data for old invoices
-                  let displayBonus = printInvoice.bonus_amount;
-                  if (displayBonus === undefined) {
-                    // Since payment state might be in parent Tab but we only get `projects` and `animators` props. We can't query payments directly here unless passed.
-                    // But old invoices had no bonus feature at all (except maybe manual).
-                    // However we can derive if `status` is Paid, but we don't know the exact bonus without payments prop.
-                    // So if `printInvoice.bonus_amount` is undefined, we assume 0 for older ones.
-                    displayBonus = 0;
-                  }
-
-                  return displayBonus && displayBonus > 0 ? (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
-                      <span style={{ color: '#4b5563' }}>Bonus:</span>
-                      <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(displayBonus).toLocaleString()}</span>
-                    </div>
-                  ) : null;
-                })()}
+                {printInvoice.bonus_amount && printInvoice.bonus_amount > 0 ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                    <span style={{ color: '#4b5563' }}>Bonus:</span>
+                    <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(printInvoice.bonus_amount).toLocaleString()}</span>
+                  </div>
+                ) : null}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
                   <span style={{ color: '#4b5563' }}>TDS @{printInvoice.tds_percent || 10}% (Sec 194J):</span>
                   <span style={{ fontWeight: 600, color: '#dc2626' }}>−₹{Math.round(printInvoice.tds_amount || 0).toLocaleString()}</span>
