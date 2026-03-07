@@ -4851,16 +4851,18 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   }
 
   const handleDownload = async (inv: Invoice) => {
-    let dynamicallyFetchedBonus = 0;
-    // Dynamically fetch any bonus assigned to this animator from their latest payment record
+    let bonusToShow = 0;
+    // Always fetch the latest bonus from payments for this animator
     try {
       const { data } = await apiClient.from('payments').select('bonus').eq('Employee ID', inv.employee_id).order('Timestamp', { ascending: false }).limit(1)
-      if (data && data.length > 0) {
-        dynamicallyFetchedBonus = data[0].bonus || 0;
+      if (data && data.length > 0 && data[0].bonus) {
+        bonusToShow = Number(data[0].bonus) || 0;
       }
     } catch { }
 
-    const printObj = { ...inv, bonus_amount: inv.bonus_amount !== undefined ? inv.bonus_amount : dynamicallyFetchedBonus };
+    // Use the fetched bonus if the stored value is missing or zero
+    const finalBonus = (inv.bonus_amount && inv.bonus_amount > 0) ? inv.bonus_amount : bonusToShow;
+    const printObj = { ...inv, bonus_amount: finalBonus };
     setPrintInvoice(printObj)
 
     // Mark downloaded
