@@ -4852,12 +4852,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
   const handleDownload = async (inv: Invoice) => {
     let bonusToShow = 0;
-    // Always fetch the latest bonus from payments for this animator
+    // Fetch the latest bonus from the most recent payment record for this animator
     try {
       const { data } = await apiClient.from('payments').select('bonus').match({ 'Employee ID': inv.employee_id }).order('Timestamp', { ascending: false })
       if (data && data.length > 0) {
-        // Sum all bonuses for this animator across all payment records
-        bonusToShow = data.reduce((sum: number, row: any) => sum + (Number(row.bonus) || 0), 0);
+        // Use only the latest payment record's bonus (not sum)
+        bonusToShow = Number(data[0].bonus) || 0;
       }
     } catch { }
 
@@ -4925,13 +4925,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             onClick={e => e.stopPropagation()}
             id="invoice-print-area"
           >
-            {/* Header: Animator name left, INVOICE right */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: '#111', letterSpacing: 0.5, textTransform: 'uppercase' }}>{printInvoice.legal_name || '—'}</div>
-                <div style={{ fontSize: 13, color: '#666', marginTop: 4, whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || ''}</div>
-                <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>PAN: {printInvoice.artist_pan || '—'}</div>
-              </div>
+            {/* Header: Just INVOICE on the right, nothing on left */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginBottom: 32 }}>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 40, fontWeight: 900, color: '#111', letterSpacing: 2, lineHeight: 1 }}>INVOICE</div>
                 <div style={{ fontSize: 15, color: '#667eea', fontWeight: 700, marginTop: 8 }}>#{printInvoice.invoice_number}</div>
