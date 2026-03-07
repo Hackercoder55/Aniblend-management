@@ -4705,10 +4705,11 @@ interface Invoice {
   invoice_date: string
   artist_address: string
   artist_pan: string
-  line_items: { project_id: string; title: string; seconds: number; amount: number }[]
+  line_items: { project_id: string; title: string; seconds: number; amount: number; assigned_date?: string; approved_date?: string }[]
   total_amount: number
   tds_percent: number
   tds_amount: number
+  bonus_amount?: number
   net_payable: number
   status: string // Draft | Awaiting Details | Sent | Edit Requested | Acknowledged | Paid | Downloaded
   sent_at: string
@@ -4814,6 +4815,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             title: p.Project_title || p.Project_ID,
             seconds: finalSec,
             amount: amt,
+            assigned_date: p['Date Assigned'] || '',
+            approved_date: p['Date Approved'] || '',
           }
         })
 
@@ -4883,89 +4886,130 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setPrintInvoice(null)}
         >
+          <style>{`
+            @media print {
+              .print-hidden { display: none !important; }
+              body * { visibility: hidden; }
+              #invoice-print-area, #invoice-print-area * { visibility: visible; }
+              #invoice-print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none !important; border-radius: 0 !important; }
+            }
+          `}</style>
           <div
-            style={{ background: '#fff', borderRadius: 12, padding: 40, maxWidth: 720, width: '90%', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Arial, sans-serif' }}
+            style={{
+              background: '#fff',
+              borderRadius: 16,
+              padding: 48,
+              maxWidth: 800,
+              width: '90%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              fontFamily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.1)'
+            }}
             onClick={e => e.stopPropagation()}
             id="invoice-print-area"
           >
-            {/* Header: INVOICE title only — this is animator's invoice */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginBottom: 24 }}>
+            {/* Header: INVOICE title only */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
+              <div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: '#111', letterSpacing: 1, textTransform: 'uppercase' }}>Futurverse Animation</div>
+                <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>GSTIN: 07AAGCF2334M1ZJ</div>
+                <div style={{ fontSize: 13, color: '#666' }}>PAN: AAGCF2334M</div>
+              </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 32, fontWeight: 900, color: '#111', letterSpacing: 2 }}>INVOICE</div>
-                <div style={{ fontSize: 14, color: '#667eea', fontWeight: 700 }}>#{printInvoice.invoice_number}</div>
-                <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>Date: {printInvoice.invoice_date}</div>
-                <div style={{ fontSize: 12, color: '#888' }}>Period: {printInvoice.month_label}</div>
+                <div style={{ fontSize: 40, fontWeight: 900, color: '#111', letterSpacing: 2, lineHeight: 1 }}>INVOICE</div>
+                <div style={{ fontSize: 15, color: '#667eea', fontWeight: 700, marginTop: 8 }}>#{printInvoice.invoice_number}</div>
+                <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>Date: {printInvoice.invoice_date}</div>
+                <div style={{ fontSize: 13, color: '#888' }}>Period: {printInvoice.month_label}</div>
               </div>
             </div>
 
-            <hr style={{ margin: '16px 0', borderColor: '#e5e7eb' }} />
+            <hr style={{ margin: '24px 0', borderColor: '#f3f4f6', borderWidth: 2 }} />
 
             {/* From / To */}
-            <div style={{ display: 'flex', gap: 40, marginBottom: 24 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>From</div>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{printInvoice.legal_name || '—'}</div>
-                <div style={{ fontSize: 12, color: '#555', whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || '—'}</div>
-                <div style={{ fontSize: 12, color: '#555' }}>PAN: {printInvoice.artist_pan || '—'}</div>
+            <div style={{ display: 'flex', gap: 40, marginBottom: 32 }}>
+              <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
+                  New Delhi, India<br />
+                  Phone: +91 8595833751
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', marginBottom: 4 }}>To</div>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>FUTURVERSE ANIMATION PVT LTD</div>
-                <div style={{ fontSize: 12, color: '#555' }}>GSTIN: 07AAGCF2334M1ZJ</div>
-                <div style={{ fontSize: 12, color: '#555' }}>PAN: AAGCF2334M</div>
-                <div style={{ fontSize: 12, color: '#555' }}>India | +91 8595833751</div>
+              <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>From / Payee</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>{printInvoice.legal_name || '—'}</div>
+                <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{printInvoice.artist_address || '—'}</div>
+                <div style={{ fontSize: 13, color: '#4b5563', marginTop: 4 }}><strong>PAN:</strong> {printInvoice.artist_pan || '—'}</div>
               </div>
             </div>
 
             {/* Line items table */}
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
-              <thead>
-                <tr style={{ background: '#1f2937', color: '#fff' }}>
-                  {['#', 'Project ID', 'Video Title', 'Seconds', 'Amount (₹)'].map(h => (
-                    <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 12, fontWeight: 600 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(printInvoice.line_items || []).map((item, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? '#f9fafb' : '#fff', borderBottom: '1px solid #e5e7eb' }}>
-                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{i + 1}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 600 }}>{item.project_id}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{item.title}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12, textAlign: 'right' }}>{item.seconds || '—'}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12, textAlign: 'right' }}>₹{Number(item.amount || 0).toLocaleString()}</td>
+            <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb', marginBottom: 24 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f3f4f6', color: '#374151' }}>
+                    {['#', 'Project ID', 'Assigned', 'Approved', 'Seconds', 'Amount (₹)'].map(h => (
+                      <th key={h} style={{ padding: '12px 16px', textAlign: h.includes('Amount') || h === 'Seconds' ? 'right' : 'left', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(printInvoice.line_items || []).map((item, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? '#ffffff' : '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
+                      <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>{i + 1}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: '#111' }}>
+                        <div>{item.project_id}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400, marginTop: 2 }}>{item.title}</div>
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{item.assigned_date || '—'}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{item.approved_date || '—'}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 500, color: '#374151' }}>{item.seconds || '—'}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 600, color: '#111' }}>₹{Number(item.amount || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             {/* Totals */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <div style={{ width: 280 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 13 }}>
-                  <span>Gross Total:</span>
-                  <span style={{ fontWeight: 600 }}>₹{Math.round(printInvoice.total_amount || 0).toLocaleString()}</span>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+              <div style={{ width: 320, background: '#f9fafb', padding: 20, borderRadius: 12, border: '1px solid #e5e7eb' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                  <span style={{ color: '#4b5563' }}>Gross Total:</span>
+                  <span style={{ fontWeight: 700, color: '#111' }}>₹{Math.round(printInvoice.total_amount || 0).toLocaleString()}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 13, color: '#dc2626' }}>
-                  <span>TDS @{printInvoice.tds_percent || 10}% (Sec 194J):</span>
-                  <span>−₹{Math.round(printInvoice.tds_amount || 0).toLocaleString()}</span>
+                {printInvoice.bonus_amount ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                    <span style={{ color: '#4b5563' }}>Bonus:</span>
+                    <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(printInvoice.bonus_amount).toLocaleString()}</span>
+                  </div>
+                ) : null}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
+                  <span style={{ color: '#4b5563' }}>TDS @{printInvoice.tds_percent || 10}% (Sec 194J):</span>
+                  <span style={{ fontWeight: 600, color: '#dc2626' }}>−₹{Math.round(printInvoice.tds_amount || 0).toLocaleString()}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: '#1f2937', color: '#fff', borderRadius: 6, fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 4px', fontSize: 18, fontWeight: 800, color: '#111' }}>
                   <span>Net Payable:</span>
-                  <span>₹{Math.round(printInvoice.net_payable || 0).toLocaleString()}</span>
+                  <span style={{ color: '#667eea' }}>₹{Math.round((printInvoice.net_payable || 0) + (printInvoice.bonus_amount || 0)).toLocaleString()}</span>
                 </div>
               </div>
             </div>
 
-            <div style={{ marginTop: 32, fontSize: 11, color: '#9ca3af', borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
-              This is a computer-generated invoice for professional animation services rendered. TDS deducted under Section 194J of the Income Tax Act, 1961.
+            <div style={{ marginTop: 32, fontSize: 11, color: '#9ca3af', borderTop: '1px solid #e5e7eb', paddingTop: 16, textAlign: 'center' }}>
+              This is a computer-generated invoice for professional animation services rendered. <br />TDS deducted under Section 194J of the Income Tax Act, 1961. No signature is required.
             </div>
 
             {/* Action buttons */}
-            <div style={{ display: 'flex', gap: 12, marginTop: 20, justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 12, marginTop: 32, justifyContent: 'center' }} className="print-hidden">
               <button
-                onClick={() => window.print()}
-                style={{ padding: '8px 20px', background: '#667eea', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
+                onClick={() => {
+                  const originalTitle = document.title;
+                  document.title = `${printInvoice.legal_name || 'Animator'} - ${printInvoice.invoice_date} - Invoice`;
+                  window.print();
+                  document.title = originalTitle;
+                }}
+                style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 6px rgba(102, 126, 234, 0.25)' }}
               >
                 🖨️ Print / Save PDF
               </button>
@@ -5248,10 +5292,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
       console.log('[Mark Paid] payments row updated successfully for', eid)
 
-      // 3. Mark the animator's open invoice as Paid
+      // 3. Mark the animator's open invoice as Paid and save bonus
       try {
         await apiClient.from('invoices')
-          .update({ status: 'Paid' })
+          .update({ status: 'Paid', bonus_amount: bonus > 0 ? bonus : 0 })
           .eq('employee_id', eid)
           .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details'])
       } catch (invErr) {
