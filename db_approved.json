@@ -1,0 +1,119 @@
+[
+  {
+    "Project_ID": "122261_60_plip",
+    "Animator": "Namra",
+    "Employee_ID": "1006",
+    "Status": "Approved",
+    "Date Approved": "",
+    "Payment_Status": "",
+    "Duration": "60"
+  },
+  {
+    "Project_ID": "201265_144_her",
+    "Animator": "Harsh",
+    "Employee_ID": "1036",
+    "Status": "Approved",
+    "Date Approved": "",
+    "Payment_Status": "Pending",
+    "Duration": "144"
+  },
+  {
+    "Project_ID": "2022624_480_his",
+    "Animator": "Aishwarya Vivek",
+    "Employee_ID": "1026",
+    "Status": "Approved",
+    "Date Approved": "02 Mar 2026",
+    "Payment_Status": "Pending",
+    "Duration": "480"
+  },
+  {
+    "Project_ID": "201262_159_plip",
+    "Animator": "Namra",
+    "Employee_ID": "1006",
+    "Status": "Approved",
+    "Date Approved": "",
+    "Payment_Status": "Pending",
+    "Duration": "159"
+  },
+  {
+    "Project_ID": "2022632_58_her",
+    "Animator": "Linto Rejoy",
+    "Employee_ID": "1052",
+    "Status": "Approved",
+    "Date Approved": "25 Feb 2026",
+    "Payment_Status": "Pending",
+    "Duration": "58"
+  },
+  {
+    "Project_ID": "1526_138_plip",
+    "Animator": "Harikrishna",
+    "Employee_ID": "1009",
+    "Status": "Approved",
+    "Date Approved": "02 Mar 2026",
+    "Payment_Status": "Pending",
+    "Duration": "138"
+  },
+  {
+    "Project_ID": "15210_76_plip",
+    "Animator": "Nimay Paliwal",
+    "Employee_ID": "1085",
+    "Status": "Approved",
+    "Date Approved": "02 Mar 2026",
+    "Payment_Status": "Pending",
+    "Duration": "76"
+  },
+  {
+    "Project_ID": "18210_76_plip",
+    "Animator": "Pratham Poonia",
+    "Employee_ID": "1045",
+    "Status": "Approved",
+    "Date Approved": "02 Mar 2026",
+    "Payment_Status": "Paid",
+    "Duration": "76"
+  },
+  {
+    "Project_ID": "202_67_her",
+    "Animator": "Vivek Padmanabhan",
+    "Employee_ID": "1093",
+    "Status": "Approved",
+    "Date Approved": "26 Feb 2026",
+    "Payment_Status": "Pending",
+    "Duration": "67"
+  },
+  {
+    "Project_ID": "201268_64_his",
+    "Animator": "Akhilesh Vijayvergiya",
+    "Employee_ID": "1048",
+    "Status": "Approved",
+    "Date Approved": "21 Feb 2026",
+    "Payment_Status": "Pending",
+    "Duration": "64"
+  },
+  {
+    "Project_ID": "2022619_171_his",
+    "Animator": "Harsh",
+    "Employee_ID": "1036",
+    "Status": "Approved",
+    "Date Approved": "23 Feb 2026",
+    "Payment_Status": "Pending",
+    "Duration": "171"
+  },
+  {
+    "Project_ID": "1223_73_plip",
+    "Animator": "Swagat Mili",
+    "Employee_ID": "1077",
+    "Status": "Approved",
+    "Date Approved": "26 Feb 2026",
+    "Payment_Status": "Pending",
+    "Duration": "73"
+  },
+  {
+    "Project_ID": "12212_63_plip",
+    "Animator": "Aswant Sherin",
+    "Employee_ID": "1080",
+    "Status": "Approved",
+    "Date Approved": "01 Mar 2026",
+    "Payment_Status": "Pending",
+    "Duration": "63"
+  }
+]

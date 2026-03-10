@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import React, { useState, useEffect, useCallback, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
@@ -39,6 +39,9 @@ interface Project {
   acknowledgement?: string
   output_history?: { date: string; empId: string; seconds: number }[]
   viewport_date?: string
+  animation_revision_date?: string
+  ready_to_render_date?: string
+  render_qa_date?: string
 }
 
 interface Animator {
@@ -3717,6 +3720,35 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
   const totalProjects = filteredByAssigned.length
   const inProgress = filteredByAssigned.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status)).length
   const approved = filteredByApproved.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)).length
+  // This Month Approved (reached Viewport/Revision/Ready/QA & Approved in selectedMonth, or same month if all time)
+  const thisMonthViewportAndApproved = selectedMonth
+    ? dedupedAll.filter(p => {
+        if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return false;
+        if (!inMonth(p['Date Approved'], selectedMonth)) return false;
+        
+        // It must have hit at least viewport or later during this month
+        const hitStage = inMonth(p.render_qa_date || '', selectedMonth) || 
+                         inMonth(p.ready_to_render_date || '', selectedMonth) ||
+                         inMonth(p.animation_revision_date || '', selectedMonth) ||
+                         inMonth(p.viewport_date || '', selectedMonth);
+        return hitStage;
+      })
+    : dedupedAll.filter(p => {
+        if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return false;
+        if (!p['Date Approved']) return false;
+        
+        const stageDate = p.render_qa_date || p.ready_to_render_date || p.animation_revision_date || p.viewport_date;
+        if (!stageDate) return false;
+
+        const vParts = stageDate.trim().split(' ');
+        const aParts = p['Date Approved'].trim().split(' ');
+        if (vParts.length >= 3 && aParts.length >= 3) {
+          return vParts[1] === aParts[1] && vParts[2] === aParts[2];
+        }
+        return false;
+      })
+  const thisMonthApprovedCount = thisMonthViewportAndApproved.length
+
   // Duration stats (filtered approved, parsed as minutes)
   const durationThisMonthMins = filteredByApproved
     .filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status))
@@ -3916,18 +3948,19 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
       </div>
 
       {/* Summary row 1 */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-6 border-b border-gray-50 pb-6 mb-6">
         {[
           { label: 'Total Projects', value: totalProjects, color: '#667eea', sub: null, projects: filteredByAssigned },
           { label: 'Approved', value: approved, color: '#10b981', sub: null, projects: filteredByApproved.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)) },
+          { label: 'This Month Approved', value: thisMonthApprovedCount, color: '#059669', sub: 'Viewport & Appr in month', projects: thisMonthViewportAndApproved },
           { label: 'In Progress', value: inProgress, color: '#f59e0b', sub: null, projects: filteredByAssigned.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status)) },
           {
-            label: selectedMonth ? 'Projected (Remaining)' : 'Projected (Next 30d)',
+            label: selectedMonth ? 'Projected' : 'Projected (30d)',
             value: projectedTotal,
             color: '#3b82f6',
             sub: selectedMonth
               ? `${formatSec(projectedMinsTotal)}`
-              : `${formatSec(projectedMinsTotal)} | Next 7d: ${next7Total} (${formatSec(next7MinsTotal)})`,
+              : `${formatSec(projectedMinsTotal)} | 7d: ${next7Total}`,
             projects: null
           },
           { label: 'Total Animators', value: animators.length, color: '#8b5cf6', sub: null, projects: null },
@@ -3935,7 +3968,7 @@ function AnalyticsTab({ projects, animators }: { projects: Project[]; animators:
           const content = (
             <>
               <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
-              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+              <p className="text-xs text-gray-500 mt-1" style={{minHeight: "16px"}}>{s.label}</p>
               {s.sub && <p className="text-[10px] font-semibold text-indigo-500 mt-0.5">{s.sub}</p>}
             </>
           )
@@ -4449,6 +4482,9 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           <p>⏱ {durStr}</p>
           {project['Date Assigned'] && <p>📅 Assigned: {project['Date Assigned']}</p>}
           {project.Status === 'Review' && project.viewport_date && <p>👁️ Viewport: {project.viewport_date}</p>}
+          {project.Status === 'Changes Requested' && project.animation_revision_date && <p>🔄 Revision: {project.animation_revision_date}</p>}
+          {project.Status === 'Ready to Render' && project.ready_to_render_date && <p>⏳ Ready: {project.ready_to_render_date}</p>}
+          {project.Status === 'Render QA' && project.render_qa_date && <p>🔎 QA: {project.render_qa_date}</p>}
           {project.Status === 'Approved' && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
           {project.Status === 'Paid' && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
         </div>
@@ -4473,6 +4509,9 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     const filteredByMonth = m ? projs.filter(p => {
       if (stage === 'Approved') return inMonth(p['Date Approved'], m)
       if (stage === 'Paid') return inMonth(p.client_paid_date, m)
+      if (stage === 'Render QA') return inMonth(p.render_qa_date || p.viewport_date || p['Date Assigned'], m)
+      if (stage === 'Ready to Render') return inMonth(p.ready_to_render_date || p.viewport_date || p['Date Assigned'], m)
+      if (stage === 'Changes Requested') return inMonth(p.animation_revision_date || p.viewport_date || p['Date Assigned'], m)
       if (stage === 'Review') return inMonth(p.viewport_date || p['Date Assigned'], m)
       return inMonth(p['Date Assigned'], m)
     }) : projs
@@ -4577,6 +4616,9 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
             stageProjects = stageProjects.filter(p => {
               if (stage === 'Approved') return inMonth(p['Date Approved'], monthFilterValue)
               if (stage === 'Paid') return inMonth(p.client_paid_date, monthFilterValue)
+              if (stage === 'Render QA') return inMonth(p.render_qa_date || p.viewport_date || p['Date Assigned'], monthFilterValue)
+              if (stage === 'Ready to Render') return inMonth(p.ready_to_render_date || p.viewport_date || p['Date Assigned'], monthFilterValue)
+              if (stage === 'Changes Requested') return inMonth(p.animation_revision_date || p.viewport_date || p['Date Assigned'], monthFilterValue)
               if (stage === 'Review') return inMonth(p.viewport_date || p['Date Assigned'], monthFilterValue)
               return inMonth(p['Date Assigned'], monthFilterValue)
             })
