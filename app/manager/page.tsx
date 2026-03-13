@@ -4838,7 +4838,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         await apiClient.from('invoice_counter').upsert({ employee_id: eid, last_seq: newSeq })
         const invoiceNumber = `${eid}${String(newSeq).padStart(2, '0')}`
 
-        // Build line items from approved projects
+        // Generate Draft Line Items
         let totalVal = 0
         const lineItems = projs.map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
@@ -4862,7 +4862,22 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           }
         })
 
-        const tdsAmt = Math.round(totalVal * 0.10)
+        // Fetch stored TDS and Bonus from payments table
+        let tdsPct = 10
+        let bonusAmount = 0
+        try {
+          const { data: payData } = await apiClient.from('payments')
+             .select('tds_percent, bonus')
+             .eq('Employee ID', eid)
+             .order('Timestamp', { ascending: false })
+             .limit(1)
+          if (payData && payData[0]) {
+            tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
+            bonusAmount = payData[0].bonus || 0
+          }
+        } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
+
+        const tdsAmt = Math.round(totalVal * (tdsPct / 100))
         const netPay = Math.round(totalVal - tdsAmt)
 
         const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || ''
@@ -4875,8 +4890,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_date: invoiceDate,
           line_items: lineItems,
           total_amount: totalVal,
-          tds_percent: 10,
+          tds_percent: tdsPct,
           tds_amount: tdsAmt,
+          bonus_amount: bonusAmount,
           net_payable: netPay,
           status: 'Draft',
           thread_id,
@@ -4890,6 +4906,80 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     } finally {
       setSending(false)
     }
+  }
+
+  const generatePreview = async (eid: string) => {
+    // Generates a mock invoice structure without saving it for the user to view.
+    const projs = approvedUnpaidByEid[eid] || []
+    const anim = animatorByEid[eid]
+    if (!anim) return
+
+    let totalVal = 0
+    const lineItems = projs.map(p => {
+      const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+      const empSet = new Set<string>()
+      if (p.Employee_ID) empSet.add(p.Employee_ID)
+        ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
+          const found = animators.find(a => a.Name.toLowerCase() === name.toLowerCase())
+          if (found) empSet.add(found.Employee_ID)
+        })
+      const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
+      const amt = Math.round((finalSec / 60) * 5000)
+      totalVal += amt
+
+      return {
+        project_id: p.Project_ID,
+        title: p.Project_title || p.Project_ID,
+        seconds: finalSec,
+        amount: amt,
+        assigned_date: p['Date Assigned'] || '',
+        approved_date: p['Date Approved'] || '',
+      }
+    })
+
+    // Fetch stored TDS and Bonus
+    let tdsPct = 10
+    let bonusAmount = 0
+    try {
+      const { data: payData } = await apiClient.from('payments')
+         .select('tds_percent, bonus')
+         .eq('Employee ID', eid)
+         .order('Timestamp', { ascending: false })
+         .limit(1)
+      if (payData && payData[0]) {
+        tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
+        bonusAmount = payData[0].bonus || 0
+      }
+    } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
+
+    const tdsAmt = Math.round(totalVal * (tdsPct / 100))
+    const netPay = Math.round(totalVal - tdsAmt)
+    const now = new Date()
+
+    setPrintInvoice({
+      id: 'preview',
+      invoice_number: `Draft (${eid})`,
+      employee_id: eid,
+      legal_name: (anim as any).legal_name || anim.Name,
+      month_label: selectedMonth,
+      invoice_date: now.toISOString().split('T')[0],
+      artist_address: (anim as any).artist_address || '',
+      artist_pan: (anim as any).artist_pan || '',
+      line_items: lineItems,
+      total_amount: totalVal,
+      tds_percent: tdsPct,
+      tds_amount: tdsAmt,
+      bonus_amount: bonusAmount,
+      net_payable: netPay,
+      status: 'Preview',
+      thread_id: '',
+      sent_at: '',
+      acknowledged_at: '',
+      paid_at: '',
+      downloaded_at: '',
+      edit_status: '',
+      edit_comment: ''
+    })
   }
 
   const handleDownload = async (inv: Invoice) => {
@@ -5062,20 +5152,36 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
             {/* Action buttons */}
             <div style={{ display: 'flex', gap: 12, marginTop: 32, justifyContent: 'center' }} className="print-hidden">
-              <button
-                onClick={() => {
-                  const originalTitle = document.title;
-                  document.title = `${printInvoice.legal_name || 'Animator'} - ${printInvoice.invoice_date} - Invoice`;
-                  window.print();
-                  document.title = originalTitle;
-                }}
-                style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 6px rgba(102, 126, 234, 0.25)' }}
-              >
-                🖨️ Print / Save PDF
-              </button>
+              {printInvoice.status === 'Preview' ? (
+                <button
+                  onClick={() => {
+                    const eidSet = new Set<string>();
+                    eidSet.add(printInvoice.employee_id);
+                    setSelectedEids(eidSet);
+                    setPrintInvoice(null);
+                    setTimeout(() => handleSendInvoices(), 100);
+                  }}
+                  style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 6px rgba(16, 185, 129, 0.25)' }}
+                >
+                  📤 Generate & Send Now
+                </button>
+              ) : (
+                <button
+                  disabled={!['Paid', 'Downloaded'].includes(printInvoice.status)}
+                  onClick={() => {
+                    const originalTitle = document.title;
+                    document.title = `${printInvoice.legal_name || 'Animator'} - ${printInvoice.invoice_date} - Invoice`;
+                    window.print();
+                    document.title = originalTitle;
+                  }}
+                  style={{ opacity: ['Paid', 'Downloaded'].includes(printInvoice.status) ? 1 : 0.5, padding: '10px 24px', background: 'linear-gradient(135deg, #667eea, #764ba2)', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 6px rgba(102, 126, 234, 0.25)' }}
+                >
+                  {['Paid', 'Downloaded'].includes(printInvoice.status) ? '🖨️ Print / Save PDF' : '🔒 Available after Payment'}
+                </button>
+              )}
               <button
                 onClick={() => setPrintInvoice(null)}
-                style={{ padding: '8px 20px', background: '#f1f5f9', color: '#374151', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}
+                style={{ padding: '10px 24px', background: '#f1f5f9', color: '#374151', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}
               >
                 Close
               </button>
@@ -5114,20 +5220,27 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               ) : notSentEntries.map(([eid, projs]) => {
                 const anim = animatorByEid[eid]
                 return (
-                  <label key={eid} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input type="checkbox" checked={selectedEids.has(eid)}
-                      onChange={e => {
-                        const s = new Set(selectedEids)
-                        e.target.checked ? s.add(eid) : s.delete(eid)
-                        setSelectedEids(s)
-                      }}
-                      className="w-4 h-4 rounded"
-                    />
-                    <div>
-                      <span className="text-sm font-medium text-gray-800">{anim?.Name || eid}</span>
-                      <span className="ml-2 text-xs text-gray-400">({projs.length} project{projs.length > 1 ? 's' : ''})</span>
-                    </div>
-                  </label>
+                  <div key={eid} className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50">
+                    <label key={eid} className="flex flex-1 items-center gap-3 cursor-pointer p-0 m-0">
+                      <input type="checkbox" checked={selectedEids.has(eid)}
+                        onChange={e => {
+                          const s = new Set(selectedEids)
+                          e.target.checked ? s.add(eid) : s.delete(eid)
+                          setSelectedEids(s)
+                        }}
+                        className="w-4 h-4 rounded"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-gray-800">{anim?.Name || eid}</span>
+                        <span className="ml-2 text-xs text-gray-400">({projs.length} project{projs.length > 1 ? 's' : ''})</span>
+                      </div>
+                    </label>
+                    <button
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); generatePreview(eid); }}
+                      className="px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-semibold rounded hover:bg-indigo-100 transition-colors">
+                      Preview
+                    </button>
+                  </div>
                 )
               })}
             </div>
@@ -5253,7 +5366,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const { addToast } = useToast()
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
-  const [tdsPercent, setTdsPercent] = useState<number>(10)
   const [manualMinutes, setManualMinutes] = useState<Record<string, string>>({})
   const [search, setSearch] = useState('')
   const [expandedAnimators, setExpandedAnimators] = useState<Set<string>>(new Set())
@@ -5262,7 +5374,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [paidStatus, setPaidStatus] = useState<Record<string, 'Pending' | 'Paid'>>({})
   const [paidNets, setPaidNets] = useState<Record<string, number>>({})
   const [payingId, setPayingId] = useState<string | null>(null)
-  const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({}) // bonus per animator in ₹
+  
+  // Per-animator state for Payout calculation (saved to DB instead of global)
+  const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({}) 
+  const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({})
+  const [savingId, setSavingId] = useState<string | null>(null)
 
   // Month filter
   const monthOptions = (() => {
@@ -5303,7 +5419,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
   const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
 
-  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0) => {
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0) => {
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
@@ -5332,12 +5448,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
 
       // 2. Mark payments row as Paid + store gross/tds/net for Paid section display
-      const grossAmt = net / (1 - tdsPercent / 100)
+      const grossAmt = net / (1 - tds / 100)
       const netWithBonus = net + bonus
       const paymentUpdateData = {
         Payment_Status: 'Paid',
         gross: Math.round(grossAmt),
-        tds_percent: tdsPercent,
+        tds_percent: tds,
         net_paid: Math.round(netWithBonus),
         bonus: bonus > 0 ? bonus : 0,
         paid_date: formatDate()
@@ -5398,6 +5514,63 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       latestPaymentByEmpId[p['Employee ID']] = p
     }
   })
+
+  // Initialize TDS/Bonus from latest payment IF not already touched in state
+  useEffect(() => {
+    if (payments.length > 0) {
+      setTdsPercents(prev => {
+        const next = { ...prev };
+        let changed = false;
+        payments.forEach(p => {
+          if (p['Employee ID'] && !next[p['Employee ID']]) {
+             next[p['Employee ID']] = (p.tds_percent || 0).toString();
+             changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+      setBonusAmounts(prev => {
+        const next = { ...prev };
+        let changed = false;
+        payments.forEach(p => {
+          if (p['Employee ID'] && !next[p['Employee ID']]) {
+             next[p['Employee ID']] = (p.bonus || 0).toString();
+             changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }
+  }, [payments]);
+
+  const handleSavePayout = async (eid: string, animatorName: string, gross: number, tdsPct: number, bonus: number, net: number) => {
+    setSavingId(eid);
+    try {
+      const paymentUpdateData = {
+        Payment_Status: 'Pending', // keep it pending, just updating the calc numbers
+        gross: Math.round(gross),
+        tds_percent: tdsPct,
+        net_paid: Math.round(net + bonus),
+        bonus: bonus,
+        // don't overwrite paid_date if they are just calculating
+      };
+      
+      const { error: payErr } = await apiClient.from('payments')
+        .update(paymentUpdateData)
+        .eq('Employee ID', eid);
+      
+      // Also upsert in case row doesn't exist
+      if (payErr) {
+        // We only care about ensuring a row exists if it didn't update anything
+        addToast(`Could not update existing payment row for ${animatorName}.`, 'error');
+      } else {
+        addToast(`✅ Saved payout details for ${animatorName}`);
+      }
+    } catch (e: any) {
+      addToast(`❌ Save failed: ${e.message}`, 'error');
+    }
+    setSavingId(null);
+  };
 
   // 2. Aggregate approved seconds per animator (Only Approved status — Closed=already paid, skip deferred)
   const approvedSecondsByEmpId: Record<string, number> = {}
@@ -5509,8 +5682,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const currentMinsStr = manualMinutes[eid] !== undefined ? manualMinutes[eid] : autoMins.toFixed(2)
       const currentMins = parseFloat(currentMinsStr) || 0
 
+      const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
       const gross = currentMins * 5000
-      const net = gross - (gross * tdsPercent / 100)
+      const net = gross - (gross * tdsPct / 100)
+      const bonusParsed = parseFloat(bonusAmounts[eid] || '0') || 0
 
       const payInfo = latestPaymentByEmpId[eid]
 
@@ -5553,7 +5728,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         currentMinsStr,
         gross,
         net,
-        bonusAmt: parseFloat(bonusAmounts[eid] || '0') || 0,
+        tdsPct,
+        bonusAmt: bonusParsed,
         bankDisplay,
         animatorProjects: animatorProjects as Project[]
       }
@@ -5592,18 +5768,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
               className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none">
               {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
-            <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-xl border border-gray-200">
-              <label className="text-sm font-semibold text-gray-700">TDS %:</label>
-              <input
-                type="number"
-                value={tdsPercent}
-                onChange={e => setTdsPercent(parseFloat(e.target.value) || 0)}
-                className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none"
-              />
-            </div>
           </div>
         </div>
-
         <div className="relative mb-4">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -5625,9 +5791,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   <th className="px-4 py-3">Total Minutes</th>
                   <th className="px-4 py-3">Bank / UPI</th>
                   <th className="px-4 py-3 text-right">Gross (₹)</th>
+                  <th className="px-4 py-3 text-right">TDS %</th>
                   <th className="px-4 py-3 text-right">Net (₹)</th>
                   <th className="px-4 py-3 text-right">Bonus (₹)</th>
-                  <th className="px-4 py-3 text-center">Status</th>
+                  <th className="px-4 py-3 text-center">Save / Pay</th>
                 </tr>
               </thead>
               <tbody>
@@ -5672,6 +5839,19 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                         ₹{r.gross.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                       </td>
                       <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={tdsPercents[r.animator.Employee_ID] ?? ''}
+                            onChange={e => setTdsPercents(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                            className="w-14 px-1 py-1 border border-red-300 rounded text-sm focus:outline-none font-mono focus:border-red-500 transition-colors text-right bg-red-50"
+                          />
+                          <span className="text-xs text-red-400">%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
                         <span className="font-mono font-bold text-lg text-emerald-600">
                           ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </span>
@@ -5683,26 +5863,35 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                             type="number"
                             min="0"
                             placeholder="0"
-                            value={bonusAmounts[r.animator.Employee_ID] || ''}
+                            value={bonusAmounts[r.animator.Employee_ID] ?? ''}
                             onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
-                            className="w-24 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
+                            className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
                           />
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {paidStatus[r.animator.Employee_ID] === 'Paid' ? (
-                          <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold">
-                            ✅ Paid
-                          </span>
-                        ) : (
+                        <div className="flex flex-col gap-2 items-center">
                           <button
-                            onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt)}
-                            disabled={payingId === r.animator.Employee_ID}
-                            className="px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
-                            style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
-                            {payingId === r.animator.Employee_ID ? 'Sending...' : 'Mark Paid'}
+                            onClick={() => handleSavePayout(r.animator.Employee_ID, r.animator.Name, r.gross, r.tdsPct, r.bonusAmt, r.net)}
+                            disabled={savingId === r.animator.Employee_ID}
+                            className="w-full px-2 py-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded transition-all disabled:opacity-50">
+                            {savingId === r.animator.Employee_ID ? 'Saving...' : '💾 Save details'}
                           </button>
-                        )}
+                          
+                          {paidStatus[r.animator.Employee_ID] === 'Paid' ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold w-full justify-center">
+                              ✅ Paid
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct)}
+                              disabled={payingId === r.animator.Employee_ID}
+                              className="w-full px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
+                              style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
+                              {payingId === r.animator.Employee_ID ? 'Sending...' : 'Mark Paid / Lock'}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                     {expandedAnimators.has(r.animator.Employee_ID) && (
@@ -5844,6 +6033,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   <td className="px-4 py-3 text-right font-mono text-gray-600 font-semibold">
                     ₹{rows.reduce((s, r) => s + r.gross, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </td>
+                  <td />
                   <td className="px-4 py-3 text-right">
                     <span className="font-mono font-bold text-xl text-indigo-700">
                       ₹{rows.reduce((s, r) => s + r.net, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -5911,20 +6101,24 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       {paidRows.length > 0 && (() => {
         const downloadCsv = () => {
           const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
-          const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Net Payment (₹)']
+          const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Bonus (₹)', 'Net Payment (₹)']
           const csvRows = paidRows.map(a => {
             const payInfo = latestPaymentByEmpId[a.Employee_ID]
-            const net = paidNets[a.Employee_ID] || 0
-            const gross = net / (1 - tdsPercent / 100)
-            const tdsAmt = gross - net
+            const storedTds = payInfo?.tds_percent || 0
+            const bonus = payInfo?.bonus || 0
+            
+            const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+            const gross = net - bonus > 0 ? (net - bonus) / (1 - storedTds / 100) : 0
+            const tdsAmt = gross - (net - bonus)
             return [
               escCsv(selectedMonth),
               escCsv(payInfo?.['Account Holder Name'] || a.Name),
               escCsv(a.Employee_ID),
               escCsv(payInfo?.['PAN Number'] || ''),
               escCsv(Math.round(gross)),
-              escCsv(tdsPercent),
+              escCsv(storedTds),
               escCsv(Math.round(tdsAmt)),
+              escCsv(bonus),
               escCsv(Math.round(net)),
             ].join(',')
           })
@@ -5995,7 +6189,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                     <th className="px-3 py-2 text-left">Animator</th>
                     <th className="px-3 py-2 text-left">PAN</th>
                     <th className="px-3 py-2 text-right">Gross (₹)</th>
-                    <th className="px-3 py-2 text-right">TDS {tdsPercent}%</th>
+                    <th className="px-3 py-2 text-right">TDS / Bonus</th>
                     <th className="px-3 py-2 text-right">Net Paid (₹)</th>
                   </tr>
                 </thead>
@@ -6005,10 +6199,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                     // Use stored DB values first (persist across refresh), fall back to session paidNets
                     const storedNet = payInfo?.net_paid ?? null
                     const storedGross = payInfo?.gross ?? null
-                    const storedTds = payInfo?.tds_percent ?? tdsPercent
-                    const storedBonus = payInfo?.bonus ?? 0
+                    const storedTds = payInfo?.tds_percent || 0
+                    const storedBonus = payInfo?.bonus || 0
+                    
                     const net = storedNet !== null ? storedNet : (paidNets[a.Employee_ID] || 0)
-                    const gross = storedGross !== null ? storedGross : (net / (1 - tdsPercent / 100))
+                    const gross = storedGross !== null ? storedGross : ((net - storedBonus > 0) ? (net - storedBonus) / (1 - storedTds / 100) : 0)
                     const tdsAmt = gross - (net - storedBonus)
                     return (
                       <tr key={a.Employee_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
@@ -6039,7 +6234,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                         </td>
                         <td className="px-3 py-3 font-mono text-xs text-gray-600">{payInfo?.['PAN Number'] || <span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-3 text-right font-mono text-gray-600 text-xs">₹{Math.round(gross).toLocaleString()}</td>
-                        <td className="px-3 py-3 text-right font-mono text-red-500 text-xs">−₹{Math.round(tdsAmt).toLocaleString()}</td>
+                        <td className="px-3 py-3 text-right font-mono text-xs">
+                           <p className="text-red-500">−₹{Math.round(tdsAmt).toLocaleString()} <span className="text-[9px] text-red-300">({storedTds}%)</span></p>
+                           {storedBonus > 0 && <p className="text-amber-500 mt-0.5">+₹{Math.round(storedBonus).toLocaleString()} <span className="text-[9px] text-amber-300">(Bonus)</span></p>}
+                        </td>
                         <td className="px-3 py-3 text-right">
                           <span className="font-mono font-bold text-emerald-600">₹{Math.round(net).toLocaleString()}</span>
                         </td>
@@ -6051,13 +6249,31 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   <tr className="bg-emerald-50">
                     <td colSpan={2} className="px-3 py-2 text-xs font-bold text-emerald-800 uppercase">Total</td>
                     <td className="px-3 py-2 text-right font-mono font-bold text-emerald-800 text-xs">
-                      ₹{Math.round(paidRows.reduce((s, a) => { const net = paidNets[a.Employee_ID] || 0; return s + net / (1 - tdsPercent / 100) }, 0)).toLocaleString()}
+                      ₹{Math.round(paidRows.reduce((s, a) => {
+                        const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                        const storedTds = payInfo?.tds_percent || 0
+                        const bonus = payInfo?.bonus || 0
+                        const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                        const gross = net - bonus > 0 ? (net - bonus) / (1 - storedTds / 100) : 0
+                        return s + gross;
+                      }, 0)).toLocaleString()}
                     </td>
                     <td className="px-3 py-2 text-right font-mono font-bold text-red-600 text-xs">
-                      −₹{Math.round(paidRows.reduce((s, a) => { const net = paidNets[a.Employee_ID] || 0; const gross = net / (1 - tdsPercent / 100); return s + gross - net }, 0)).toLocaleString()}
+                      −₹{Math.round(paidRows.reduce((s, a) => {
+                        const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                        const storedTds = payInfo?.tds_percent || 0
+                        const bonus = payInfo?.bonus || 0
+                        const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                        const gross = net - bonus > 0 ? (net - bonus) / (1 - storedTds / 100) : 0
+                        return s + gross - (net - bonus);
+                      }, 0)).toLocaleString()}
                     </td>
                     <td className="px-3 py-2 text-right font-mono font-bold text-emerald-800">
-                      ₹{Math.round(paidRows.reduce((s, a) => s + (paidNets[a.Employee_ID] || 0), 0)).toLocaleString()}
+                      ₹{Math.round(paidRows.reduce((s, a) => {
+                        const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                        const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                        return s + net;
+                      }, 0)).toLocaleString()}
                     </td>
                   </tr>
                 </tfoot>
