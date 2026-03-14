@@ -4679,11 +4679,12 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
   { id: 'assign', label: 'Assign Projects', icon: '🔗', managerOnly: true },
+  { id: 'duplicates', label: 'Duplicate Threads', icon: '👯', managerOnly: true },
   { id: 'bank', label: 'Projects', icon: '🗂️' },
   { id: 'team', label: 'Animators', icon: '👥' },
   { id: 'create', label: 'Create Project', icon: '➕', managerOnly: true },
@@ -6286,6 +6287,84 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   )
 }
 
+// ─── DuplicatesTab ───────────────────────────────────────────────────────────
+
+function DuplicatesTab({ projects }: { projects: Project[] }) {
+  const activeProjects = projects.filter(p => ['Pending', 'Ongoing', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA'].includes(p.Status));
+  // Group by ProjectId
+  const grouped = new Map<string, Project[]>();
+  for (const p of activeProjects) {
+    if (!p.Project_ID) continue;
+    const pid = p.Project_ID.trim();
+    if (!grouped.has(pid)) grouped.set(pid, []);
+    grouped.get(pid)!.push(p);
+  }
+
+  const duplicates: { projectId: string; rows: Project[] }[] = [];
+
+  for (const [pid, rows] of grouped.entries()) {
+    if (rows.length > 1) {
+      const threadIds = new Set(rows.map(r => r.Thread_ID ? r.Thread_ID.trim() : null));
+      const dates = new Set(rows.map(r => r['Date Assigned'] ? r['Date Assigned'].trim() : null));
+      
+      if (threadIds.size > 1 || (threadIds.size === 1 && threadIds.has(null)) || dates.size > 1) {
+        duplicates.push({ projectId: pid, rows });
+      }
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 md:p-8">
+        <h2 className="text-xl font-bold text-gray-800 mb-2">👯 Duplicate Working Threads</h2>
+        <p className="text-sm text-gray-500 mb-6">These active projects have multiple assignment rows that don't share the same Discord Thread (which could indicate accidental duplicate assignments instead of a valid Group Workspace).</p>
+        
+        {duplicates.length === 0 ? (
+          <div className="text-center py-10">
+            <p className="text-lg text-emerald-600 font-semibold mb-1">✅ No duplicate threads found!</p>
+            <p className="text-sm text-gray-400">All assignments look clean.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {duplicates.map(dup => (
+              <div key={dup.projectId} className="border border-red-100 rounded-xl overflow-hidden bg-red-50/20">
+                <div className="bg-red-50 px-4 py-3 border-b border-red-100 flex items-center justify-between">
+                  <h3 className="font-bold text-red-800">{dup.projectId} <span className="text-red-500 font-normal ml-2">({dup.rows[0].Project_title || 'No Title'})</span></h3>
+                  <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-1 rounded-full">{dup.rows.length} records</span>
+                </div>
+                <div className="p-4 overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead>
+                      <tr className="text-xs text-gray-500 border-b border-gray-200">
+                        <th className="pb-2">Animator</th>
+                        <th className="pb-2 text-center">Status</th>
+                        <th className="pb-2 text-center">Date Assigned</th>
+                        <th className="pb-2 text-right">Discord Thread ID</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dup.rows.map((row, i) => (
+                        <tr key={i} className="border-b border-gray-50 last:border-0">
+                          <td className="py-2.5 font-medium text-gray-800">{row.Animator || 'Unassigned'} <span className="text-[10px] text-gray-400 font-mono ml-1">({row.Employee_ID})</span></td>
+                          <td className="py-2.5 text-center">
+                            <span className="px-2 py-1 text-[10px] font-semibold bg-gray-100 text-gray-600 rounded-full">{row.Status}</span>
+                          </td>
+                          <td className="py-2.5 text-center text-xs text-gray-500">{row['Date Assigned'] || '—'}</td>
+                          <td className="py-2.5 text-right font-mono text-xs text-gray-500">{row.Thread_ID || <span className="text-red-400 italic">null</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ManagerDashboard() {
   const router = useRouter()
   const [user, setUser] = useState<DashboardUser | null>(null)
@@ -6432,6 +6511,7 @@ export default function ManagerDashboard() {
             <>
               {activeTab === 'overview' && <OverviewTab projects={projects} animators={animators} />}
               {activeTab === 'assign' && <AssignTab projects={projects} animators={animators} onRefresh={fetchData} />}
+              {activeTab === 'duplicates' && <DuplicatesTab projects={projects} />}
               {activeTab === 'bank' && <ProjectsTab projects={projects} onRefresh={fetchData} user={user} />}
               {activeTab === 'team' && <TeamTab animators={animators} projects={projects} user={user} onRefresh={fetchData} />}
               {activeTab === 'create' && <CreateProjectTab onRefresh={fetchData} projects={projects} />}
