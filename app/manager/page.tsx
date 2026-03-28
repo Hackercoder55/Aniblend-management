@@ -4808,8 +4808,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   // All project IDs that have already been included in an invoice
   const invoicedProjectIds = new Set<string>()
   invoices.forEach(inv => {
-    if (inv.line_items && Array.isArray(inv.line_items)) {
-      inv.line_items.forEach((item: any) => {
+    let items = inv.line_items
+    if (typeof items === 'string') {
+      try { items = JSON.parse(items) } catch (e) { items = [] }
+    }
+    if (items && Array.isArray(items)) {
+      items.forEach((item: any) => {
         if (item.project_id) invoicedProjectIds.add(item.project_id)
       })
     }
