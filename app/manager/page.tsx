@@ -4934,8 +4934,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_number: invoiceNumber,
           employee_id: eid,
           legal_name: animAny.legal_name || anim.Name,
-          artist_address: animAny.artist_address || '',
-          artist_pan: animAny.artist_pan || '',
           month_label: selectedMonth,
           invoice_date: invoiceDate,
           line_items: lineItems,
