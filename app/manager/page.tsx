@@ -4870,7 +4870,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           const { data: payData } = await apiClient.from('payments')
              .select('tds_percent, bonus')
              .eq('Employee ID', eid)
-             .order('Timestamp', { ascending: false })
+             .order('id', { ascending: false })
              .limit(1)
           if (payData && payData[0]) {
             tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
@@ -5008,9 +5008,17 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     } catch { }
   }
 
+  const [invoiceNameSearch, setInvoiceNameSearch] = useState('')
+
   const monthInvoices = invoices.filter(inv => inv.month_label === selectedMonth)
   const pendingInvoices = monthInvoices.filter(inv => ['Sent', 'Edit Requested', 'Awaiting Details', 'Draft'].includes(inv.status))
   const doneInvoices = invoices.filter(inv => ['Acknowledged', 'Paid', 'Downloaded'].includes(inv.status))
+
+  // Name-wise search helper
+  const matchesInvoiceSearch = (nameOrEid: string) => {
+    if (!invoiceNameSearch) return true
+    return nameOrEid.toLowerCase().includes(invoiceNameSearch.toLowerCase())
+  }
 
   // Animators who have not yet acknowledged for selected month
   const pendingEids = new Set(pendingInvoices.map(i => i.employee_id))
@@ -5191,11 +5199,21 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         </div>
       )}
 
-      {/* Sub-nav */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <button style={tabStyle('pending')} onClick={() => setSection('pending')}>⚠️ Pending Acknowledgement {pendingInvoices.length > 0 && `(${pendingInvoices.length})`}</button>
-        <button style={tabStyle('send')} onClick={() => setSection('send')}>📤 Send Invoices</button>
-        <button style={tabStyle('done')} onClick={() => setSection('done')}>✅ Acknowledged / Paid</button>
+      {/* Sub-nav + Search */}
+      <div className="flex items-center gap-3 flex-wrap justify-between">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button style={tabStyle('pending')} onClick={() => setSection('pending')}>⚠️ Pending Acknowledgement {pendingInvoices.length > 0 && `(${pendingInvoices.length})`}</button>
+          <button style={tabStyle('send')} onClick={() => setSection('send')}>📤 Send Invoices</button>
+          <button style={tabStyle('done')} onClick={() => setSection('done')}>✅ Acknowledged / Paid</button>
+        </div>
+        <input
+          type="text"
+          value={invoiceNameSearch}
+          onChange={e => setInvoiceNameSearch(e.target.value)}
+          placeholder="🔍 Search by animator name…"
+          className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          style={{ minWidth: 220 }}
+        />
       </div>
 
       {/* Month selector */}
@@ -5210,7 +5228,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
       {/* SECTION: Send Invoices */}
       {section === 'send' && (() => {
-        const notSentEntries = Object.entries(approvedUnpaidByEid).filter(([eid]) => !sentEids.has(eid))
+        const notSentEntries = Object.entries(approvedUnpaidByEid)
+          .filter(([eid]) => !sentEids.has(eid))
+          .filter(([eid]) => matchesInvoiceSearch(animatorByEid[eid]?.Name || eid))
         return (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
             <h3 className="font-bold text-gray-800">📤 Send Invoice Requests</h3>
@@ -5266,7 +5286,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg font-medium">{notSentEids.length} animator(s) not yet sent invoice</span>
             )}
           </div>
-          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : pendingInvoices.length === 0 ? (
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : pendingInvoices.filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id)).length === 0 ? (
             <p className="p-6 text-sm text-gray-400">
               {monthInvoices.length === 0 ? `No invoices have been sent for ${selectedMonth} yet.` : `🎉 All sent invoices for ${selectedMonth} have been acknowledged.`}
             </p>
@@ -5280,7 +5300,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                 </tr>
               </thead>
               <tbody>
-                {pendingInvoices.map(inv => (
+                {pendingInvoices
+                  .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
+                  .map(inv => (
                   <tr key={inv.id} className="border-b border-gray-50 hover:bg-amber-50/30">
                     <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
@@ -5319,7 +5341,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                 </tr>
               </thead>
               <tbody>
-                {doneInvoices.map(inv => {
+                {doneInvoices
+                  .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
+                  .map(inv => {
                   const isPaid = ['Paid', 'Downloaded'].includes(inv.status)
                   const isDownloaded = inv.status === 'Downloaded'
                   return (
@@ -5555,16 +5579,23 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus: bonus,
       };
 
-      // Try update first
-      const { data: updatedRows, error: payErr } = await apiClient.from('payments')
-        .update(paymentUpdateData)
-        .eq('Employee ID', eid)
-        .select();
+      // Step 1: Check if a payment row already exists for this employee
+      const { data: existingRows } = await apiClient.from('payments')
+        .select('id')
+        .eq('Employee ID', eid);
 
-      if (payErr) {
-        addToast(`Could not update payment row for ${animatorName}.`, 'error');
-      } else if (!updatedRows || updatedRows.length === 0) {
-        // No row existed — insert a new one
+      if (existingRows && existingRows.length > 0) {
+        // Row exists — update it
+        const { error: updateErr } = await apiClient.from('payments')
+          .update(paymentUpdateData)
+          .eq('Employee ID', eid);
+        if (updateErr) {
+          addToast(`Could not update payment row for ${animatorName}.`, 'error');
+        } else {
+          addToast(`✅ Saved payout details for ${animatorName}`);
+        }
+      } else {
+        // No row — insert a new one
         const animator = animators.find(a => a.Employee_ID === eid);
         const { error: insertErr } = await apiClient.from('payments').insert({
           'Employee ID': eid,
@@ -5578,14 +5609,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         } else {
           addToast(`✅ Saved payout details for ${animatorName}`);
         }
-      } else {
-        addToast(`✅ Saved payout details for ${animatorName}`);
       }
     } catch (e: any) {
       addToast(`❌ Save failed: ${e.message}`, 'error');
     }
     setSavingId(null);
   };
+
 
 
   // 2. Aggregate approved seconds per animator (Only Approved status — Closed=already paid, skip deferred)
