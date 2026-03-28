@@ -4721,6 +4721,7 @@ const apiClient = {
       is(col: string, val: any) { _isMatch = _isMatch || {}; _isMatch[col] = val; return builder; },
       in(col: string, vals: any[]) { _inMatch = { column: col, values: vals }; return builder; },
       order(col: string, opts?: any) { _order = { column: col, options: opts }; return builder; },
+      limit(n: number) { _order = { ...(_order || {}), limit: n }; return builder; },
       single() { _single = true; return builder; },
       then(resolve: (value: any) => void, reject: (reason?: any) => void) {
         fetch(`/api/${table}`, {
@@ -4871,7 +4872,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
              .select('tds_percent, bonus')
              .eq('Employee ID', eid)
              .order('id', { ascending: false })
-             .limit(1)
           if (payData && payData[0]) {
             tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
             bonusAmount = payData[0].bonus || 0
@@ -4945,8 +4945,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const { data: payData } = await apiClient.from('payments')
          .select('tds_percent, bonus')
          .eq('Employee ID', eid)
-         .order('Timestamp', { ascending: false })
-         .limit(1)
+         .order('id', { ascending: false })
       if (payData && payData[0]) {
         tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
         bonusAmount = payData[0].bonus || 0
