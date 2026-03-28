@@ -5354,7 +5354,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             </div>
             <button
               disabled={sending || selectedEids.size === 0}
-              onClick={handleSendInvoices}
+              onClick={() => handleSendInvoices()}
               className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
               style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
             >
