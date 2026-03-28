@@ -4905,48 +4905,88 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
         if (invErr) { failCount++; continue }
 
-        // Build Discord message
-        const projectLines = lineItems.map((li, i) =>
-          `${i + 1}. ${li.title || li.project_id} — ${li.seconds}s → ₹${li.amount.toLocaleString()}`
-        ).join('\n')
+        // Check if animator has legal details
+        const animAny = anim as any
+        const hasLegalDetails = !!(animAny.legal_name && animAny.artist_address && animAny.artist_pan)
 
-        const discordMsg = [
-          `📄 **Invoice #${invoiceNumber}** for **${selectedMonth}**`,
-          ``,
-          `**Projects:**`,
-          projectLines,
-          ``,
-          `**Gross:** ₹${totalVal.toLocaleString()}`,
-          bonusAmount > 0 ? `**Bonus:** +₹${bonusAmount.toLocaleString()}` : '',
-          `**TDS @${tdsPct}%:** −₹${tdsAmt.toLocaleString()}`,
-          `**Net Payable: ₹${finalNet.toLocaleString()}**`,
-          ``,
-          `Please reply with your **legal name, address, and PAN** so we can finalize and process your payment. 🙏`,
-        ].filter(Boolean).join('\n')
-
-        // Send to Discord thread
         let discordSent = false
-        if (thread_id) {
-          try {
-            const dr = await fetch('/api/discord/send-message', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ threadId: thread_id, message: discordMsg }),
-            })
-            discordSent = dr.ok
-          } catch (e) { console.error('Discord send failed', e) }
+        let finalStatus = 'Sent'
+
+        if (!hasLegalDetails) {
+          // Ask animator to provide legal details first
+          const detailsRequestMsg = [
+            `📄 **Invoice #${invoiceNumber}** is ready for **${selectedMonth}**!`,
+            ``,
+            `Before we can process your payment of **₹${finalNet.toLocaleString()}**, we need your legal details.`,
+            ``,
+            `Please reply with:`,
+            `1️⃣ **Legal Full Name** (as per PAN card)`,
+            `2️⃣ **Full Address** (with pincode)`,
+            `3️⃣ **PAN Card Number**`,
+            ``,
+            `Reply in this format:`,
+            `\`\`\``,
+            `Name: Your Legal Name`,
+            `Address: Your Full Address`,
+            `PAN: ABCDE1234F`,
+            `\`\`\``,
+          ].join('\n')
+
+          if (thread_id) {
+            try {
+              const dr = await fetch('/api/discord/send-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: thread_id, message: detailsRequestMsg }),
+              })
+              discordSent = dr.ok
+            } catch (e) { console.error('Discord send failed', e) }
+          }
+          finalStatus = 'Awaiting Details'
+        } else {
+          // Legal details are present — send the full invoice
+          const projectLines = lineItems.map((li, i) =>
+            `${i + 1}. ${li.title || li.project_id} — ${li.seconds}s → ₹${li.amount.toLocaleString()}`
+          ).join('\n')
+
+          const discordMsg = [
+            `📄 **Invoice #${invoiceNumber}** for **${selectedMonth}**`,
+            ``,
+            `**Projects:**`,
+            projectLines,
+            ``,
+            `**Gross:** ₹${totalVal.toLocaleString()}`,
+            bonusAmount > 0 ? `**Bonus:** +₹${bonusAmount.toLocaleString()}` : '',
+            `**TDS @${tdsPct}%:** −₹${tdsAmt.toLocaleString()}`,
+            `**Net Payable: ₹${finalNet.toLocaleString()}**`,
+            ``,
+            `Please confirm receipt by replying ✅. If anything looks incorrect, reply with your correction. 🙏`,
+          ].filter(Boolean).join('\n')
+
+          if (thread_id) {
+            try {
+              const dr = await fetch('/api/discord/send-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: thread_id, message: discordMsg }),
+              })
+              discordSent = dr.ok
+            } catch (e) { console.error('Discord send failed', e) }
+          }
+          finalStatus = 'Sent'
         }
 
-        // Update status to Sent
+        // Update invoice status
         await apiClient.from('invoices')
-          .update({ status: 'Sent', sent_at: new Date().toISOString() })
+          .update({ status: finalStatus, sent_at: new Date().toISOString() })
           .eq('invoice_number', invoiceNumber)
           .eq('employee_id', eid)
 
         successCount++
         if (!discordSent && thread_id) {
-          addToast(`⚠️ Invoice created for ${anim.Name} but Discord message failed. Check thread ID.`, 'error')
+          addToast(`⚠️ Invoice created for ${anim.Name} but Discord message failed.`, 'error')
         }
+
       }
 
       if (successCount > 0) {
