@@ -4824,6 +4824,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const handleSendInvoices = async () => {
     if (selectedEids.size === 0) { addToast('Select at least one animator', 'error'); return }
     setSending(true)
+    let successCount = 0
+    let failCount = 0
     try {
       const now = new Date()
       const invoiceDate = now.toISOString().split('T')[0]
@@ -4840,7 +4842,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         await apiClient.from('invoice_counter').upsert({ employee_id: eid, last_seq: newSeq })
         const invoiceNumber = `${eid}${String(newSeq).padStart(2, '0')}`
 
-        // Generate Draft Line Items
+        // Generate Line Items
         let totalVal = 0
         const lineItems = projs.map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
@@ -4853,7 +4855,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
           const amt = Math.round((finalSec / 60) * 5000)
           totalVal += amt
-
           return {
             project_id: p.Project_ID,
             title: p.Project_title || p.Project_ID,
@@ -4864,7 +4865,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           }
         })
 
-        // Fetch stored TDS and Bonus from payments table
+        // Fetch stored TDS and Bonus
         let tdsPct = 10
         let bonusAmount = 0
         try {
@@ -4880,10 +4881,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
         const tdsAmt = Math.round(totalVal * (tdsPct / 100))
         const netPay = Math.round(totalVal - tdsAmt)
+        const finalNet = netPay + bonusAmount
 
-        const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || ''
+        const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || anim.Channel_ID || ''
 
-        await apiClient.from('invoices').insert({
+        // Insert invoice as Draft first
+        const { data: invData, error: invErr } = await apiClient.from('invoices').insert({
           invoice_number: invoiceNumber,
           employee_id: eid,
           legal_name: (anim as any).legal_name || anim.Name,
@@ -4897,9 +4900,61 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           net_payable: netPay,
           status: 'Draft',
           thread_id,
+          sent_at: new Date().toISOString(),
         })
+
+        if (invErr) { failCount++; continue }
+
+        // Build Discord message
+        const projectLines = lineItems.map((li, i) =>
+          `${i + 1}. ${li.title || li.project_id} — ${li.seconds}s → ₹${li.amount.toLocaleString()}`
+        ).join('\n')
+
+        const discordMsg = [
+          `📄 **Invoice #${invoiceNumber}** for **${selectedMonth}**`,
+          ``,
+          `**Projects:**`,
+          projectLines,
+          ``,
+          `**Gross:** ₹${totalVal.toLocaleString()}`,
+          bonusAmount > 0 ? `**Bonus:** +₹${bonusAmount.toLocaleString()}` : '',
+          `**TDS @${tdsPct}%:** −₹${tdsAmt.toLocaleString()}`,
+          `**Net Payable: ₹${finalNet.toLocaleString()}**`,
+          ``,
+          `Please reply with your **legal name, address, and PAN** so we can finalize and process your payment. 🙏`,
+        ].filter(Boolean).join('\n')
+
+        // Send to Discord thread
+        let discordSent = false
+        if (thread_id) {
+          try {
+            const dr = await fetch('/api/discord/send-message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ threadId: thread_id, message: discordMsg }),
+            })
+            discordSent = dr.ok
+          } catch (e) { console.error('Discord send failed', e) }
+        }
+
+        // Update status to Sent
+        await apiClient.from('invoices')
+          .update({ status: 'Sent', sent_at: new Date().toISOString() })
+          .eq('invoice_number', invoiceNumber)
+          .eq('employee_id', eid)
+
+        successCount++
+        if (!discordSent && thread_id) {
+          addToast(`⚠️ Invoice created for ${anim.Name} but Discord message failed. Check thread ID.`, 'error')
+        }
       }
-      addToast(`Invoice drafts created for ${selectedEids.size} animator(s). Bot will send them within 2 minutes.`, 'success')
+
+      if (successCount > 0) {
+        addToast(`✅ Invoice sent to ${successCount} animator(s)!`, 'success')
+      }
+      if (failCount > 0) {
+        addToast(`❌ Failed for ${failCount} animator(s)`, 'error')
+      }
       setSelectedEids(new Set())
       fetchInvoices()
     } catch (e: any) {
@@ -4908,6 +4963,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       setSending(false)
     }
   }
+
 
   const generatePreview = async (eid: string) => {
     // Generates a mock invoice structure without saving it for the user to view.
