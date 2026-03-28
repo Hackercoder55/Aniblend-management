@@ -43,7 +43,14 @@ export async function POST(request: Request) {
             query = query.in(inMatch.column, inMatch.values);
         }
         if (order) {
-            query = query.order(order.column, order.options);
+            if (order.options && order.options.ascending !== undefined) {
+                 query = query.order(order.column, order.options);
+            } else if (order.column) {
+                 query = query.order(order.column);
+            }
+            if (order.limit) {
+                 query = query.limit(order.limit);
+            }
         }
         if (single) {
             query = query.single();
