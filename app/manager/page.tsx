@@ -5571,7 +5571,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           Name: animatorName,
           Discord_ID: animator?.Discord_ID || null,
           Discord_Username: animator?.Discord_Username || null,
-          Payment_Status: 'Pending',
           ...paymentUpdateData,
         });
         if (insertErr) {
