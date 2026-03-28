@@ -4824,8 +4824,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const animatorByEid: Record<string, Animator> = {}
   for (const a of animators) animatorByEid[a.Employee_ID] = a
 
-  const handleSendInvoices = async () => {
-    if (selectedEids.size === 0) { addToast('Select at least one animator', 'error'); return }
+  const handleSendInvoices = async (overrideEids?: Set<string>) => {
+    const targetEids = overrideEids || selectedEids
+    if (targetEids.size === 0) { addToast('Select at least one animator', 'error'); return }
     setSending(true)
     let successCount = 0
     let failCount = 0
@@ -4833,7 +4834,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const now = new Date()
       const invoiceDate = now.toISOString().split('T')[0]
 
-      for (const eid of Array.from(selectedEids)) {
+      for (const eid of Array.from(targetEids)) {
         const projs = approvedUnpaidByEid[eid] || []
         const anim = animatorByEid[eid]
         if (!anim) continue
@@ -5255,7 +5256,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                     eidSet.add(printInvoice.employee_id);
                     setSelectedEids(eidSet);
                     setPrintInvoice(null);
-                    setTimeout(() => handleSendInvoices(), 100);
+                    setTimeout(() => handleSendInvoices(eidSet), 100);
                   }}
                   style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 600, cursor: 'pointer', fontSize: 14, boxShadow: '0 4px 6px rgba(16, 185, 129, 0.25)' }}
                 >
