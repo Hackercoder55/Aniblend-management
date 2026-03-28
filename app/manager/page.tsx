@@ -5548,22 +5548,37 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     setSavingId(eid);
     try {
       const paymentUpdateData = {
-        Payment_Status: 'Pending', // keep it pending, just updating the calc numbers
+        Payment_Status: 'Pending',
         gross: Math.round(gross),
         tds_percent: tdsPct,
         net_paid: Math.round(net + bonus),
         bonus: bonus,
-        // don't overwrite paid_date if they are just calculating
       };
-      
-      const { error: payErr } = await apiClient.from('payments')
+
+      // Try update first
+      const { data: updatedRows, error: payErr } = await apiClient.from('payments')
         .update(paymentUpdateData)
-        .eq('Employee ID', eid);
-      
-      // Also upsert in case row doesn't exist
+        .eq('Employee ID', eid)
+        .select();
+
       if (payErr) {
-        // We only care about ensuring a row exists if it didn't update anything
-        addToast(`Could not update existing payment row for ${animatorName}.`, 'error');
+        addToast(`Could not update payment row for ${animatorName}.`, 'error');
+      } else if (!updatedRows || updatedRows.length === 0) {
+        // No row existed — insert a new one
+        const animator = animators.find(a => a.Employee_ID === eid);
+        const { error: insertErr } = await apiClient.from('payments').insert({
+          'Employee ID': eid,
+          Name: animatorName,
+          Discord_ID: animator?.Discord_ID || null,
+          Discord_Username: animator?.Discord_Username || null,
+          Payment_Status: 'Pending',
+          ...paymentUpdateData,
+        });
+        if (insertErr) {
+          addToast(`Could not create payment row for ${animatorName}.`, 'error');
+        } else {
+          addToast(`✅ Saved payout details for ${animatorName}`);
+        }
       } else {
         addToast(`✅ Saved payout details for ${animatorName}`);
       }
@@ -5572,6 +5587,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
     setSavingId(null);
   };
+
 
   // 2. Aggregate approved seconds per animator (Only Approved status — Closed=already paid, skip deferred)
   const approvedSecondsByEmpId: Record<string, number> = {}
