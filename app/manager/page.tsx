@@ -4885,36 +4885,15 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
         const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || anim.Channel_ID || ''
 
-        // Insert invoice as Draft first
-        const { data: invData, error: invErr } = await apiClient.from('invoices').insert({
-          invoice_number: invoiceNumber,
-          employee_id: eid,
-          legal_name: (anim as any).legal_name || anim.Name,
-          month_label: selectedMonth,
-          invoice_date: invoiceDate,
-          line_items: lineItems,
-          total_amount: totalVal,
-          tds_percent: tdsPct,
-          tds_amount: tdsAmt,
-          bonus_amount: bonusAmount,
-          net_payable: netPay,
-          status: 'Draft',
-          thread_id,
-          sent_at: new Date().toISOString(),
-        })
-
-        if (invErr) { failCount++; continue }
-
-        // Check if animator has legal details
+        // Check legal details BEFORE insert to set correct status
         const animAny = anim as any
         const hasLegalDetails = !!(animAny.legal_name && animAny.artist_address && animAny.artist_pan)
+        const finalStatus = hasLegalDetails ? 'Sent' : 'Awaiting Details'
 
-        let discordSent = false
-        let finalStatus = 'Sent'
-
+        // Build Discord message based on legal details availability
+        let discordMsg = ''
         if (!hasLegalDetails) {
-          // Ask animator to provide legal details first
-          const detailsRequestMsg = [
+          discordMsg = [
             `📄 **Invoice #${invoiceNumber}** is ready for **${selectedMonth}**!`,
             ``,
             `Before we can process your payment of **₹${finalNet.toLocaleString()}**, we need your legal details.`,
@@ -4931,25 +4910,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             `PAN: ABCDE1234F`,
             `\`\`\``,
           ].join('\n')
-
-          if (thread_id) {
-            try {
-              const dr = await fetch('/api/discord/send-message', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ threadId: thread_id, message: detailsRequestMsg }),
-              })
-              discordSent = dr.ok
-            } catch (e) { console.error('Discord send failed', e) }
-          }
-          finalStatus = 'Awaiting Details'
         } else {
-          // Legal details are present — send the full invoice
           const projectLines = lineItems.map((li, i) =>
             `${i + 1}. ${li.title || li.project_id} — ${li.seconds}s → ₹${li.amount.toLocaleString()}`
           ).join('\n')
-
-          const discordMsg = [
+          discordMsg = [
             `📄 **Invoice #${invoiceNumber}** for **${selectedMonth}**`,
             ``,
             `**Projects:**`,
@@ -4962,29 +4927,50 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             ``,
             `Please confirm receipt by replying ✅. If anything looks incorrect, reply with your correction. 🙏`,
           ].filter(Boolean).join('\n')
-
-          if (thread_id) {
-            try {
-              const dr = await fetch('/api/discord/send-message', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ threadId: thread_id, message: discordMsg }),
-              })
-              discordSent = dr.ok
-            } catch (e) { console.error('Discord send failed', e) }
-          }
-          finalStatus = 'Sent'
         }
 
-        // Update invoice status
-        await apiClient.from('invoices')
-          .update({ status: finalStatus, sent_at: new Date().toISOString() })
-          .eq('invoice_number', invoiceNumber)
-          .eq('employee_id', eid)
+        // Insert invoice directly with correct status (no two-step Draft→Sent)
+        const { error: invErr } = await apiClient.from('invoices').insert({
+          invoice_number: invoiceNumber,
+          employee_id: eid,
+          legal_name: animAny.legal_name || anim.Name,
+          artist_address: animAny.artist_address || '',
+          artist_pan: animAny.artist_pan || '',
+          month_label: selectedMonth,
+          invoice_date: invoiceDate,
+          line_items: lineItems,
+          total_amount: totalVal,
+          tds_percent: tdsPct,
+          tds_amount: tdsAmt,
+          bonus_amount: bonusAmount,
+          net_payable: netPay,
+          status: finalStatus,
+          thread_id,
+          sent_at: new Date().toISOString(),
+        })
+
+        if (invErr) {
+          addToast(`❌ Invoice insert failed for ${anim.Name}: ${invErr.message}`, 'error')
+          failCount++
+          continue
+        }
+
+        // Send Discord message
+        let discordSent = false
+        if (thread_id && discordMsg) {
+          try {
+            const dr = await fetch('/api/discord/send-message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ threadId: thread_id, message: discordMsg }),
+            })
+            discordSent = dr.ok
+          } catch (e) { console.error('Discord send failed', e) }
+        }
 
         successCount++
         if (!discordSent && thread_id) {
-          addToast(`⚠️ Invoice created for ${anim.Name} but Discord message failed.`, 'error')
+          addToast(`⚠️ Invoice saved for ${anim.Name} but Discord message failed.`, 'error')
         }
 
       }
