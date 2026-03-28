@@ -4731,7 +4731,10 @@ const apiClient = {
         })
           .then(res => res.json().then(data => res.ok ? data : Promise.reject(data.error)))
           .then(data => resolve({ data: data.data, error: null }))
-          .catch(error => resolve({ data: null, error: typeof error === 'string' ? { message: error } : error }));
+          .catch(error => {
+            console.error(`[apiClient Error on ${table}]:`, error);
+            resolve({ data: null, error: typeof error === 'string' ? { message: error } : error });
+          });
       }
     };
     return builder as PromiseLike<any> & any;
@@ -4930,25 +4933,30 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         }
 
         // Insert invoice directly with correct status (no two-step Draft→Sent)
-        const { error: invErr } = await apiClient.from('invoices').insert({
-          invoice_number: invoiceNumber,
-          employee_id: eid,
-          legal_name: animAny.legal_name || anim.Name,
-          month_label: selectedMonth,
-          invoice_date: invoiceDate,
-          line_items: lineItems,
-          total_amount: totalVal,
-          tds_percent: tdsPct,
-          tds_amount: tdsAmt,
-          bonus_amount: bonusAmount,
-          net_payable: netPay,
-          status: finalStatus,
-          thread_id,
+        const insertPayload = {
+          invoice_number: String(invoiceNumber || '').trim(),
+          employee_id: String(eid || '').trim(),
+          legal_name: (animAny.legal_name || anim.Name || 'Unknown').trim(),
+          month_label: String(selectedMonth || '').trim(),
+          invoice_date: String(invoiceDate || '').trim(),
+          line_items: lineItems || [],
+          total_amount: Number(totalVal || 0),
+          tds_percent: Number(tdsPct || 0),
+          tds_amount: Number(tdsAmt || 0),
+          bonus_amount: Number(bonusAmount || 0),
+          net_payable: Number(netPay || 0),
+          status: String(finalStatus || 'Draft').trim(),
+          thread_id: String(thread_id || '').trim(),
           sent_at: new Date().toISOString(),
-        })
+        }
+
+        console.log(`[handleSendInvoices] Attempting insert for ${eid}:`, insertPayload)
+
+        const { error: invErr } = await apiClient.from('invoices').insert(insertPayload)
 
         if (invErr) {
-          addToast(`❌ Invoice insert failed for ${anim.Name}: ${invErr.message}`, 'error')
+          console.error(`[handleSendInvoices] Insert failed for ${eid}:`, invErr)
+          addToast(`❌ Invoice insert failed for ${anim.Name}: ${invErr.message || JSON.stringify(invErr)}`, 'error')
           failCount++
           continue
         }
