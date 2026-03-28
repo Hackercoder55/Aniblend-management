@@ -4920,8 +4920,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
         // Use the current project thread first, fallback to animator main workspace channel
         // Support both lowercase thread_id (returned by some DB queries) and uppercase Thread_ID
-        const selectedProjForThread = projs.find(p => p.thread_id || p.Thread_ID)
-        const thread_id = (selectedProjForThread?.thread_id || selectedProjForThread?.Thread_ID) || anim.Discord_Channel_ID || anim.Channel_ID || ''
+        const selectedProjForThread = projs.find(p => (p as any).thread_id || p.Thread_ID)
+        const thread_id = (selectedProjForThread ? ((selectedProjForThread as any).thread_id || selectedProjForThread.Thread_ID) : '') || (anim as any).Discord_Channel_ID || anim.Channel_ID || ''
 
         // Check legal details BEFORE insert to set correct status
         const animAny = anim as any
