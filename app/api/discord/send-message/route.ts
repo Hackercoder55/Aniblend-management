@@ -8,7 +8,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'threadId and message are required' }, { status: 400 });
         }
 
-        const token = process.env.DISCORD_BOT_TOKEN;
+        const token = process.env.DISCORD_BOT_TOKEN || process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN;
 
         if (!token) {
             return NextResponse.json({ error: 'Discord bot token is missing' }, { status: 500 });

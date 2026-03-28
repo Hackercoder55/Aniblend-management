@@ -4895,45 +4895,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const finalStatus = hasLegalDetails ? 'Sent' : 'Awaiting Details'
 
         // Build Discord message based on legal details availability
-        let discordMsg = ''
-        if (!hasLegalDetails) {
-          discordMsg = [
-            `📄 **Invoice #${invoiceNumber}** is ready for **${selectedMonth}**!`,
-            ``,
-            `Before we can process your payment of **₹${finalNet.toLocaleString()}**, we need your legal details.`,
-            ``,
-            `Please reply with:`,
-            `1️⃣ **Legal Full Name** (as per PAN card)`,
-            `2️⃣ **Full Address** (with pincode)`,
-            `3️⃣ **PAN Card Number**`,
-            ``,
-            `Reply in this format:`,
-            `\`\`\``,
-            `Name: Your Legal Name`,
-            `Address: Your Full Address`,
-            `PAN: ABCDE1234F`,
-            `\`\`\``,
-          ].join('\n')
-        } else {
-          const projectLines = lineItems.map((li, i) =>
-            `${i + 1}. ${li.title || li.project_id} — ${li.seconds}s → ₹${li.amount.toLocaleString()}`
-          ).join('\n')
-          discordMsg = [
-            `📄 **Invoice #${invoiceNumber}** for **${selectedMonth}**`,
-            ``,
-            `**Projects:**`,
-            projectLines,
-            ``,
-            `**Gross:** ₹${totalVal.toLocaleString()}`,
-            bonusAmount > 0 ? `**Bonus:** +₹${bonusAmount.toLocaleString()}` : '',
-            `**TDS @${tdsPct}%:** −₹${tdsAmt.toLocaleString()}`,
-            `**Net Payable: ₹${finalNet.toLocaleString()}**`,
-            ``,
-            `Please confirm receipt by replying ✅. If anything looks incorrect, reply with your correction. 🙏`,
-          ].filter(Boolean).join('\n')
-        }
-
-        // Insert invoice directly with correct status (no two-step Draft→Sent)
+        // Insert invoice as Draft. The Python discord bot will pick this up,
+        // send the appropriate message (with buttons), and automatically update
+        // the status to 'Sent' or 'Awaiting Details'.
         const insertPayload = {
           invoice_number: String(invoiceNumber || '').trim(),
           employee_id: String(eid || '').trim(),
@@ -4945,9 +4909,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
           net_payable: Number(netPay || 0),
-          status: String(finalStatus || 'Draft').trim(),
+          status: 'Draft',
           thread_id: String(thread_id || '').trim(),
-          sent_at: new Date().toISOString(),
+          sent_at: null, // Bot will set this when actually sent
         }
 
         console.log(`[handleSendInvoices] Attempting insert for ${eid}:`, insertPayload)
@@ -4961,28 +4925,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           continue
         }
 
-        // Send Discord message
-        let discordSent = false
-        if (thread_id && discordMsg) {
-          try {
-            const dr = await fetch('/api/discord/send-message', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ threadId: thread_id, message: discordMsg }),
-            })
-            discordSent = dr.ok
-          } catch (e) { console.error('Discord send failed', e) }
-        }
-
         successCount++
-        if (!discordSent && thread_id) {
-          addToast(`⚠️ Invoice saved for ${anim.Name} but Discord message failed.`, 'error')
-        }
 
       }
 
       if (successCount > 0) {
-        addToast(`✅ Invoice sent to ${successCount} animator(s)!`, 'success')
+        addToast(`✅ Generated ${successCount} invoice(s) as Draft. Discord bot will send them shortly!`, 'success')
       }
       if (failCount > 0) {
         addToast(`❌ Failed for ${failCount} animator(s)`, 'error')
@@ -5401,7 +5349,22 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                           'bg-blue-100 text-blue-700'
                         }`}>{inv.status}</span>
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-400">{inv.sent_at ? new Date(inv.sent_at).toLocaleString('en-IN') : '—'}</td>
+                    <td className="px-4 py-3 text-xs text-gray-400">
+                      <div className="flex items-center gap-2">
+                        {inv.sent_at ? new Date(inv.sent_at).toLocaleString('en-IN') : '—'}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
+                            await apiClient.from('invoices').delete().eq('id', inv.id)
+                            addToast(`Deleted invoice #${inv.invoice_number}`, 'success')
+                            fetchInvoices()
+                          }}
+                          className="px-2 py-1 bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100 ml-2"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
