@@ -4804,11 +4804,22 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
   useEffect(() => { fetchInvoices() }, [fetchInvoices])
 
+  
+  // All project IDs that have already been included in an invoice
+  const invoicedProjectIds = new Set<string>()
+  invoices.forEach(inv => {
+    if (inv.line_items && Array.isArray(inv.line_items)) {
+      inv.line_items.forEach((item: any) => {
+        if (item.project_id) invoicedProjectIds.add(item.project_id)
+      })
+    }
+  })
+
   // Approved projects not yet paid (for the send panel)
   const approvedUnpaidByEid = (() => {
     const map: Record<string, Project[]> = {}
     for (const p of projects) {
-      if (p.Status === 'Approved' && p.Payment_Status !== 'Paid') {
+      if (p.Status === 'Approved' && p.Payment_Status !== 'Paid' && !invoicedProjectIds.has(p.Project_ID)) {
         const d = new Date(p['Date Approved'] || p['Date Assigned'] || '')
         const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
         if (pMonth !== selectedMonth && pMonth !== '') continue
@@ -5067,7 +5078,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   // Animators who have not yet acknowledged for selected month
   const pendingEids = new Set(pendingInvoices.map(i => i.employee_id))
   const sentEids = new Set(monthInvoices.map(i => i.employee_id))
-  const notSentEids = Object.keys(approvedUnpaidByEid).filter(eid => !sentEids.has(eid))
+  const notSentEids = Object.keys(approvedUnpaidByEid)
 
   const tabStyle = (s: string) => ({
     padding: '6px 14px',
@@ -5426,7 +5437,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       {/* SECTION: Send Invoices */}
       {section === 'send' && (() => {
         const notSentEntries = Object.entries(approvedUnpaidByEid)
-          .filter(([eid]) => !sentEids.has(eid))
+          
           .filter(([eid]) => matchesInvoiceSearch(animatorByEid[eid]?.Name || eid))
         return (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
