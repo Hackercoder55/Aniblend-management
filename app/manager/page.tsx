@@ -4777,6 +4777,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const [section, setSection] = useState<'send' | 'pending' | 'done'>('pending')
   const [selectedEids, setSelectedEids] = useState<Set<string>>(new Set())
   const [printInvoice, setPrintInvoice] = useState<Invoice | null>(null)
+  const [bulkPrintInvoices, setBulkPrintInvoices] = useState<Invoice[]>([])
 
   const monthOptions = (() => {
     const opts: string[] = []
@@ -4812,7 +4813,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
         if (pMonth !== selectedMonth && pMonth !== '') continue
 
-        const eid = p.Employee_ID || ''
+        let eid = p.Employee_ID || ''
+        if (!eid && p.Animator) {
+          const names = p.Animator.split(',').map((s: string) => s.trim().toLowerCase())
+          const found = animators.find(a => names.includes((a.Name || '').toLowerCase()))
+          if (found) eid = found.Employee_ID
+        }
         if (!eid) continue
         if (!map[eid]) map[eid] = []
         map[eid].push(p)
@@ -4883,11 +4889,13 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           }
         } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
 
-        const tdsAmt = Math.round(totalVal * (tdsPct / 100))
-        const netPay = Math.round(totalVal - tdsAmt)
-        const finalNet = netPay + bonusAmount
+        const grossTotal = totalVal
+        const newTotalVal = grossTotal + Number(bonusAmount || 0)
+        const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
+        const finalNet = Math.round(newTotalVal - tdsAmt)
 
-        const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || anim.Channel_ID || ''
+        // Always send invoices to the Animator's main workspace channel, not a specific project thread
+        const thread_id = anim.Channel_ID || projs.find(p => p.Thread_ID)?.Thread_ID || ''
 
         // Check legal details BEFORE insert to set correct status
         const animAny = anim as any
@@ -4905,10 +4913,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           month_label: String(selectedMonth || '').trim(),
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
-          total_amount: Number(totalVal || 0),
+          total_amount: Number(newTotalVal || 0),
+          bonus_amount: Number(bonusAmount || 0),
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
-          net_payable: Number(netPay || 0),
+          net_payable: Number(finalNet || 0),
           status: 'Draft',
           thread_id: String(thread_id || '').trim(),
           sent_at: null, // Bot will set this when actually sent
@@ -5047,7 +5056,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
   const monthInvoices = invoices.filter(inv => inv.month_label === selectedMonth)
   const pendingInvoices = monthInvoices.filter(inv => ['Sent', 'Edit Requested', 'Awaiting Details', 'Draft'].includes(inv.status))
-  const doneInvoices = invoices.filter(inv => ['Acknowledged', 'Paid', 'Downloaded'].includes(inv.status))
+  const doneInvoices = monthInvoices.filter(inv => ['Acknowledged', 'Paid', 'Downloaded'].includes(inv.status))
 
   // Name-wise search helper
   const matchesInvoiceSearch = (nameOrEid: string) => {
@@ -5234,6 +5243,159 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         </div>
       )}
 
+      
+      {bulkPrintInvoices.length > 0 && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setBulkPrintInvoices([])}
+        >
+          <style>{`
+            @media print {
+              .print-hidden { display: none !important; }
+              body * { visibility: hidden; }
+              #bulk-invoice-print-area, #bulk-invoice-print-area * { visibility: visible; }
+              #bulk-invoice-print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; padding: 0 !important; background: white !important;}
+              .invoice-page { page-break-after: always; padding: 48px; min-height: 100vh; position: relative; }
+              .invoice-page:last-child { page-break-after: auto; }
+            }
+          `}</style>
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: 16,
+              padding: '24px',
+              maxWidth: 850,
+              width: '90%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              fontFamily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.1)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4 print-hidden border-b pb-4">
+              <h2 className="text-xl font-bold">Bulk Invoice Download ({bulkPrintInvoices.length} Invoices)</h2>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const originalTitle = document.title;
+                    document.title = `Invoices_${selectedMonth}`;
+                    window.print();
+                    document.title = originalTitle;
+                  }}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700"
+                >
+                  🖨️ Print / Save All as PDF
+                </button>
+                <button onClick={() => setBulkPrintInvoices([])} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200">
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div id="bulk-invoice-print-area" style={{ background: '#fff' }}>
+              {bulkPrintInvoices.map((inv, idx) => {
+                const isDownloaded = inv.status === 'Downloaded';
+                let bonusToShow = inv.bonus_amount || 0;
+                
+                return (
+                  <div key={inv.id} className="invoice-page" style={idx > 0 ? { borderTop: '2px dashed #ccc', marginTop: '24px', paddingTop: '24px' } : {}}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginBottom: 32 }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 40, fontWeight: 900, color: '#111', letterSpacing: 2, lineHeight: 1 }}>INVOICE</div>
+                        <div style={{ fontSize: 15, color: '#667eea', fontWeight: 700, marginTop: 8 }}>#{inv.invoice_number}</div>
+                        <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>Date: {inv.invoice_date}</div>
+                        <div style={{ fontSize: 13, color: '#888' }}>Period: {inv.month_label}</div>
+                      </div>
+                    </div>
+
+                    <hr style={{ margin: '24px 0', borderColor: '#f3f4f6', borderWidth: 2 }} />
+
+                    <div style={{ display: 'flex', gap: 40, marginBottom: 32 }}>
+                      <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>From (Freelancer)</div>
+                        <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>{inv.legal_name || '—'}</div>
+                        <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{inv.artist_address || '—'}</div>
+                        <div style={{ fontSize: 13, color: '#4b5563', marginTop: 4 }}><strong>PAN:</strong> {inv.artist_pan || '—'}</div>
+                      </div>
+                      <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
+                        <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                        <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
+                          GSTIN: 07AAGCF2334M1ZJ<br />
+                          PAN: AAGCF2334M<br />
+                          New Delhi, India
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #e5e7eb', marginBottom: 24 }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#f3f4f6', color: '#374151' }}>
+                            {['#', 'Project ID', 'Assigned', 'Approved', 'Seconds', 'Amount (₹)'].map(h => (
+                              <th key={h} style={{ padding: '12px 16px', textAlign: h.includes('Amount') || h === 'Seconds' ? 'right' : 'left', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(inv.line_items || []).map((item, i) => {
+                            const matchedProj = projects?.find(p => p.Project_ID === item.project_id);
+                            const assignedDate = item.assigned_date || matchedProj?.['Date Assigned'] || '—';
+                            const approvedDate = item.approved_date || matchedProj?.['Date Approved'] || '—';
+
+                            return (
+                              <tr key={i} style={{ background: i % 2 === 0 ? '#ffffff' : '#f9fafb', borderTop: '1px solid #e5e7eb' }}>
+                                <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>{i + 1}</td>
+                                <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: '#111' }}>
+                                  <div>{item.project_id}</div>
+                                  <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 400, marginTop: 2 }}>{item.title}</div>
+                                </td>
+                                <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{assignedDate}</td>
+                                <td style={{ padding: '12px 16px', fontSize: 12, color: '#4b5563' }}>{approvedDate}</td>
+                                <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 500, color: '#374151' }}>{item.seconds || '—'}</td>
+                                <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontWeight: 600, color: '#111' }}>₹{Number(item.amount || 0).toLocaleString()}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+                      <div style={{ width: 320, background: '#f9fafb', padding: 20, borderRadius: 12, border: '1px solid #e5e7eb' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                          <span style={{ color: '#4b5563' }}>Gross Total:</span>
+                          <span style={{ fontWeight: 700, color: '#111' }}>₹{Math.round(inv.total_amount || 0).toLocaleString()}</span>
+                        </div>
+                        {bonusToShow > 0 ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                            <span style={{ color: '#4b5563' }}>Bonus:</span>
+                            <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(bonusToShow).toLocaleString()}</span>
+                          </div>
+                        ) : null}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
+                          <span style={{ color: '#4b5563' }}>TDS @{inv.tds_percent || 10}% (Sec 194J):</span>
+                          <span style={{ fontWeight: 600, color: '#dc2626' }}>−₹{Math.round(inv.tds_amount || 0).toLocaleString()}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 4px', fontSize: 18, fontWeight: 800, color: '#111' }}>
+                          <span>Net Payable:</span>
+                          <span style={{ color: '#667eea' }}>₹{Math.round((inv.net_payable || 0) + (inv.bonus_amount || 0)).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 32, fontSize: 11, color: '#9ca3af', borderTop: '1px solid #e5e7eb', paddingTop: 16, textAlign: 'center' }}>
+                      This is a computer-generated invoice for professional animation services rendered. <br />TDS deducted under Section 194J of the Income Tax Act, 1961. No signature is required.
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sub-nav + Search */}
       <div className="flex items-center gap-3 flex-wrap justify-between">
         <div className="flex items-center gap-3 flex-wrap">
@@ -5377,7 +5539,16 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       {section === 'done' && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100">
-            <h3 className="font-bold text-gray-800">✅ Acknowledged / Paid / Downloaded</h3>
+            <div className="flex items-center"><h3 className="font-bold text-gray-800">✅ Acknowledged / Paid / Downloaded</h3>
+            {doneInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status)).length > 0 && (
+              <button
+                onClick={() => setBulkPrintInvoices(doneInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status)))}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 ml-4"
+              >
+                📥 Download All (ZIP/PDF)
+              </button>
+            )}
+</div>
           </div>
           {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : doneInvoices.length === 0 ? (
             <p className="p-6 text-sm text-gray-400">No acknowledged invoices yet.</p>
@@ -5526,7 +5697,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const grossAmt = net / (1 - tds / 100)
       const netWithBonus = net + bonus
       const paymentUpdateData = {
-        Payment_Status: 'Paid',
         gross: Math.round(grossAmt),
         tds_percent: tds,
         net_paid: Math.round(netWithBonus),
