@@ -4793,7 +4793,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const fetchInvoices = useCallback(async () => {
     setLoading(true)
     try {
-      const { data } = await apiClient.from('invoices').select('*')
+      const { data } = await apiClient.from('invoices').select('*').order('id', { ascending: false }).limit(9999)
       setInvoices((data as Invoice[]) || [])
     } catch (e: any) {
       addToast('Failed to load invoices', 'error')
