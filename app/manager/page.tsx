@@ -4918,8 +4918,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
         const finalNet = Math.round(newTotalVal - tdsAmt)
 
-        // Always send invoices to the Animator's main workspace channel, not a specific project thread
-        const thread_id = anim.Channel_ID || projs.find(p => p.Thread_ID)?.Thread_ID || ''
+        // Use the current project thread first, fallback to animator main workspace channel
+        const thread_id = projs.find(p => p.Thread_ID)?.Thread_ID || anim.Channel_ID || ''
 
         // Check legal details BEFORE insert to set correct status
         const animAny = anim as any
@@ -4936,7 +4936,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           legal_name: (animAny.legal_name || anim.Name || 'Unknown').trim(),
           month_label: String(selectedMonth || '').trim(),
           invoice_date: String(invoiceDate || '').trim(),
-          line_items: lineItems || [],
+          line_items: JSON.stringify(lineItems || []),
           total_amount: Number(newTotalVal || 0),
           bonus_amount: Number(bonusAmount || 0),
           tds_percent: Number(tdsPct || 0),
