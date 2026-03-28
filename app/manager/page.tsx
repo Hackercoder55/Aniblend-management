@@ -4944,7 +4944,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           total_amount: Number(totalVal || 0),
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
-          bonus_amount: Number(bonusAmount || 0),
           net_payable: Number(netPay || 0),
           status: String(finalStatus || 'Draft').trim(),
           thread_id: String(thread_id || '').trim(),
