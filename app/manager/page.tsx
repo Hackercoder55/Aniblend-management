@@ -4939,9 +4939,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           month_label: String(selectedMonth || '').trim(),
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
-          total_amount: Number(newTotalVal || 0),
+          total_amount: Number(grossTotal || 0),
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
+          bonus_amount: Number(bonusAmount || 0),
           net_payable: Number(finalNet || 0),
           status: 'Draft',
           thread_id: String(thread_id || '').trim(),
@@ -5021,9 +5022,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         bonusAmount = payData[0].bonus || 0
       }
     } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
-
-    const tdsAmt = Math.round(totalVal * (tdsPct / 100))
-    const netPay = Math.round(totalVal - tdsAmt)
+    const newTotalVal = totalVal + Number(bonusAmount || 0)
+    const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
+    const netPay = Math.round(newTotalVal - tdsAmt)
     const now = new Date()
 
     setPrintInvoice({
@@ -5219,7 +5220,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 4px', fontSize: 18, fontWeight: 800, color: '#111' }}>
                   <span>Net Payable:</span>
-                  <span style={{ color: '#667eea' }}>₹{Math.round((printInvoice.net_payable || 0) + (printInvoice.bonus_amount || 0)).toLocaleString()}</span>
+                  <span style={{ color: '#667eea' }}>₹{Math.round(printInvoice.net_payable || 0).toLocaleString()}</span>
                 </div>
               </div>
             </div>
@@ -5405,7 +5406,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 4px', fontSize: 18, fontWeight: 800, color: '#111' }}>
                           <span>Net Payable:</span>
-                          <span style={{ color: '#667eea' }}>₹{Math.round((inv.net_payable || 0) + (inv.bonus_amount || 0)).toLocaleString()}</span>
+                          <span style={{ color: '#667eea' }}>₹{Math.round(inv.net_payable || 0).toLocaleString()}</span>
                         </div>
                       </div>
                     </div>
@@ -5690,7 +5691,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
   const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
 
-  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0) => {
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0) => {
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
@@ -5719,12 +5720,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
 
       // 2. Mark payments row as Paid + store gross/tds/net for Paid section display
-      const grossAmt = net / (1 - tds / 100)
-      const netWithBonus = net + bonus
       const paymentUpdateData = {
-        gross: Math.round(grossAmt),
+        Payment_Status: 'Paid',
+        gross: Math.round(gross || 0),
         tds_percent: tds,
-        net_paid: Math.round(netWithBonus),
+        net_paid: Math.round(net),
         bonus: bonus > 0 ? bonus : 0,
         paid_date: formatDate()
       }
@@ -5820,7 +5820,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         Payment_Status: 'Pending',
         gross: Math.round(gross),
         tds_percent: tdsPct,
-        net_paid: Math.round(net + bonus),
+        net_paid: Math.round(net),
         bonus: bonus,
       };
 
@@ -5975,8 +5975,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
       const gross = currentMins * 5000
-      const net = gross - (gross * tdsPct / 100)
       const bonusParsed = parseFloat(bonusAmounts[eid] || '0') || 0
+      const totalAmount = gross + bonusParsed
+      const net = totalAmount - (totalAmount * tdsPct / 100)
 
       const payInfo = latestPaymentByEmpId[eid]
 
@@ -6175,7 +6176,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                             </span>
                           ) : (
                             <button
-                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct)}
+                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct, r.gross)}
                               disabled={payingId === r.animator.Employee_ID}
                               className="w-full px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
                               style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
