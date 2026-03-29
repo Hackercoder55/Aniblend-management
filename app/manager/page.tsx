@@ -4887,7 +4887,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               if (found) empSet.add(found.Employee_ID)
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
-          const amt = Math.round((finalSec / 60) * 5000)
+          const minsStr = (finalSec / 60).toFixed(2)
+          const amt = Math.round(parseFloat(minsStr) * 5000)
           totalVal += amt
           return {
             project_id: p.Project_ID,
@@ -4996,7 +4997,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           if (found) empSet.add(found.Employee_ID)
         })
       const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
-      const amt = Math.round((finalSec / 60) * 5000)
+      const minsStr = (finalSec / 60).toFixed(2)
+      const amt = Math.round(parseFloat(minsStr) * 5000)
       totalVal += amt
 
       return {
