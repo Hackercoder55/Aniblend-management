@@ -5611,17 +5611,31 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {isPaid ? (
+                        <div className="flex items-center gap-2">
+                          {isPaid ? (
+                            <button
+                              onClick={() => handleDownload(inv)}
+                              className="px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0"
+                              style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
+                            >
+                              {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 shrink-0">Awaiting payment</span>
+                          )}
                           <button
-                            onClick={() => handleDownload(inv)}
-                            className="px-3 py-1.5 text-xs font-semibold rounded-lg"
-                            style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
+                            onClick={async () => {
+                              if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
+                              await apiClient.from('invoices').delete().eq('id', inv.id)
+                              addToast(`Deleted invoice #${inv.invoice_number}`, 'success')
+                              fetchInvoices()
+                            }}
+                            className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100 shrink-0"
+                            title="Delete Invoice"
                           >
-                            {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
+                            🗑️
                           </button>
-                        ) : (
-                          <span className="text-xs text-gray-400">Awaiting payment</span>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   )
