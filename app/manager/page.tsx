@@ -4511,8 +4511,8 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     (p.Project_title || '').toLowerCase().includes(projSearch.toLowerCase())
 
   const TRACKER_STAGES = [
-    'Pending', 'Active', 'Review', 'Changes Requested',
-    'Ready to Render', 'Render QA', 'STL', 'Approved', 'Paid', 'Closed'
+    'Pending', 'STL', 'Active', 'Review', 'Changes Requested',
+    'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed'
   ]
 
   const statusColor: Record<string, string> = {
