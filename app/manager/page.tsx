@@ -2233,7 +2233,14 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
                         </div>
                         <div>
                           <p className="text-[10px] text-gray-400 uppercase font-semibold">Bonus</p>
-                          <p className="text-xs font-mono text-green-600">₹{(inv.bonus_amount || 0).toLocaleString()}</p>
+                          <p className="text-xs font-mono text-green-600" title={inv.bonus_note || 'No note'}>
+                            ₹{(inv.bonus_amount || 0).toLocaleString()}
+                            {inv.bonus_note && (
+                              <span className="ml-1 text-[9px] bg-amber-100 text-amber-800 px-1 py-[2px] rounded uppercase tracking-wider block mt-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-full">
+                                {inv.bonus_note}
+                              </span>
+                            )}
+                          </p>
                         </div>
                         <div>
                           <p className="text-[10px] text-gray-400 uppercase font-semibold">TDS (-)</p>
@@ -4479,6 +4486,15 @@ function NotesTab({ user }: { user: DashboardUser }) {
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [dateFieldFilters, setDateFieldFilters] = useState<string[]>([])
+  const [showDateFieldDropdown, setShowDateFieldDropdown] = useState(false)
+  const DATE_FIELD_OPTIONS = [
+    { label: 'Date Assigned', key: 'Date Assigned' },
+    { label: 'Viewport', key: 'viewport_date' },
+    { label: 'Ready to Render', key: 'ready_to_render_date' },
+    { label: 'Render QA', key: 'render_qa_date' },
+    { label: 'Approved', key: 'Date Approved' },
+  ]
   const [channelFilter, setChannelFilter] = useState('all')
   const [projSearch, setProjSearch] = useState('')
   const [markingId, setMarkingId] = useState<string | null>(null)
@@ -4729,8 +4745,46 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
               <span className="text-xs font-semibold text-gray-500 uppercase">To:</span>
               <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="text-xs px-2 py-1.5 rounded-lg border-gray-200 border focus:outline-none focus:border-indigo-400 bg-white" />
             </div>
-            {(dateFrom || dateTo) && (
-              <button onClick={() => { setDateFrom(''); setDateTo('') }} className="px-3 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 font-bold rounded-lg transition-colors">Clear</button>
+            <div className="flex items-center gap-2 px-2 border-l border-gray-200 relative">
+              <span className="text-xs font-semibold text-gray-500 uppercase">Filter By:</span>
+              <button 
+                onClick={() => setShowDateFieldDropdown(!showDateFieldDropdown)}
+                className="text-xs px-3 py-1.5 rounded-lg border-gray-200 border bg-white flex items-center justify-between min-w-[120px] shadow-sm hover:border-indigo-300 transition-colors"
+              >
+                <span className="truncate font-medium text-gray-700">
+                  {dateFieldFilters.length === 0 ? 'Default (Stage)' : `${dateFieldFilters.length} selected`}
+                </span>
+                <span className="text-[10px] ml-2 text-gray-400 font-bold">▼</span>
+              </button>
+              {showDateFieldDropdown && (
+                <div className="absolute top-10 right-0 w-48 bg-white border border-gray-200 shadow-xl rounded-xl z-50 p-2 flex flex-col gap-1 ring-1 ring-black/5" onMouseLeave={() => setShowDateFieldDropdown(false)}>
+                  <div className="text-[10px] font-bold text-indigo-500 mb-1 px-1 uppercase tracking-wider">Select Dates to Check:</div>
+                  {DATE_FIELD_OPTIONS.map(opt => (
+                    <label key={opt.key} className="flex items-center gap-2 px-2 py-1.5 hover:bg-indigo-50/80 rounded-lg cursor-pointer transition-colors border border-transparent">
+                      <input 
+                        type="checkbox" 
+                        className="w-3.5 h-3.5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500 transition-all cursor-pointer"
+                        checked={dateFieldFilters.includes(opt.key)}
+                        onChange={(e) => {
+                          if (e.target.checked) setDateFieldFilters(prev => [...prev, opt.key])
+                          else setDateFieldFilters(prev => prev.filter(k => k !== opt.key))
+                        }}
+                      />
+                      <span className="text-xs font-medium text-gray-700 select-none">{opt.label}</span>
+                    </label>
+                  ))}
+                  {dateFieldFilters.length > 0 && (
+                     <button onClick={() => setDateFieldFilters([])} className="mt-1 w-full text-center text-[10px] text-red-500 font-bold hover:bg-red-50 hover:text-red-600 py-1.5 rounded-lg transition-colors border border-transparent hover:border-red-100">Clear</button>
+                  )}
+                </div>
+              )}
+            </div>
+            {(dateFrom || dateTo || dateFieldFilters.length > 0) && (
+              <button 
+                onClick={() => { setDateFrom(''); setDateTo(''); setDateFieldFilters([]) }} 
+                className="px-3 py-1.5 text-[11px] text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 font-bold rounded-lg transition-colors ml-1 uppercase tracking-wide">
+                Reset
+              </button>
             )}
           </div>
         </div>
@@ -4767,9 +4821,13 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
           if (dateFrom || dateTo) {
             stageProjects = stageProjects.filter(p => {
-               const stg = stage === 'STL' ? p.Status : stage
-               const dStr = getDateForStage(p, stg)
-               return isBetweenDates(dStr, dateFrom, dateTo)
+               if (dateFieldFilters.length === 0) {
+                 const stg = stage === 'STL' ? p.Status : stage
+                 const dStr = getDateForStage(p, stg)
+                 return isBetweenDates(dStr, dateFrom, dateTo)
+               } else {
+                 return dateFieldFilters.some(key => isBetweenDates((p as any)[key], dateFrom, dateTo))
+               }
             })
           }
 
@@ -5044,14 +5102,16 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         // Fetch stored TDS and Bonus
         let tdsPct = 10
         let bonusAmount = 0
+        let bonusNote = ''
         try {
           const { data: payData } = await apiClient.from('payments')
-             .select('tds_percent, bonus')
+             .select('tds_percent, bonus, bonus_note')
              .eq('Employee ID', eid)
              .order('id', { ascending: false })
           if (payData && payData[0]) {
             tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
             bonusAmount = payData[0].bonus || 0
+            bonusNote = payData[0].bonus_note || ''
           }
         } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
 
@@ -5082,6 +5142,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
           total_amount: Number(grossTotal || 0),
+          bonus_amount: Number(bonusAmount || 0),
+          bonus_note: bonusNote,
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
           net_payable: Number(finalNet || 0),
@@ -5806,6 +5868,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   // Per-animator state for Payout calculation (saved to DB instead of global)
   const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({}) 
   const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({})
+  const [bonusNotes, setBonusNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
 
   // Month filter
@@ -5847,7 +5910,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
   const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
 
-  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0) => {
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0, bonusNote: string = "") => {
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
@@ -5876,7 +5939,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       }
 
       // 2. Mark payments row as Paid + store gross/tds/net for Paid section display
-      const paymentUpdateData = {
+      const paymentUpdateData: any = {
         Payment_Status: 'Paid',
         gross: Math.round(gross || 0),
         tds_percent: tds,
@@ -5884,6 +5947,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus: bonus > 0 ? bonus : 0,
         paid_date: formatDate()
       }
+      if (bonusNote) paymentUpdateData.bonus_note = bonusNote;
       console.log('[Mark Paid] Updating payments row for Employee ID:', eid, paymentUpdateData)
       const { error: payErr } = await apiClient.from('payments')
         .update(paymentUpdateData)
@@ -5959,8 +6023,23 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         const next = { ...prev };
         let changed = false;
         payments.forEach(p => {
-          if (p['Employee ID'] && !next[p['Employee ID']]) {
-             next[p['Employee ID']] = (p.bonus || 0).toString();
+          const empId = p['Employee ID'];
+          if (empId && !next[empId] && next[empId] !== '') {
+             const isPaid = p.Payment_Status?.toLowerCase() === 'paid';
+             next[empId] = isPaid ? '' : (p.bonus || 0).toString(); // Blank if latest was Paid
+             changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+      setBonusNotes(prev => {
+        const next = { ...prev };
+        let changed = false;
+        payments.forEach(p => {
+          const empId = p['Employee ID'];
+          if (empId && typeof next[empId] === 'undefined') {
+             const isPaid = p.Payment_Status?.toLowerCase() === 'paid';
+             next[empId] = isPaid ? '' : (p.bonus_note || '');
              changed = true;
           }
         });
@@ -5969,7 +6048,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   }, [payments]);
 
-  const handleSavePayout = async (eid: string, animatorName: string, gross: number, tdsPct: number, bonus: number, net: number) => {
+  const handleSavePayout = async (eid: string, animatorName: string, gross: number, tdsPct: number, bonus: number, net: number, bonusNote: string) => {
     setSavingId(eid);
     try {
       const paymentUpdateData = {
@@ -5978,6 +6057,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         tds_percent: tdsPct,
         net_paid: Math.round(net),
         bonus: bonus,
+        bonus_note: bonusNote,
       };
 
       // Step 1: Check if a payment row already exists for this employee
@@ -6314,23 +6394,34 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <span className="text-xs text-gray-400">₹</span>
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder="0"
-                            value={bonusAmounts[r.animator.Employee_ID] ?? ''}
-                            onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
-                            className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
-                          />
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={bonusAmounts[r.animator.Employee_ID] ?? ''}
+                              onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                              className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
+                            />
+                          </div>
+                          {(bonusAmounts[r.animator.Employee_ID] && Number(bonusAmounts[r.animator.Employee_ID]) > 0) && (
+                            <input
+                              type="text"
+                              placeholder="Reason for Bonus..."
+                              value={bonusNotes[r.animator.Employee_ID] || ''}
+                              onChange={e => setBonusNotes(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                              className="w-[100px] px-2 py-1 border border-amber-200 rounded text-[10px] focus:outline-none focus:border-amber-400 transition-colors bg-white mt-0.5"
+                            />
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col gap-2 items-center">
                           <button
-                            onClick={() => handleSavePayout(r.animator.Employee_ID, r.animator.Name, r.gross, r.tdsPct, r.bonusAmt, r.net)}
+                            onClick={() => handleSavePayout(r.animator.Employee_ID, r.animator.Name, r.gross, r.tdsPct, r.bonusAmt, r.net, bonusNotes[r.animator.Employee_ID] || '')}
                             disabled={savingId === r.animator.Employee_ID}
                             className="w-full px-2 py-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded transition-all disabled:opacity-50">
                             {savingId === r.animator.Employee_ID ? 'Saving...' : '💾 Save details'}
@@ -6342,7 +6433,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                             </span>
                           ) : (
                             <button
-                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct, r.gross)}
+                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct, r.gross, bonusNotes[r.animator.Employee_ID] || '')}
                               disabled={payingId === r.animator.Employee_ID}
                               className="w-full px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
                               style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
