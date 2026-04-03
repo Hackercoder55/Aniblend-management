@@ -1881,8 +1881,25 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
   const [newRating, setNewRating] = useState(0)
   const [savingNote, setSavingNote] = useState(false)
   const [noteMsg, setNoteMsg] = useState('')
-  const [activeSection, setActiveSection] = useState<'projects' | 'notes'>('projects')
+  const [activeSection, setActiveSection] = useState<'projects' | 'notes' | 'earnings'>('projects')
   const [unassigningId, setUnassigningId] = useState<string | null>(null)
+
+  const [invoices, setInvoices] = useState<any[]>([])
+  const [loadingInvoices, setLoadingInvoices] = useState(false)
+
+  useEffect(() => {
+    if (activeSection === 'earnings' && invoices.length === 0) {
+      setLoadingInvoices(true)
+      apiClient.from('invoices')
+        .select('month_label, invoice_date, total_amount, tds_amount, bonus_amount, net_payable, status')
+        .eq('employee_id', animator.Employee_ID)
+        .order('id', { ascending: false })
+        .then((res: any) => {
+          setInvoices((res.data as any[]) || [])
+          setLoadingInvoices(false)
+        })
+    }
+  }, [activeSection, animator.Employee_ID, invoices.length])
 
   // Match by Employee_ID (solo) OR Animator name containing this animator (group workspace)
   const matchesAnim = (p: Project) =>
@@ -2058,7 +2075,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
 
         {/* Tabs */}
         <div className="px-5 pt-4 flex gap-1 flex-shrink-0 border-b border-gray-100">
-          {([{ id: 'projects', label: `Projects (${allProjects.length})` }, { id: 'notes', label: `Notes & Ratings (${noteEntries.length})` }] as const).map(t => (
+          {([{ id: 'projects', label: `Projects (${allProjects.length})` }, { id: 'notes', label: `Notes & Ratings (${noteEntries.length})` }, { id: 'earnings', label: 'Earnings History' }] as const).map(t => (
             <button key={t.id} onClick={() => setActiveSection(t.id)}
               className="px-4 py-2 text-sm font-medium rounded-t-lg transition-all -mb-px border-b-2"
               style={{ borderBottomColor: activeSection === t.id ? '#667eea' : 'transparent', color: activeSection === t.id ? '#667eea' : '#94a3b8', backgroundColor: activeSection === t.id ? '#f8f7ff' : 'transparent' }}>
@@ -2184,6 +2201,54 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
                 }
               </div>
             </>
+          )}
+
+          {activeSection === 'earnings' && (
+            <div className="space-y-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Month-wise Earnings</p>
+              {loadingInvoices ? (
+                <div className="flex justify-center py-10">
+                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              ) : invoices.length === 0 ? (
+                <div className="bg-gray-50 rounded-xl p-6 text-center text-sm text-gray-400 border border-gray-100">
+                  No payout/invoice records found for {animator.Name}.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {invoices.map((inv, idx) => (
+                    <div key={idx} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex flex-col gap-2">
+                      <div className="flex items-center justify-between border-b border-gray-50 pb-2">
+                        <span className="font-bold text-gray-800 text-sm">
+                          📅 {inv.month_label || 'Unknown Month'}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${inv.status === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {inv.status}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-1">
+                        <div>
+                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Gross</p>
+                          <p className="text-xs font-mono text-gray-700">₹{(inv.total_amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Bonus</p>
+                          <p className="text-xs font-mono text-green-600">₹{(inv.bonus_amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-gray-400 uppercase font-semibold">TDS (-)</p>
+                          <p className="text-xs font-mono text-red-500">₹{(inv.tds_amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Net Earned</p>
+                          <p className="text-sm font-bold text-indigo-600">₹{(inv.net_payable || 0).toLocaleString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -4384,19 +4449,8 @@ function NotesTab({ user }: { user: DashboardUser }) {
 // ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
 
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
-  // Month filter options (last 13 months)
-  const monthOptions = (() => {
-    const opts: string[] = []
-    const now = new Date()
-    for (let i = 0; i < 13; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
-    }
-    return opts
-  })()
-
-  // We keep a separate month filter state for each column that might need it.
-  const [columnMonths, setColumnMonths] = useState<Record<string, string>>({})
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [channelFilter, setChannelFilter] = useState('all')
   const [projSearch, setProjSearch] = useState('')
   const [markingId, setMarkingId] = useState<string | null>(null)
@@ -4415,8 +4469,33 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     return Array.from(seen.values())
   }
 
-  const inMonth = (dateStr: string, month: string) =>
-    !!dateStr && !!month && dateStr.includes(month)
+  const isBetweenDates = (dateStr: string, fromStr: string, toStr: string) => {
+    if (!fromStr && !toStr) return true
+    if (!dateStr) return false
+    const d = parseDate(dateStr)
+    if (d.getTime() === 0) return false
+    if (fromStr) {
+      const [fy, fm, fd] = fromStr.split('-').map(Number)
+      const from = new Date(fy, fm - 1, fd, 0, 0, 0, 0)
+      if (d < from) return false
+    }
+    if (toStr) {
+      const [ty, tm, td] = toStr.split('-').map(Number)
+      const to = new Date(ty, tm - 1, td, 23, 59, 59, 999)
+      if (d > to) return false
+    }
+    return true
+  }
+
+  const getDateForStage = (p: Project, stage: string) => {
+    if (stage === 'Approved') return p['Date Approved']
+    if (stage === 'Paid') return p.client_paid_date
+    if (stage === 'Render QA') return p.render_qa_date || p.viewport_date || p['Date Assigned']
+    if (stage === 'Ready to Render') return p.ready_to_render_date || p.viewport_date || p['Date Assigned']
+    if (stage === 'Changes Requested') return p.animation_revision_date || p.viewport_date || p['Date Assigned']
+    if (stage === 'Review') return p.viewport_date || p['Date Assigned']
+    return p['Date Assigned']
+  }
 
   const getChannel = (id: string) => (id || '').split('_')[2]?.toLowerCase() || ''
   const byChannel = (list: Project[]) =>
@@ -4433,12 +4512,12 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
   const TRACKER_STAGES = [
     'Pending', 'Active', 'Review', 'Changes Requested',
-    'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed'
+    'Ready to Render', 'Render QA', 'STL', 'Approved', 'Paid', 'Closed'
   ]
 
   const statusColor: Record<string, string> = {
     Pending: '#94a3b8', Active: '#3b82f6', Review: '#f59e0b',
-    'Changes Requested': '#ef4444', 'Ready to Render': '#8b5cf6',
+    'Changes Requested': '#ef4444', 'Ready to Render': '#8b5cf6', 'STL': '#f43f5e',
     'Render QA': '#ec4899', Approved: '#10b981', Paid: '#059669', Closed: '#64748b'
   }
 
@@ -4467,15 +4546,18 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     const durStr = formatSec(parseDurationSec(project.Duration, project.Project_ID))
     return (
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex-1 min-w-0">
+        <div className="flex flex-col gap-1.5 mb-3">
+          <div className="flex items-start justify-between gap-2">
             <p className="text-xs font-mono text-gray-400 truncate">{project.Project_ID}</p>
-            <p className="text-sm font-semibold text-gray-800 mt-0.5 truncate">{project.Project_title || '—'}</p>
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 text-white"
+              style={{ backgroundColor: statusColor[project.Status] || '#94a3b8' }}>
+              {STATUS_LABELS[project.Status] || project.Status}
+            </span>
           </div>
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 text-white"
-            style={{ backgroundColor: statusColor[project.Status] || '#94a3b8' }}>
-            {STATUS_LABELS[project.Status] || project.Status}
-          </span>
+          <a href={project.Project_link || '#'} target="_blank" rel="noopener noreferrer" 
+             className="text-sm font-semibold text-gray-800 hover:text-indigo-600 hover:underline transition-colors break-words">
+            {project.Project_title || 'No Title'}
+          </a>
         </div>
         <div className="space-y-1 text-xs text-gray-500">
           <p>🎬 {project.Animator || '—'}</p>
@@ -4503,19 +4585,25 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
   // Helper to generate the data for the requested report
   const generateReportData = (stage: string) => {
-    const projs = byChannel(dedup(projects.filter(p => p.Status === stage && matchProj(p))))
-    // Month filter check
-    const m = columnMonths[stage]
-    const filteredByMonth = m ? projs.filter(p => {
-      if (stage === 'Approved') return inMonth(p['Date Approved'], m)
-      if (stage === 'Paid') return inMonth(p.client_paid_date, m)
-      if (stage === 'Render QA') return inMonth(p.render_qa_date || p.viewport_date || p['Date Assigned'], m)
-      if (stage === 'Ready to Render') return inMonth(p.ready_to_render_date || p.viewport_date || p['Date Assigned'], m)
-      if (stage === 'Changes Requested') return inMonth(p.animation_revision_date || p.viewport_date || p['Date Assigned'], m)
-      if (stage === 'Review') return inMonth(p.viewport_date || p['Date Assigned'], m)
-      return inMonth(p['Date Assigned'], m)
-    }) : projs
-    return filteredByMonth
+    let projs = byChannel(dedup(projects.filter(p => {
+       const secs = parseDurationSec(p.Duration, p.Project_ID)
+       if (stage === 'STL') {
+         return secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
+       } else {
+         const isSTL = secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
+         if (isSTL) return false
+         return p.Status === stage && matchProj(p)
+       }
+    })))
+    
+    if (dateFrom || dateTo) {
+      projs = projs.filter(p => {
+         const stg = stage === 'STL' ? p.Status : stage
+         const dStr = getDateForStage(p, stg)
+         return isBetweenDates(dStr, dateFrom, dateTo)
+      })
+    }
+    return projs
   }
 
   return (
@@ -4580,15 +4668,30 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
       )}
 
       {/* Channel & Search filter bar */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col md:flex-row gap-5 items-center justify-between mb-6">
-        <div className="flex-1 w-full relative max-w-lg">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input type="text" placeholder="Search progress tracker by project ID or title..." value={projSearch} onChange={e => setProjSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-gray-800 transition-all" />
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col items-stretch gap-4 mb-6">
+        <div className="flex flex-col md:flex-row gap-5 items-center justify-between">
+          <div className="flex-1 w-full relative max-w-lg">
+            <svg stroke="currentColor" fill="none" viewBox="0 0 24 24" className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400">
+              <path strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input type="text" placeholder="Search progress tracker by project ID or title..." value={projSearch} onChange={e => setProjSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-gray-800 transition-all" />
+          </div>
+          <div className="flex items-center gap-3 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
+            <div className="flex items-center gap-2 px-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase">From:</span>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="text-xs px-2 py-1.5 rounded-lg border-gray-200 border focus:outline-none focus:border-indigo-400 bg-white" />
+            </div>
+            <div className="flex items-center gap-2 px-2 border-l border-gray-200">
+              <span className="text-xs font-semibold text-gray-500 uppercase">To:</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="text-xs px-2 py-1.5 rounded-lg border-gray-200 border focus:outline-none focus:border-indigo-400 bg-white" />
+            </div>
+            {(dateFrom || dateTo) && (
+              <button onClick={() => { setDateFrom(''); setDateTo('') }} className="px-3 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 font-bold rounded-lg transition-colors">Clear</button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap border-t border-gray-100 pt-3">
           <span className="text-xs font-semibold text-gray-500 mr-2 uppercase tracking-wide">Channel:</span>
           {['all', ...availableChannels].map(ch => (
             <button key={ch} onClick={() => setChannelFilter(ch)}
@@ -4608,19 +4711,22 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
       <div className="flex gap-4 overflow-x-auto pb-4 items-start w-full">
         {TRACKER_STAGES.map(stage => {
           // Filter projects for this column
-          let stageProjects = byChannel(dedup(projects.filter(p => p.Status === stage && matchProj(p))))
+          let stageProjects = byChannel(dedup(projects.filter(p => {
+             const secs = parseDurationSec(p.Duration, p.Project_ID)
+             if (stage === 'STL') {
+               return secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
+             } else {
+               const isSTL = secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
+               if (isSTL) return false // hide from standard viewport/render stages
+               return p.Status === stage && matchProj(p)
+             }
+          })))
 
-          const monthFilterValue = columnMonths[stage] || ''
-
-          if (monthFilterValue) {
+          if (dateFrom || dateTo) {
             stageProjects = stageProjects.filter(p => {
-              if (stage === 'Approved') return inMonth(p['Date Approved'], monthFilterValue)
-              if (stage === 'Paid') return inMonth(p.client_paid_date, monthFilterValue)
-              if (stage === 'Render QA') return inMonth(p.render_qa_date || p.viewport_date || p['Date Assigned'], monthFilterValue)
-              if (stage === 'Ready to Render') return inMonth(p.ready_to_render_date || p.viewport_date || p['Date Assigned'], monthFilterValue)
-              if (stage === 'Changes Requested') return inMonth(p.animation_revision_date || p.viewport_date || p['Date Assigned'], monthFilterValue)
-              if (stage === 'Review') return inMonth(p.viewport_date || p['Date Assigned'], monthFilterValue)
-              return inMonth(p['Date Assigned'], monthFilterValue)
+               const stg = stage === 'STL' ? p.Status : stage
+               const dStr = getDateForStage(p, stg)
+               return isBetweenDates(dStr, dateFrom, dateTo)
             })
           }
 
@@ -4630,7 +4736,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
           return (
             <div key={stage} className="flex flex-col gap-3 min-w-[320px] max-w-[320px] flex-shrink-0 bg-gray-50/50 rounded-2xl p-3 border border-gray-100">
-              <div className="flex items-center justify-between px-1 flex-wrap gap-2">
+              <div className="flex items-center justify-between px-1 flex-wrap gap-2 pb-2 border-b border-gray-200/60">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-gray-800 truncate" title={cLabel}>{cLabel}</span>
                   <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: cColor }}>
@@ -4643,14 +4749,6 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
                   style={{ backgroundColor: cColor }}>
                   Report
                 </button>
-              </div>
-
-              <div className="px-1">
-                <select value={monthFilterValue} onChange={e => setColumnMonths(prev => ({ ...prev, [stage]: e.target.value }))}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 focus:outline-none bg-white">
-                  <option value="">All Time</option>
-                  {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
               </div>
 
               <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
@@ -5880,7 +5978,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
   // 2. Aggregate approved seconds per animator (Only Approved status — Closed=already paid, skip deferred)
   const approvedSecondsByEmpId: Record<string, number> = {}
-  projects.filter(p => p.Status === 'Approved' && !deferredProjects.has(p.Project_ID)).forEach(p => {
+  projects.filter(p => 
+    p.Status === 'Approved' && 
+    !deferredProjects.has(p.Project_ID) &&
+    (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth))
+  ).forEach(p => {
     // Collect all unique Employee IDs for this project (both primary and shared group animators)
     const empIds = new Set<string>()
     if (p.Employee_ID) empIds.add(p.Employee_ID)
@@ -5939,7 +6041,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     // Only handle auto-detected projects (manual ones are already handled above)
     const isManual = (manualProjects[eid] || []).some(p => p.Project_ID === projectId)
     if (isManual) return
-    const proj = projects.find(p => p.Project_ID === projectId && p.Status === 'Approved' && !deferredProjects.has(p.Project_ID))
+    const proj = projects.find(p => 
+      p.Project_ID === projectId && 
+      p.Status === 'Approved' && 
+      !deferredProjects.has(p.Project_ID) &&
+      (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth))
+    )
     if (!proj) return
 
     const newSec = parseFloat(newSecStr) || 0
@@ -6001,6 +6108,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const animatorProjects = [
         ...projects.filter(p =>
           p.Status === 'Approved' &&
+          (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth)) &&
           (p.Employee_ID === eid ||
             (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
