@@ -2766,6 +2766,20 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
   const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
 
+  const [earnedData, setEarnedData] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    let mounted = true
+    apiClient.from('invoices').select('employee_id, net_payable').eq('status', 'Paid')
+      .then((res: any) => {
+        if (!mounted || !res.data) return
+        const acc: Record<string, number> = {}
+        res.data.forEach((inv: any) => acc[inv.employee_id] = (acc[inv.employee_id] || 0) + (inv.net_payable || 0))
+        setEarnedData(acc)
+      })
+    return () => { mounted = false }
+  }, [])
+
   const getAvgDay = useCallback((a: Animator) => {
     const joinedMs = projects
       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && p['Date Assigned'])
@@ -2964,7 +2978,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Active Projects`, sortedProjects: projects.filter(isActive) })}
                   className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
@@ -3004,7 +3018,21 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                       <>
                         <p className="text-xl font-bold text-orange-600">{historicalApprovedSec > 0 ? formatSec(avg) : '0s'}</p>
                         <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
-                        <p className="text-[10px] font-semibold mt-1 text-orange-600">{daysSinceJoined} days since joined</p>
+                        <p className="text-[10px] font-semibold mt-1 text-orange-600">{daysSinceJoined} days</p>
+                      </>
+                    )
+                  })()}
+                </button>
+                <button
+                  onClick={() => setSelectedAnimator(a)}
+                  className="bg-indigo-50 rounded-xl p-2 text-center flex flex-col items-center justify-center hover:bg-indigo-100 transition-colors hover:shadow-inner">
+                  {(() => {
+                    const totalEarnedNet = earnedData[a.Employee_ID] || 0
+                    return (
+                      <>
+                        <p className="text-[13px] font-bold text-indigo-700">₹{totalEarnedNet.toLocaleString('en-IN')}</p>
+                        <p className="text-[9px] text-indigo-500 mt-1 uppercase tracking-wider font-semibold">Earned</p>
+                        <p className="text-[10px] font-semibold mt-1 text-indigo-600">Net Paid (w/ Bonus)</p>
                       </>
                     )
                   })()}
@@ -4544,8 +4572,23 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
   const ProjectCard = ({ project, showMarkPaid = false }: { project: Project; showMarkPaid?: boolean }) => {
     const durStr = formatSec(parseDurationSec(project.Duration, project.Project_ID))
+    
+    const statusDateStr = getDateForStage(project, project.Status)
+    const statusDate = statusDateStr ? parseDate(statusDateStr) : null
+    const daysInStage = statusDate && statusDate.getTime() > 0 
+      ? Math.floor((Date.now() - statusDate.getTime()) / (1000 * 60 * 60 * 24))
+      : 0
+    const isOverdue = daysInStage >= 7 && !['Approved', 'Paid', 'Closed'].includes(project.Status)
+
+    const cardBg = isOverdue ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'
+
     return (
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
+      <div className={`${cardBg} rounded-xl border shadow-sm p-4 hover:shadow-md transition-shadow relative`}>
+        {isOverdue && (
+           <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm animate-pulse z-10 border-2 border-white">
+             {daysInStage} DAYS STUCK
+           </div>
+        )}
         <div className="flex flex-col gap-1.5 mb-3">
           <div className="flex items-start justify-between gap-2">
             <p className="text-xs font-mono text-gray-400 truncate">{project.Project_ID}</p>
