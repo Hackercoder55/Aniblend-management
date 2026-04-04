@@ -3106,11 +3106,13 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
   const [errorMsg, setErrorMsg] = useState('')
   const [recentOpen, setRecentOpen] = useState(true)
 
-  // Only Pending projects, sorted by project sequence (latest = highest seq), top 3
-  const recentPending = [...projects]
-    .filter(p => p.Project_ID && p.Status === 'Pending')
-    .sort((a, b) => parseProjectSeq(b.Project_ID) - parseProjectSeq(a.Project_ID))
+  // Only Pending projects, newest first (Supabase insertion order preserved), top 3
+  const recentPending = projects
+    .map((p, index) => ({ p, index }))
+    .filter(({ p }) => p.Project_ID && p.Status === 'Pending')
+    .sort((a, b) => b.index - a.index)
     .slice(0, 3)
+    .map(obj => obj.p)
 
   const handleProjectIdChange = (val: string) => {
     const dur = extractDuration(val)
@@ -4648,9 +4650,9 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     let projs = byChannel(dedup(projects.filter(p => {
        const secs = parseDurationSec(p.Duration, p.Project_ID)
        if (stage === 'STL') {
-         return secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
+         return secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
        } else {
-         const isSTL = secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
+         const isSTL = secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
          if (isSTL) return false
          return p.Status === stage && matchProj(p)
        }
@@ -4811,9 +4813,9 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           let stageProjects = byChannel(dedup(projects.filter(p => {
              const secs = parseDurationSec(p.Duration, p.Project_ID)
              if (stage === 'STL') {
-               return secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
+               return secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
              } else {
-               const isSTL = secs >= 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
+               const isSTL = secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
                if (isSTL) return false // hide from standard viewport/render stages
                return p.Status === stage && matchProj(p)
              }
