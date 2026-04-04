@@ -111,6 +111,7 @@ interface Payment {
   tds_percent?: number    // stored on Mark Paid
   net_paid?: number       // stored on Mark Paid
   bonus?: number          // stored on Mark Paid
+  bonus_note?: string
 }
 
 interface Note {
