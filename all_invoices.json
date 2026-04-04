@@ -1,0 +1,106 @@
+[
+  {
+    "id": "ed46be63-7c08-4b95-b81b-d879934521ef",
+    "invoice_number": "100501",
+    "employee_id": "1005",
+    "legal_name": "Bidyut Das",
+    "month_label": "Mar 2026",
+    "invoice_date": "2026-03-06",
+    "artist_address": "Mirza, Kamrup Assam",
+    "artist_pan": "GLLPD5505B",
+    "line_items": [
+      {
+        "title": "Trent Stride - [Short] bomb in gymnasium",
+        "amount": 8250,
+        "seconds": 99,
+        "project_id": "2426_99_his"
+      }
+    ],
+    "total_amount": 8250,
+    "tds_percent": 10,
+    "tds_amount": 825,
+    "net_payable": 7425,
+    "status": "Acknowledged",
+    "sent_at": "2026-03-06T17:56:34.216544+00:00",
+    "acknowledged_at": "2026-03-06T17:59:21.241692+00:00",
+    "paid_at": null,
+    "downloaded_at": null,
+    "thread_id": "1476041059212595383",
+    "discord_msg_id": "1479538194436460665",
+    "review_msg_id": "1479538567867924560",
+    "edit_comment": null,
+    "edit_status": "Rejected",
+    "created_at": "2026-03-06T17:55:58.162715+00:00",
+    "updated_at": "2026-03-06T17:59:21.303192+00:00"
+  },
+  {
+    "id": "25441c83-da24-49b1-abbb-4a36d3ebb357",
+    "invoice_number": "100901",
+    "employee_id": "1009",
+    "legal_name": "HARIKRISHNAN S",
+    "month_label": "Mar 2026",
+    "invoice_date": "2026-03-07",
+    "artist_address": "Sreevalsam, Thinglamuttom, Angadical South P.O, Chengannur, Alappuzha, Kerala, 689122",
+    "artist_pan": "AQWPH4340L",
+    "line_items": [
+      {
+        "title": "Aironas Liucvaikis - [Short] Planted bomb strapped in a bank",
+        "amount": 11500,
+        "seconds": 138,
+        "project_id": "1526_138_plip"
+      }
+    ],
+    "total_amount": 11500,
+    "tds_percent": 10,
+    "tds_amount": 1150,
+    "net_payable": 10350,
+    "status": "Downloaded",
+    "sent_at": "2026-03-07T09:10:34.5302+00:00",
+    "acknowledged_at": "2026-03-07T10:44:41.358608+00:00",
+    "paid_at": null,
+    "downloaded_at": "2026-03-07T12:54:35.289+00:00",
+    "thread_id": "1473199302225694903",
+    "discord_msg_id": "1479768211225579633",
+    "review_msg_id": null,
+    "edit_comment": null,
+    "edit_status": null,
+    "created_at": "2026-03-07T09:05:51.795428+00:00",
+    "updated_at": "2026-03-07T12:54:36.797564+00:00"
+  },
+  {
+    "id": "cdaf6a01-e08a-4a00-b511-e79235be1cfe",
+    "invoice_number": "105801",
+    "employee_id": "1058",
+    "legal_name": "Anshuman Kashyap Bora",
+    "month_label": "Mar 2026",
+    "invoice_date": "2026-03-13",
+    "artist_address": "House no f9, byelane 9, juripar, panjabari, guwahati, assam 781037",
+    "artist_pan": "BORPB1540N",
+    "line_items": [
+      {
+        "title": "Trent Stride - [Short] Apartment killed in self defense",
+        "amount": 4750,
+        "seconds": 57,
+        "project_id": "2424_57_his",
+        "approved_date": "13 Mar 2026",
+        "assigned_date": "24 Feb 2026"
+      }
+    ],
+    "total_amount": 4750,
+    "tds_percent": 10,
+    "tds_amount": 475,
+    "net_payable": 4275,
+    "status": "Paid",
+    "sent_at": "2026-03-13T17:40:23.346941+00:00",
+    "acknowledged_at": "2026-03-13T18:32:55.466923+00:00",
+    "paid_at": null,
+    "downloaded_at": null,
+    "thread_id": "1475805384542257215",
+    "discord_msg_id": "1482070837224800318",
+    "review_msg_id": null,
+    "edit_comment": null,
+    "edit_status": null,
+    "created_at": "2026-03-13T17:29:24.908646+00:00",
+    "updated_at": "2026-03-13T22:22:28.479307+00:00"
+  }
+]

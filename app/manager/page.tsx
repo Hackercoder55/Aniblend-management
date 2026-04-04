@@ -4486,7 +4486,7 @@ function NotesTab({ user }: { user: DashboardUser }) {
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [dateFieldFilters, setDateFieldFilters] = useState<string[]>([])
+  const [dateFieldFilters, setDateFieldFilters] = useState<string[]>(['Date Assigned'])
   const [showDateFieldDropdown, setShowDateFieldDropdown] = useState(false)
   const DATE_FIELD_OPTIONS = [
     { label: 'Date Assigned', key: 'Date Assigned' },
@@ -4657,9 +4657,8 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     
     if (dateFrom || dateTo) {
       projs = projs.filter(p => {
-         const stg = stage === 'STL' ? p.Status : stage
-         const dStr = getDateForStage(p, stg)
-         return isBetweenDates(dStr, dateFrom, dateTo)
+         const checkFields = dateFieldFilters.length > 0 ? dateFieldFilters : ['Date Assigned'];
+         return checkFields.some(key => isBetweenDates((p as any)[key], dateFrom, dateTo))
       })
     }
     return projs
@@ -4752,7 +4751,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
                 className="text-xs px-3 py-1.5 rounded-lg border-gray-200 border bg-white flex items-center justify-between min-w-[120px] shadow-sm hover:border-indigo-300 transition-colors"
               >
                 <span className="truncate font-medium text-gray-700">
-                  {dateFieldFilters.length === 0 ? 'Default (Stage)' : `${dateFieldFilters.length} selected`}
+                  {dateFieldFilters.length === 0 ? 'Assigned' : `${dateFieldFilters.length} selected`}
                 </span>
                 <span className="text-[10px] ml-2 text-gray-400 font-bold">▼</span>
               </button>
@@ -4821,13 +4820,8 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
           if (dateFrom || dateTo) {
             stageProjects = stageProjects.filter(p => {
-               if (dateFieldFilters.length === 0) {
-                 const stg = stage === 'STL' ? p.Status : stage
-                 const dStr = getDateForStage(p, stg)
-                 return isBetweenDates(dStr, dateFrom, dateTo)
-               } else {
-                 return dateFieldFilters.some(key => isBetweenDates((p as any)[key], dateFrom, dateTo))
-               }
+               const checkFields = dateFieldFilters.length > 0 ? dateFieldFilters : ['Date Assigned'];
+               return checkFields.some(key => isBetweenDates((p as any)[key], dateFrom, dateTo))
             })
           }
 

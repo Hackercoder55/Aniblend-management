@@ -1,0 +1,1 @@
+id, invoice_number, employee_id, legal_name, month_label, invoice_date, artist_address, artist_pan, line_items, total_amount, tds_percent, tds_amount, net_payable, status, sent_at, acknowledged_at, paid_at, downloaded_at, thread_id, discord_msg_id, review_msg_id, edit_comment, edit_status, created_at, updated_at

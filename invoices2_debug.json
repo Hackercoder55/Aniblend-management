@@ -1,0 +1,38 @@
+[
+  {
+    "id": "fc716dc2-af68-41b2-9c94-24706d263b53",
+    "invoice_number": "111601",
+    "employee_id": "1116",
+    "legal_name": "Nitin Khatri",
+    "month_label": "Mar 2026",
+    "invoice_date": "2026-03-28",
+    "artist_address": "Naya Bans Village, Sector 15, Noida \n201301",
+    "artist_pan": "CXHPN2776A",
+    "line_items": [
+      {
+        "title": "Maebh - [Short] [1min animation male] I pulled into the last free disabled parking spot, and a man started stomping towards me.",
+        "amount": 4750,
+        "seconds": 57,
+        "project_id": "2725_57_his",
+        "approved_date": "26 Mar 2026",
+        "assigned_date": "28 Feb 2026"
+      }
+    ],
+    "total_amount": 4750,
+    "tds_percent": 10,
+    "tds_amount": 475,
+    "net_payable": 4275,
+    "status": "Downloaded",
+    "sent_at": "2026-03-28T17:46:16.779459+00:00",
+    "acknowledged_at": "2026-03-28T17:49:07.042314+00:00",
+    "paid_at": null,
+    "downloaded_at": "2026-03-28T19:23:56.061+00:00",
+    "thread_id": "1477333808100413441",
+    "discord_msg_id": "1487508137299804200",
+    "review_msg_id": null,
+    "edit_comment": null,
+    "edit_status": null,
+    "created_at": "2026-03-28T17:43:13.392236+00:00",
+    "updated_at": "2026-03-28T19:23:56.384108+00:00"
+  }
+]
