@@ -3091,12 +3091,26 @@ function TeamTab({ animators, projects, user, onRefresh }: {
  */
 function parseProjectSeq(projectId: string): number {
   const prefix = projectId.split('_')[0] || ''
-  if (prefix.length < 3) return 0
-  const day = parseInt(prefix.slice(0, 2), 10)    // first 2 chars
-  const month = parseInt(prefix.slice(2, 3), 10)  // 3rd char
-  const seq = parseInt(prefix.slice(3) || '0', 10) // rest
-  if (isNaN(day) || isNaN(month) || isNaN(seq)) return 0
-  return month * 10000 + day * 100 + seq
+  if (!/^\d+$/.test(prefix)) return 0
+  
+  const firstTwo = parseInt(prefix.slice(0, 2), 10);
+  let day, month, seq;
+  
+  if (firstTwo > 31) {
+    day = parseInt(prefix.slice(0, 1), 10);       // e.g. "4" from "441"
+    month = parseInt(prefix.slice(1, 2), 10);     // e.g. "4" from "441"
+    seq = parseInt(prefix.slice(2) || '0', 10);   // e.g. "1" from "441"
+  } else {
+    day = firstTwo;                               // e.g. "24" from "24322"
+    month = parseInt(prefix.slice(2, 3) || '0', 10);
+    seq = parseInt(prefix.slice(3) || '0', 10);
+  }
+  
+  if (isNaN(day)) day = 0;
+  if (isNaN(month)) month = 0;
+  if (isNaN(seq)) seq = 0;
+
+  return month * 100000 + day * 1000 + seq;
 }
 
 function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void; projects: Project[] }) {
@@ -3106,13 +3120,11 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
   const [errorMsg, setErrorMsg] = useState('')
   const [recentOpen, setRecentOpen] = useState(true)
 
-  // Only Pending projects, newest first (Supabase insertion order preserved), top 3
-  const recentPending = projects
-    .map((p, index) => ({ p, index }))
-    .filter(({ p }) => p.Project_ID && p.Status === 'Pending')
-    .sort((a, b) => b.index - a.index)
+  // Only Pending projects, sorted by true chronological mathematical sequence (latest = highest seq), top 3
+  const recentPending = [...projects]
+    .filter(p => p.Project_ID && p.Status === 'Pending')
+    .sort((a, b) => parseProjectSeq(b.Project_ID) - parseProjectSeq(a.Project_ID))
     .slice(0, 3)
-    .map(obj => obj.p)
 
   const handleProjectIdChange = (val: string) => {
     const dur = extractDuration(val)
