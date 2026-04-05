@@ -6059,45 +6059,29 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const handleSavePayout = async (eid: string, animatorName: string, gross: number, tdsPct: number, bonus: number, net: number, bonusNote: string) => {
     setSavingId(eid);
     try {
-      const paymentUpdateData = {
+      const now = new Date().toISOString();
+      const animator = animators.find(a => a.Employee_ID === eid);
+
+      // Upsert — insert if not exists, update if exists (by Employee ID)
+      // Always stamp Timestamp so latest save sorts first on reload
+      const { error: upsertErr } = await apiClient.from('payments').upsert({
+        'Employee ID': eid,
+        Name: animatorName,
+        Discord_ID: animator?.Discord_ID || null,
+        Discord_Username: animator?.Discord_Username || null,
         Payment_Status: 'Pending',
         gross: Math.round(gross),
         tds_percent: tdsPct,
         net_paid: Math.round(net),
         bonus: bonus,
         bonus_note: bonusNote,
-      };
+        Timestamp: now,
+      }, { onConflict: 'Employee ID' });
 
-      // Step 1: Check if a payment row already exists for this employee
-      const { data: existingRows } = await apiClient.from('payments')
-        .select('id')
-        .eq('Employee ID', eid);
-
-      if (existingRows && existingRows.length > 0) {
-        // Row exists — update it
-        const { error: updateErr } = await apiClient.from('payments')
-          .update(paymentUpdateData)
-          .eq('Employee ID', eid);
-        if (updateErr) {
-          addToast(`Could not update payment row for ${animatorName}.`, 'error');
-        } else {
-          addToast(`✅ Saved payout details for ${animatorName}`);
-        }
+      if (upsertErr) {
+        addToast(`❌ Could not save payout for ${animatorName}: ${upsertErr.message}`, 'error');
       } else {
-        // No row — insert a new one
-        const animator = animators.find(a => a.Employee_ID === eid);
-        const { error: insertErr } = await apiClient.from('payments').insert({
-          'Employee ID': eid,
-          Name: animatorName,
-          Discord_ID: animator?.Discord_ID || null,
-          Discord_Username: animator?.Discord_Username || null,
-          ...paymentUpdateData,
-        });
-        if (insertErr) {
-          addToast(`Could not create payment row for ${animatorName}.`, 'error');
-        } else {
-          addToast(`✅ Saved payout details for ${animatorName}`);
-        }
+        addToast(`✅ Saved payout details for ${animatorName}`);
       }
     } catch (e: any) {
       addToast(`❌ Save failed: ${e.message}`, 'error');
