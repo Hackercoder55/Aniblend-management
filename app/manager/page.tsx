@@ -5153,7 +5153,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
           total_amount: Number(grossTotal || 0),
-          bonus_amount: Number(bonusAmount || 0),
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
           net_payable: Number(finalNet || 0),
