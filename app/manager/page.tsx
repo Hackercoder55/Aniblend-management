@@ -5951,7 +5951,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const totalPaid = Math.round(net) // net already includes bonus - TDS
 
       // 2. Mark payments row as Paid + store gross/tds/net, then reset bonus for next cycle
-      const { error: payErr } = await apiClient.from('payments').upsert({
+      const payPayload = {
         'Employee ID': eid,
         Payment_Status: 'Paid',
         gross: Math.round(gross || 0),
@@ -5961,7 +5961,17 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus_note: bonusNote || null,
         paid_date: formatDate(),
         Timestamp: new Date().toISOString(),
-      }, { onConflict: 'Employee ID' })
+      };
+      const latestPay = latestPaymentByEmpId[eid];
+      let payErr;
+      if (latestPay && latestPay.Payment_Status !== 'Paid') {
+        const { error } = await apiClient.from('payments').update(payPayload).match({ id: latestPay.id });
+        payErr = error;
+      } else {
+        const { error } = await apiClient.from('payments').insert(payPayload);
+        payErr = error;
+      }
+
       if (payErr) {
         console.error('[Mark Paid] payments update failed:', payErr)
         throw new Error('Payments DB update failed: ' + (payErr.message || JSON.stringify(payErr)))
@@ -6080,9 +6090,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const now = new Date().toISOString();
       const animator = animators.find(a => a.Employee_ID === eid);
 
-      // Upsert — insert if not exists, update if exists (by Employee ID)
-      // Always stamp Timestamp so latest save sorts first on reload
-      const { error: upsertErr } = await apiClient.from('payments').upsert({
+      const payload = {
         'Employee ID': eid,
         Name: animatorName,
         Discord_ID: animator?.Discord_ID || null,
@@ -6094,7 +6102,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus: bonus,
         bonus_note: bonusNote,
         Timestamp: now,
-      }, { onConflict: 'Employee ID' });
+      };
+
+      const latestPay = latestPaymentByEmpId[eid];
+      let upsertErr;
+
+      if (latestPay && latestPay.Payment_Status !== 'Paid') {
+        const { error } = await apiClient.from('payments').update(payload).match({ id: latestPay.id });
+        upsertErr = error;
+      } else {
+        const { error } = await apiClient.from('payments').insert(payload);
+        upsertErr = error;
+      }
 
       if (upsertErr) {
         addToast(`❌ Could not save payout for ${animatorName}: ${upsertErr.message}`, 'error');
