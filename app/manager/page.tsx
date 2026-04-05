@@ -4917,12 +4917,13 @@ const apiClient = {
     let _inMatch: any = null;
     let _order: any = null;
     let _single = false;
+    let _options: any = null;
 
     const builder: any = {
       select(params?: string) { _action = 'select'; _payload = params; return builder; },
       insert(payload: any) { _action = 'insert'; _payload = payload; return builder; },
       update(payload: any) { _action = 'update'; _payload = payload; return builder; },
-      upsert(payload: any) { _action = 'upsert'; _payload = payload; return builder; },
+      upsert(payload: any, options?: any) { _action = 'upsert'; _payload = payload; _options = options; return builder; },
       delete() { _action = 'delete'; return builder; },
       eq(col: string, val: any) { _match = _match || {}; _match[col] = val; return builder; },
       match(obj: any) { _match = { ...(_match || {}), ...obj }; return builder; },
@@ -4935,7 +4936,7 @@ const apiClient = {
         fetch(`/api/${table}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, order: _order, single: _single })
+          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, order: _order, single: _single, options: _options })
         })
           .then(res => res.json().then(data => res.ok ? data : Promise.reject(data.error)))
           .then(data => resolve({ data: data.data, error: null }))
@@ -6417,15 +6418,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                               className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
                             />
                           </div>
-                          {(bonusAmounts[r.animator.Employee_ID] && Number(bonusAmounts[r.animator.Employee_ID]) > 0) && (
-                            <input
-                              type="text"
-                              placeholder="Reason for Bonus..."
-                              value={bonusNotes[r.animator.Employee_ID] || ''}
-                              onChange={e => setBonusNotes(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
-                              className="w-[100px] px-2 py-1 border border-amber-200 rounded text-[10px] focus:outline-none focus:border-amber-400 transition-colors bg-white mt-0.5"
-                            />
-                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center">

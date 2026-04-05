@@ -15,7 +15,7 @@ export async function POST(request: Request) {
         });
 
         const body = await request.json();
-        const { action, payload, match, inMatch, order, single, isMatch } = body;
+        const { action, payload, match, inMatch, order, single, isMatch, options } = body;
 
         let query: any = supabaseAdmin.from('invoices');
 
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
         } else if (action === 'delete') {
             query = query.delete();
         } else if (action === 'upsert') {
-            query = query.upsert(payload);
+            query = query.upsert(payload, options);
         }
 
         if (match) {

@@ -14,10 +14,10 @@ export async function POST(request: Request) {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    const body = await request.json();
-    const { action, payload, match, inMatch, order, single, isMatch } = body;
+        const body = await request.json();
+        const { action, payload, match, inMatch, order, single, isMatch, options } = body;
 
-    let query: any = supabaseAdmin.from('payments');
+        let query: any = supabaseAdmin.from('payments');
 
     if (action === 'select') {
       query = query.select(payload || '*');
@@ -25,6 +25,8 @@ export async function POST(request: Request) {
       query = query.insert(payload);
     } else if (action === 'update') {
       query = query.update(payload);
+    } else if (action === 'upsert') {
+      query = query.upsert(payload, options);
     } else if (action === 'delete') {
       query = query.delete();
     }
