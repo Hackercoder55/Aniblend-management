@@ -5108,11 +5108,22 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           }
         })
 
-        // Read TDS and Bonus directly from UI state — no DB round-trip needed
-        // Whatever the user has typed in the Payout Calculator is used directly
-        const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
-        const bonusAmount = parseFloat(bonusAmounts[eid] || '0') || 0
-        const bonusNote = bonusNotes[eid] || ''
+        // Fetch TDS and Bonus from payments DB (latest saved values for this animator)
+        let tdsPct = 0
+        let bonusAmount = 0
+        let bonusNote = ''
+        try {
+          const { data: payData } = await apiClient.from('payments')
+             .select('tds_percent, bonus, bonus_note')
+             .eq('Employee ID', eid)
+             .order('Timestamp', { ascending: false })
+             .limit(1)
+          if (payData && payData[0]) {
+            tdsPct = Number(payData[0].tds_percent) || 0
+            bonusAmount = Number(payData[0].bonus) || 0
+            bonusNote = payData[0].bonus_note || ''
+          }
+        } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
 
         const grossTotal = totalVal
         const newTotalVal = grossTotal + Number(bonusAmount || 0)
@@ -5211,9 +5222,20 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       }
     })
 
-    // Read TDS and Bonus directly from UI state (what user has entered in Payout Calculator)
-    const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
-    const bonusAmount = parseFloat(bonusAmounts[eid] || '0') || 0
+    // Fetch TDS and Bonus from payments DB (latest saved values)
+    let tdsPct = 0
+    let bonusAmount = 0
+    try {
+      const { data: payData } = await apiClient.from('payments')
+         .select('tds_percent, bonus')
+         .eq('Employee ID', eid)
+         .order('Timestamp', { ascending: false })
+         .limit(1)
+      if (payData && payData[0]) {
+        tdsPct = Number(payData[0].tds_percent) || 0
+        bonusAmount = Number(payData[0].bonus) || 0
+      }
+    } catch (e) { console.error("Could not fetch TDS/Bonus for preview", e) }
     const newTotalVal = totalVal + bonusAmount
     const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
     const netPay = Math.round(newTotalVal - tdsAmt)
