@@ -5116,7 +5116,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           const { data: payData } = await apiClient.from('payments')
              .select('tds_percent, bonus, bonus_note')
              .eq('Employee ID', eid)
-             .order('id', { ascending: false })
+             .order('Timestamp', { ascending: false })
           if (payData && payData[0]) {
             tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
             bonusAmount = payData[0].bonus || 0
@@ -5229,7 +5229,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const { data: payData } = await apiClient.from('payments')
          .select('tds_percent, bonus')
          .eq('Employee ID', eid)
-         .order('id', { ascending: false })
+         .order('Timestamp', { ascending: false })
       if (payData && payData[0]) {
         tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
         bonusAmount = payData[0].bonus || 0
