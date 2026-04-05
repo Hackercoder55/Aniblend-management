@@ -5108,21 +5108,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           }
         })
 
-        // Fetch stored TDS and Bonus
-        let tdsPct = 10
-        let bonusAmount = 0
-        let bonusNote = ''
-        try {
-          const { data: payData } = await apiClient.from('payments')
-             .select('tds_percent, bonus, bonus_note')
-             .eq('Employee ID', eid)
-             .order('Timestamp', { ascending: false })
-          if (payData && payData[0]) {
-            tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
-            bonusAmount = payData[0].bonus || 0
-            bonusNote = payData[0].bonus_note || ''
-          }
-        } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
+        // Read TDS and Bonus directly from UI state — no DB round-trip needed
+        // Whatever the user has typed in the Payout Calculator is used directly
+        const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
+        const bonusAmount = parseFloat(bonusAmounts[eid] || '0') || 0
+        const bonusNote = bonusNotes[eid] || ''
 
         const grossTotal = totalVal
         const newTotalVal = grossTotal + Number(bonusAmount || 0)
@@ -5221,20 +5211,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       }
     })
 
-    // Fetch stored TDS and Bonus
-    let tdsPct = 10
-    let bonusAmount = 0
-    try {
-      const { data: payData } = await apiClient.from('payments')
-         .select('tds_percent, bonus')
-         .eq('Employee ID', eid)
-         .order('Timestamp', { ascending: false })
-      if (payData && payData[0]) {
-        tdsPct = payData[0].tds_percent !== null ? payData[0].tds_percent : 10
-        bonusAmount = payData[0].bonus || 0
-      }
-    } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
-    const newTotalVal = totalVal + Number(bonusAmount || 0)
+    // Read TDS and Bonus directly from UI state (what user has entered in Payout Calculator)
+    const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
+    const bonusAmount = parseFloat(bonusAmounts[eid] || '0') || 0
+    const newTotalVal = totalVal + bonusAmount
     const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
     const netPay = Math.round(newTotalVal - tdsAmt)
     const now = new Date()
@@ -5946,27 +5926,40 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
 
-      // 2. Mark payments row as Paid + store gross/tds/net for Paid section display
-      const paymentUpdateData: any = {
+      const totalPaid = Math.round(net) // net already includes bonus - TDS
+
+      // 2. Mark payments row as Paid + store gross/tds/net, then reset bonus for next cycle
+      const { error: payErr } = await apiClient.from('payments').upsert({
+        'Employee ID': eid,
         Payment_Status: 'Paid',
         gross: Math.round(gross || 0),
         tds_percent: tds,
-        net_paid: Math.round(net),
+        net_paid: totalPaid,
         bonus: bonus > 0 ? bonus : 0,
-        paid_date: formatDate()
-      }
-      if (bonusNote) paymentUpdateData.bonus_note = bonusNote;
-      console.log('[Mark Paid] Updating payments row for Employee ID:', eid, paymentUpdateData)
-      const { error: payErr } = await apiClient.from('payments')
-        .update(paymentUpdateData)
-        .eq('Employee ID', eid)
+        bonus_note: bonusNote || null,
+        paid_date: formatDate(),
+        Timestamp: new Date().toISOString(),
+      }, { onConflict: 'Employee ID' })
       if (payErr) {
         console.error('[Mark Paid] payments update failed:', payErr)
         throw new Error('Payments DB update failed: ' + (payErr.message || JSON.stringify(payErr)))
       }
-      console.log('[Mark Paid] payments row updated successfully for', eid)
 
-      // 3. Mark the animator's open invoice as Paid
+      // 3. Increment total_earnings in animators table
+      try {
+        const { data: animData } = await apiClient.from('animators')
+          .select('total_earnings')
+          .eq('Employee_ID', eid)
+          .limit(1)
+        const existing = Number((animData && animData[0]?.total_earnings) || 0)
+        await apiClient.from('animators')
+          .update({ total_earnings: existing + totalPaid })
+          .eq('Employee_ID', eid)
+      } catch (earnErr) {
+        console.error('Failed to update total_earnings:', earnErr)
+      }
+
+      // 4. Mark the animator's open invoice as Paid
       try {
         await apiClient.from('invoices')
           .update({ status: 'Paid' })
@@ -5976,17 +5969,20 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         console.error('Failed to update invoice status:', invErr)
       }
 
-      // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
-      // This guarantees no double messages and relies on the python bot's permissions
+      // 5. Reset bonus in UI for next cycle
+      setBonusAmounts(prev => ({ ...prev, [eid]: '' }))
+      setBonusNotes(prev => ({ ...prev, [eid]: '' }))
 
+      // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
       setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' as const }))
-      setPaidNets(prev => ({ ...prev, [eid]: net + bonus }))
+      setPaidNets(prev => ({ ...prev, [eid]: totalPaid }))
       addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} (Bot will notify)`)
     } catch (err: any) {
       addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
     }
     setPayingId(null)
   }
+
 
   // Effect removed: Don't prepopulate paidStatus from DB based on ANY historical paid project.
   // This ensures an animator with a past paid project still shows up for NEW approved projects.
