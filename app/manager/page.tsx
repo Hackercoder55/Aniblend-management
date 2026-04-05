@@ -5112,17 +5112,15 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         // Fetch TDS and Bonus from payments DB (latest saved values for this animator)
         let tdsPct = 0
         let bonusAmount = 0
-        let bonusNote = ''
         try {
           const { data: payData } = await apiClient.from('payments')
-             .select('tds_percent, bonus, bonus_note')
+             .select('tds_percent, bonus')
              .eq('Employee ID', eid)
              .order('Timestamp', { ascending: false })
              .limit(1)
           if (payData && payData[0]) {
             tdsPct = Number(payData[0].tds_percent) || 0
             bonusAmount = Number(payData[0].bonus) || 0
-            bonusNote = payData[0].bonus_note || ''
           }
         } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
 
@@ -5958,7 +5956,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         tds_percent: tds,
         net_paid: totalPaid,
         bonus: bonus > 0 ? bonus : 0,
-        bonus_note: bonusNote || null,
         paid_date: formatDate(),
         Timestamp: new Date().toISOString(),
       };
@@ -6100,7 +6097,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         tds_percent: tdsPct,
         net_paid: Math.round(net),
         bonus: bonus,
-        bonus_note: bonusNote,
         Timestamp: now,
       };
 
