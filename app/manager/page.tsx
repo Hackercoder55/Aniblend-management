@@ -5958,11 +5958,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus: bonus > 0 ? bonus : 0,
         paid_date: formatDate(),
         Timestamp: new Date().toISOString(),
+        'Project ID': `Month: ${selectedMonth}`
       };
-      const latestPay = latestPaymentByEmpId[eid];
+      const monthPay = paymentForMonthByEmpId[eid];
       let payErr;
-      if (latestPay && latestPay.Payment_Status !== 'Paid') {
-        const { error } = await apiClient.from('payments').update(payPayload).match({ id: latestPay.id });
+      if (monthPay && monthPay.Payment_Status !== 'Paid') {
+        const { error } = await apiClient.from('payments').update(payPayload).match({ id: monthPay.id });
         payErr = error;
       } else {
         const { error } = await apiClient.from('payments').insert(payPayload);
@@ -5990,10 +5991,15 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       // 4. Mark the animator's open invoice as Paid
       try {
-        await apiClient.from('invoices')
+        let q = apiClient.from('invoices')
           .update({ status: 'Paid' })
           .eq('employee_id', eid)
-          .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details'])
+          .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details']);
+        
+        if (selectedMonth !== 'All') {
+          q = q.eq('month_label', selectedMonth);
+        }
+        await q;
       } catch (invErr) {
         console.error('Failed to update invoice status:', invErr)
       }
@@ -6030,56 +6036,73 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     })
   }, [])
 
-  // 1. Group latest payment details by Employee ID
+  // 1. Group payment details: globally for bank info, and specifically for the selected month
   const latestPaymentByEmpId: Record<string, Payment> = {}
+  const paymentForMonthByEmpId: Record<string, Payment> = {}
+
   payments.forEach(p => {
     if (p['Employee ID'] && !latestPaymentByEmpId[p['Employee ID']]) {
       latestPaymentByEmpId[p['Employee ID']] = p
     }
+    if (p['Employee ID'] && p['Project ID'] === `Month: ${selectedMonth}`) {
+      if (!paymentForMonthByEmpId[p['Employee ID']]) {
+         paymentForMonthByEmpId[p['Employee ID']] = p;
+      }
+    }
   })
 
-  // Initialize TDS/Bonus from latest payment IF not already touched in state
+  // Initialize TDS from global fallback, Bonus from month-specific payment
   useEffect(() => {
     if (payments.length > 0) {
       setTdsPercents(prev => {
         const next = { ...prev };
         let changed = false;
-        payments.forEach(p => {
-          if (p['Employee ID'] && !next[p['Employee ID']]) {
-             next[p['Employee ID']] = (p.tds_percent || 0).toString();
-             changed = true;
-          }
+        Object.keys(latestPaymentByEmpId).forEach(eid => {
+           const monthPay = paymentForMonthByEmpId[eid];
+           const globalPay = latestPaymentByEmpId[eid];
+           const val = monthPay?.tds_percent ?? globalPay?.tds_percent ?? 0;
+           if (next[eid] !== val.toString()) {
+              next[eid] = val.toString();
+              changed = true;
+           }
         });
         return changed ? next : prev;
       });
+
       setBonusAmounts(prev => {
         const next = { ...prev };
         let changed = false;
-        payments.forEach(p => {
-          const empId = p['Employee ID'];
-          if (empId && !next[empId] && next[empId] !== '') {
-             const isPaid = p.Payment_Status?.toLowerCase() === 'paid';
-             next[empId] = isPaid ? '' : (p.bonus || 0).toString(); // Blank if latest was Paid
-             changed = true;
-          }
+        animators.forEach(a => {
+           const eid = a.Employee_ID;
+           const monthPay = paymentForMonthByEmpId[eid];
+           const isPaid = monthPay?.Payment_Status?.toLowerCase() === 'paid';
+           const val = monthPay ? (isPaid ? '' : (monthPay.bonus || 0).toString()) : '';
+           const finalVal = val === '0' ? '' : val;
+           if (next[eid] !== finalVal) {
+              next[eid] = finalVal;
+              changed = true;
+           }
         });
         return changed ? next : prev;
       });
+
       setBonusNotes(prev => {
         const next = { ...prev };
         let changed = false;
-        payments.forEach(p => {
-          const empId = p['Employee ID'];
-          if (empId && typeof next[empId] === 'undefined') {
-             const isPaid = p.Payment_Status?.toLowerCase() === 'paid';
-             next[empId] = isPaid ? '' : (p.bonus_note || '');
-             changed = true;
-          }
+        animators.forEach(a => {
+           const eid = a.Employee_ID;
+           const monthPay = paymentForMonthByEmpId[eid];
+           const isPaid = monthPay?.Payment_Status?.toLowerCase() === 'paid';
+           const val = monthPay ? (isPaid ? '' : (monthPay.bonus_note || '')) : '';
+           if (next[eid] !== val) {
+              next[eid] = val;
+              changed = true;
+           }
         });
         return changed ? next : prev;
       });
     }
-  }, [payments]);
+  }, [payments, selectedMonth, animators]);
 
   const handleSavePayout = async (eid: string, animatorName: string, gross: number, tdsPct: number, bonus: number, net: number, bonusNote: string) => {
     setSavingId(eid);
@@ -6098,13 +6121,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         net_paid: Math.round(net),
         bonus: bonus,
         Timestamp: now,
+        'Project ID': `Month: ${selectedMonth}`
       };
 
-      const latestPay = latestPaymentByEmpId[eid];
+      const monthPay = paymentForMonthByEmpId[eid];
       let upsertErr;
 
-      if (latestPay && latestPay.Payment_Status !== 'Paid') {
-        const { error } = await apiClient.from('payments').update(payload).match({ id: latestPay.id });
+      if (monthPay && monthPay.Payment_Status !== 'Paid') {
+        const { error } = await apiClient.from('payments').update(payload).match({ id: monthPay.id });
         upsertErr = error;
       } else {
         const { error } = await apiClient.from('payments').insert(payload);
