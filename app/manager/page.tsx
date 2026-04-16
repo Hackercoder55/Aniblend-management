@@ -7275,7 +7275,20 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             const isEarningEdited = pendingTotalEarnings[a.Employee_ID] !== undefined
             const isEdited = isTierEdited || isEarningEdited
             
-            const monthlyEarned = getMonthlyEarned(a.Employee_ID)
+            const totalMinutes = chartData.reduce((acc, d) => acc + d.minutes, 0)
+            const compRate = Number(a.Compensation) || 85
+            const liveMonthlyEarned = Math.round(totalMinutes * compRate)
+            
+            const payment = selectedMonth !== 'Last 7 Days' ? payments.find(p => p['Employee ID'] === a.Employee_ID && p['Project ID'] === `Month: ${selectedMonth}`) : null
+            const monthlyEarned = payment ? payment.net_paid : liveMonthlyEarned
+            
+            let defaultTotal = Number(a.total_earnings) || 0
+            if (defaultTotal === 0) {
+              defaultTotal = payments.filter(p => p['Employee ID'] === a.Employee_ID).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
+              if (!payment || selectedMonth === 'Last 7 Days') {
+                 defaultTotal += liveMonthlyEarned
+              }
+            }
             
             return (
               <div key={a.Employee_ID} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/10' : 'border-gray-200'}`}>
@@ -7324,7 +7337,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                       <input 
                         type="number"
                         className={`w-full bg-transparent text-sm font-bold focus:outline-none text-emerald-800 ${isEarningEdited ? 'border-b-2 border-emerald-400' : ''}`}
-                        value={isEarningEdited ? pendingTotalEarnings[a.Employee_ID] : (a.total_earnings || 0)}
+                        value={isEarningEdited ? pendingTotalEarnings[a.Employee_ID] : defaultTotal}
                         onChange={(e) => setPendingTotalEarnings(prev => ({ ...prev, [a.Employee_ID]: e.target.value }))}
                       />
                     </div>
@@ -7335,7 +7348,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                     </label>
                     <div className="flex items-center">
                       <span className="text-blue-700 font-bold mr-1">₹</span>
-                      <span className="text-sm font-bold text-blue-800">{monthlyEarned !== null ? monthlyEarned.toLocaleString() : '—'}</span>
+                      <span className="text-sm font-bold text-blue-800">{monthlyEarned != null ? Number(monthlyEarned).toLocaleString('en-IN') : '—'}</span>
                     </div>
                   </div>
                 </div>
