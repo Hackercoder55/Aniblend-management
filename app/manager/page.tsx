@@ -50,6 +50,7 @@ interface Animator {
   'Current video': number
   'Total video': number
   Role: string
+  total_earnings?: number
   Discord_ID: string
   Discord_Username: string
   Channel_ID: string
@@ -1311,15 +1312,8 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'priority'>('newest')
   const [approving, setApproving] = useState<string | null>(null)
 
-  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
-  const [newStatus, setNewStatus] = useState<string>('')
-  const [newPriority, setNewPriority] = useState<string>('Low')
-  const [newComment, setNewComment] = useState<string>('')
-  const [newAssignedHead, setNewAssignedHead] = useState<string>('')
-  const [newProgress, setNewProgress] = useState<string>('')
-  const [newEmpType, setNewEmpType] = useState<string>('')
-  const [newWarning, setNewWarning] = useState<string>('')
-  const [newAcknowledgement, setNewAcknowledgement] = useState<string>('')
+  const [pendingProjectEdits, setPendingProjectEdits] = useState<Record<string, Partial<Project>>>({})
+  const [editingRows, setEditingRows] = useState<Set<string>>(new Set())
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [isUpdating, setIsUpdating] = useState(false)
   const [leadsList, setLeadsList] = useState<string[]>(['Divya', 'Ayush', 'Khushi'])
@@ -1489,71 +1483,119 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
     )
   }
 
-  const handleSaveStatus = async (project: Project) => {
-    if (newStatus === project.Status && newPriority === (project.Priority || 'Low') && newComment === (project.Head_Comment || '') && newAssignedHead === (project.assigned_head || '') && newProgress === (project.progress || '') && newEmpType === (project.emp_type || '') && newWarning === (project.warning || '') && newAcknowledgement === (project.acknowledgement || '')) {
-      setEditingProjectId(null)
-      return
-    }
+  const handleSaveAllProjects = async () => {
+    const edits = Object.entries(pendingProjectEdits)
+    if (edits.length === 0) return
     setIsUpdating(true)
-    let payload: any = { Status: newStatus }
-    if (!isHead) {
-      payload['assigned_head'] = newAssignedHead
-    }
-    payload['Priority'] = newPriority
-    payload['Head_Comment'] = newComment
-    payload['progress'] = newProgress
-    payload['emp_type'] = newEmpType
-    payload['warning'] = newWarning
-    payload['acknowledgement'] = newAcknowledgement
-
-    if (newStatus === 'Review' && project.Status !== 'Review') {
-      payload['viewport_date'] = formatDate()
-    }
-    if (newStatus === 'Approved') {
-      payload['Date Approved'] = formatDate()
-      payload['Approved_Date'] = formatDate()
-      payload['approval_notified'] = true  // mark immediately — bot loop will skip, we notify directly below
-    }
-    const { error } = await apiClient.from('projects').update(payload).eq('Project_ID', project.Project_ID)
-    if (!error) {
-      if (newStatus === 'Approved' && project.Status !== 'Approved') {
-        if (project.Employee_ID) {
-          const { data: anim } = await apiClient.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
-          if (anim) {
-            await apiClient.from('animators')
-              .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
-              .eq('Employee_ID', project.Employee_ID)
-          }
-          await apiClient.from('payments')
-            .update({ Approved_Date: formatDate() })
-            .eq('Project ID', project.Project_ID)
+    
+    try {
+      await Promise.all(edits.map(async ([projectId, changes]) => {
+        const project = projects.find(p => p.Project_ID === projectId)
+        if (!project) return
+        
+        let payload: any = { ...changes }
+        
+        if (changes.Status === 'Review' && project.Status !== 'Review') {
+          payload['viewport_date'] = formatDate()
         }
-
-        // Send Discord approval notification immediately
-        try {
-          if (project.Thread_ID) {
-            const animTag = project.Discord_ID ? `<@${project.Discord_ID}>` : '@Animator'
-            const titleLine = project.Project_title
-              ? `**Project:** ${project.Project_title} (\`${project.Project_ID}\`)\n`
-              : `**Project ID:** \`${project.Project_ID}\`\n`
-            const msg = `━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **PROJECT APPROVED!**\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n🎉 Congratulations ${animTag}!\n\n${titleLine}Your video has been reviewed and officially approved! 🙌\n\n💰 **Regarding Payment:**\nThere is no need to fill any payment form. Your payment will be automatically processed and released at the **end of the month**.\n\nWe will notify you here once the payment has been sent. Thank you for your excellent work! 🚀\n━━━━━━━━━━━━━━━━━━━━━━━━`
-            await fetch('/api/discord/send-message', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ threadId: project.Thread_ID, message: msg }),
-            })
-          }
-        } catch {
-          // Notification failure doesn't block the status update
+        if (changes.Status === 'Approved' && project.Status !== 'Approved') {
+          payload['Date Approved'] = formatDate()
+          payload['Approved_Date'] = formatDate()
+          payload['approval_notified'] = true
         }
-      }
-      addToast(`✅ Status updated to ${newStatus}`)
+        
+        const { error } = await apiClient.from('projects').update(payload).eq('Project_ID', projectId)
+        
+        if (!error && changes.Status === 'Approved' && project.Status !== 'Approved') {
+          if (project.Employee_ID) {
+            const { data: anim } = await apiClient.from('animators').select('*').eq('Employee_ID', project.Employee_ID).single()
+            if (anim) {
+              await apiClient.from('animators')
+                .update({ 'Current video': Math.max(0, (anim['Current video'] || 1) - 1), 'Total video': (anim['Total video'] || 0) + 1 })
+                .eq('Employee_ID', project.Employee_ID)
+            }
+            await apiClient.from('payments')
+              .update({ Approved_Date: formatDate() })
+              .eq('Project ID', project.Project_ID)
+          }
+
+          try {
+            if (project.Thread_ID) {
+              const animTag = project.Discord_ID ? `<@${project.Discord_ID}>` : '@Animator'
+              const titleLine = project.Project_title
+                ? `**Project:** ${project.Project_title} (\`${project.Project_ID}\`)
+`
+                : `**Project ID:** \`${project.Project_ID}\`
+`
+              const msg = `━━━━━━━━━━━━━━━━━━━━━━━━
+✅ **PROJECT APPROVED!**
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 Congratulations ${animTag}!
+
+${titleLine}Your video has been reviewed and officially approved! 🙌
+
+💰 **Regarding Payment:**
+There is no need to fill any payment form. Your payment will be automatically processed and released at the **end of the month**.
+
+We will notify you here once the payment has been sent. Thank you for your excellent work! 🚀
+━━━━━━━━━━━━━━━━━━━━━━━━`
+              await fetch('/api/discord/send-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ threadId: project.Thread_ID, message: msg }),
+              })
+            }
+          } catch {}
+        }
+      }))
+      
+      addToast(`✅ Saved ${edits.length} projects successfully!`)
+      setPendingProjectEdits({})
+      setEditingRows(new Set())
       onRefresh()
-    } else {
-      addToast(`❌ Update failed: ${error.message}`, 'error')
+    } catch (err: any) {
+      addToast(`❌ Update failed: ${err.message}`, 'error')
+    } finally {
+      setIsUpdating(false)
     }
-    setIsUpdating(false)
-    setEditingProjectId(null)
+  }
+
+  const startEditing = (p: Project) => {
+    setPendingProjectEdits(prev => ({
+      ...prev,
+      [p.Project_ID]: prev[p.Project_ID] || {
+        Status: p.Status,
+        Priority: p.Priority || 'Low',
+        Head_Comment: p.Head_Comment || '',
+        assigned_head: p.assigned_head || '',
+        progress: p.progress || '',
+        emp_type: p.emp_type || '',
+        warning: p.warning || '',
+        acknowledgement: p.acknowledgement || ''
+      }
+    }))
+    setEditingRows(prev => new Set(prev).add(p.Project_ID))
+  }
+
+  const cancelEditing = (id: string) => {
+    setPendingProjectEdits(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setEditingRows(prev => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
+  const updateEdit = (id: string, field: string, value: string) => {
+    setPendingProjectEdits(prev => ({
+      ...prev,
+      [id]: { ...prev[id], [field]: value }
+    }))
   }
 
   const handleDeleteProject = async (project: Project) => {
@@ -1620,6 +1662,23 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
   return (
     <div className="space-y-4">
       <Toast toasts={toasts} onDismiss={dismiss} />
+            {Object.keys(pendingProjectEdits).length > 0 && (
+        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center justify-between sticky top-20 z-10 shadow-sm">
+          <div>
+            <h3 className="font-bold text-indigo-900">You have {Object.keys(pendingProjectEdits).length} unsaved changes</h3>
+            <p className="text-xs text-indigo-700">Review your edits below and click Save All when ready.</p>
+          </div>
+          <button 
+            onClick={handleSaveAllProjects} 
+            disabled={isUpdating}
+            className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 shadow-sm"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
+          >
+            {isUpdating ? 'Saving...' : `Save All Changes`}
+          </button>
+        </div>
+      )}
+      
       {/* Filters */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 space-y-3">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -1698,10 +1757,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                   </td>
 
                   <td className="px-4 py-3 text-xs">
-                    {editingProjectId === p.Project_ID && !isHead ? (
+                    {editingRows.has(p.Project_ID) && !isHead ? (
                       <select
-                        value={newAssignedHead}
-                        onChange={e => setNewAssignedHead(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.assigned_head || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'assigned_head', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px]"
                       >
                         <option value="">None</option>
@@ -1712,11 +1771,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingRows.has(p.Project_ID) ? (
                       <input
                         type="text"
-                        value={newProgress}
-                        onChange={e => setNewProgress(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.progress || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'progress', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
                         placeholder="Progress..."
                       />
@@ -1727,11 +1786,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingRows.has(p.Project_ID) ? (
                       <input
                         type="text"
-                        value={newEmpType}
-                        onChange={e => setNewEmpType(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.emp_type || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'emp_type', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
                         placeholder="Emp Type..."
                       />
@@ -1742,11 +1801,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingRows.has(p.Project_ID) ? (
                       <input
                         type="text"
-                        value={newWarning}
-                        onChange={e => setNewWarning(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.warning || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'warning', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
                         placeholder="Warning..."
                       />
@@ -1758,10 +1817,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{p['Date Approved'] || '—'}</td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingRows.has(p.Project_ID) ? (
                       <select
-                        value={newPriority}
-                        onChange={e => setNewPriority(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.Priority || 'Low'}
+                        onChange={e => updateEdit(p.Project_ID, 'Priority', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[80px]"
                       >
                         {['Low', 'Medium', 'High', 'Urgent', 'Concern'].map(s => <option key={s} value={s}>{s}</option>)}
@@ -1777,11 +1836,11 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingRows.has(p.Project_ID) ? (
                       <input
                         type="text"
-                        value={newComment}
-                        onChange={e => setNewComment(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.Head_Comment || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'Head_Comment', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
                         placeholder="Add comment..."
                       />
@@ -1792,10 +1851,10 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {editingProjectId === p.Project_ID ? (
+                    {editingRows.has(p.Project_ID) ? (
                       <select
-                        value={newStatus}
-                        onChange={e => setNewStatus(e.target.value)}
+                        value={pendingProjectEdits[p.Project_ID]?.Status || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'Status', e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[120px]"
                       >
                         {statuses.filter(s => s !== 'All' && s !== 'Ongoing').map(s => <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>)}
@@ -1812,27 +1871,19 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
                           <button onClick={() => handleDeleteProject(p)} disabled={isUpdating} className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-medium transition-colors">Confirm Delete</button>
                           <button onClick={() => setDeletingProjectId(null)} disabled={isUpdating} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium transition-colors">Cancel</button>
                         </>
-                      ) : editingProjectId === p.Project_ID ? (
+                      ) : editingRows.has(p.Project_ID) ? (
                         <>
-                          <button onClick={() => handleSaveStatus(p)} disabled={isUpdating} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors">Save</button>
-                          <button onClick={() => setEditingProjectId(null)} disabled={isUpdating} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium transition-colors">Cancel</button>
+                          <button onClick={() => setEditingRows(prev => { const n = new Set(prev); n.delete(p.Project_ID); return n; })} disabled={isUpdating} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50">Done</button>
+                          <button onClick={() => cancelEditing(p.Project_ID)} disabled={isUpdating} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium transition-colors">Cancel</button>
                         </>
                       ) : (
                         <>
                           <button onClick={() => {
-                            setEditingProjectId(p.Project_ID);
-                            setNewStatus(p.Status);
-                            setNewPriority(p.Priority || 'Low');
-                            setNewComment(p.Head_Comment || '');
-                            setNewAssignedHead(p.assigned_head || '');
-                            setNewProgress(p.progress || '');
-                            setNewEmpType(p.emp_type || '');
-                            setNewWarning(p.warning || '');
-                            setNewAcknowledgement(p.acknowledgement || '');
+                            startEditing(p);
                             setDeletingProjectId(null)
                           }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
                           {!isHead && (
-                            <button onClick={() => { setDeletingProjectId(p.Project_ID); setEditingProjectId(null) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
+                            <button onClick={() => { setDeletingProjectId(p.Project_ID); cancelEditing(p.Project_ID) }} className="px-3 py-1 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-medium transition-colors">Delete</button>
                           )}
                           {!isHead && p.Animator && (
                             <button onClick={() => handleRemoveAnimator(p)} disabled={isUpdating} className="px-3 py-1 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded-lg text-xs font-medium transition-colors">Remove Animator</button>
@@ -6960,24 +7011,61 @@ const TIER_CATEGORIES = [
 ]
 
 function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; projects: Project[]; onRefresh: () => void }) {
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [loadingPayments, setLoadingPayments] = useState(true)
   const [pendingTiers, setPendingTiers] = useState<Record<string, string>>({})
+  const [pendingTotalEarnings, setPendingTotalEarnings] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [activeTier, setActiveTier] = useState<string | null>(null)
   
-  // Daily Output Calculation (Approved based)
-  const last7Days = React.useMemo(() => {
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortMode, setSortMode] = useState<'Name' | 'EmpID' | 'Load'>('Name')
+
+  // Month options (like PayoutCalculator)
+  const monthOptions = React.useMemo(() => {
+    const opts: string[] = ['Last 7 Days']
+    const now = new Date()
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  }, [])
+  const [selectedMonth, setSelectedMonth] = useState<string>('Last 7 Days')
+
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      setPayments(data || [])
+      setLoadingPayments(false)
+    })
+  }, [])
+
+  // Days mapping based on selected month
+  const chartDays = React.useMemo(() => {
     const days = []
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      days.push(d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }))
+    if (selectedMonth === 'Last 7 Days') {
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date()
+        d.setDate(d.getDate() - i)
+        days.push(d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }))
+      }
+    } else {
+      // Month format is "Apr 2026"
+      const d = new Date(`${selectedMonth} 1`)
+      const month = d.getMonth()
+      const year = d.getFullYear()
+      const daysInMonth = new Date(year, month + 1, 0).getDate()
+      for (let i = 1; i <= daysInMonth; i++) {
+        const date = new Date(year, month, i)
+        days.push(date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }))
+      }
     }
     return days
-  }, [])
+  }, [selectedMonth])
 
   const getAnimatorOutput = useCallback((a: Animator) => {
     const outputMap: Record<string, number> = {}
-    last7Days.forEach(d => outputMap[d] = 0)
+    chartDays.forEach(d => outputMap[d] = 0)
     
     projects.forEach(p => {
       const isMatched = p.Employee_ID === a.Employee_ID || 
@@ -6989,9 +7077,8 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
         if (appDateStr) {
           try {
             const pDate = parseDate(appDateStr).getTime()
-            const matchDay = last7Days.find(d => parseDate(d).getTime() === pDate)
+            const matchDay = chartDays.find(d => parseDate(d).getTime() === pDate)
             if (matchDay) {
-              // using parseDurationSec from module scope
               outputMap[matchDay] += parseDurationSec(p.Duration || '', p.Project_ID)
             }
           } catch(e) {}
@@ -6999,11 +7086,19 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
       }
     })
     
-    return last7Days.map(d => ({
+    return chartDays.map(d => ({
       name: d.slice(0, 6),
       minutes: Math.round(outputMap[d] / 60)
     }))
-  }, [projects, last7Days])
+  }, [projects, chartDays])
+
+  // Get Monthly Net Earned from payments table for this animator and selectedMonth
+  const getMonthlyEarned = useCallback((empId: string) => {
+    if (selectedMonth === 'Last 7 Days') return null
+    // Payment entries have 'Project ID' === `Month: ${selectedMonth}`
+    const payment = payments.find(p => p['Employee ID'] === empId && p['Project ID'] === `Month: ${selectedMonth}`)
+    return payment?.net_paid || 0
+  }, [payments, selectedMonth])
 
   const groupedAnimators = React.useMemo(() => {
     const groups: Record<string, Animator[]> = {}
@@ -7017,27 +7112,50 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
       if (!groups[tier]) groups[tier] = []
       groups[tier].push(a)
     })
+
+    // Sort and Filter logic within the active group
+    Object.keys(groups).forEach(k => {
+      groups[k] = groups[k].filter(a => {
+        if (!searchQuery) return true
+        return a.Name.toLowerCase().includes(searchQuery.toLowerCase()) || a.Employee_ID.toLowerCase().includes(searchQuery.toLowerCase())
+      }).sort((a, b) => {
+        if (sortMode === 'Name') return a.Name.localeCompare(b.Name)
+        if (sortMode === 'EmpID') return a.Employee_ID.localeCompare(b.Employee_ID)
+        if (sortMode === 'Load') return (b['Current video'] || 0) - (a['Current video'] || 0)
+        return 0
+      })
+    })
+
     return groups
-  }, [animators, pendingTiers])
+  }, [animators, pendingTiers, searchQuery, sortMode])
 
   const handleTierChange = (empId: string, newTier: string) => {
     setPendingTiers(prev => ({ ...prev, [empId]: newTier }))
   }
 
   const handleSaveAll = async () => {
-    const edits = Object.entries(pendingTiers)
-    if (edits.length === 0) return
+    const tierEdits = Object.entries(pendingTiers)
+    const earningsEdits = Object.entries(pendingTotalEarnings)
+    if (tierEdits.length === 0 && earningsEdits.length === 0) return
     setSaving(true)
     
     try {
-      await Promise.all(edits.map(async ([empId, tier]) => {
-        await apiClient.from('animators').update({ Role: tier }).eq('Employee_ID', empId)
+      // Create a set of all empIds that have edits
+      const allEmpIds = new Set([...tierEdits.map(e => e[0]), ...earningsEdits.map(e => e[0])])
+      
+      await Promise.all(Array.from(allEmpIds).map(async (empId) => {
+        const payload: any = {}
+        if (pendingTiers[empId]) payload['Role'] = pendingTiers[empId]
+        if (pendingTotalEarnings[empId] !== undefined) payload['total_earnings'] = Number(pendingTotalEarnings[empId])
+        await apiClient.from('animators').update(payload).eq('Employee_ID', empId)
       }))
+      
       setPendingTiers({})
+      setPendingTotalEarnings({})
       onRefresh()
     } catch (err) {
       console.error(err)
-      alert("Error saving tiers.")
+      alert("Error saving changes.")
     } finally {
       setSaving(false)
     }
@@ -7051,14 +7169,14 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             <h2 className="text-xl font-bold text-gray-800">Animator Tiers</h2>
             <p className="text-sm text-gray-500 mt-1">Select a tier to view and manage its animators.</p>
           </div>
-          {Object.keys(pendingTiers).length > 0 && (
+          {(Object.keys(pendingTiers).length > 0 || Object.keys(pendingTotalEarnings).length > 0) && (
              <button 
                 onClick={handleSaveAll} 
                 disabled={saving}
                 className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 whitespace-nowrap"
                 style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
              >
-               {saving ? 'Saving...' : `Save ${Object.keys(pendingTiers).length} Changes`}
+               {saving ? 'Saving...' : `Save ${Object.keys(pendingTiers).length + Object.keys(pendingTotalEarnings).length} Changes`}
              </button>
           )}
         </div>
@@ -7092,43 +7210,77 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sticky top-20 z-10 gap-4">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setActiveTier(null)}
-            className="w-10 h-10 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-600 transition-colors"
-          >
-            ←
-          </button>
-          <div>
-            <h2 className="text-xl font-bold text-gray-800">{activeTier} <span className="text-sm font-normal text-gray-500 ml-2">({group.length} Animators)</span></h2>
-            <p className="text-sm text-gray-500 mt-1">Bulk edit tiers and track approved daily output.</p>
+      {/* Sticky Header with Filters */}
+      <div className="flex flex-col bg-white rounded-2xl shadow-sm border border-gray-100 sticky top-20 z-10">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between p-5 border-b border-gray-100 gap-4">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setActiveTier(null)}
+              className="w-10 h-10 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-600 transition-colors"
+            >
+              ←
+            </button>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">{activeTier} <span className="text-sm font-normal text-gray-500 ml-2">({group.length} Animators)</span></h2>
+              <p className="text-sm text-gray-500 mt-1">Bulk edit tiers and track approved daily output.</p>
+            </div>
           </div>
+          <button 
+            onClick={handleSaveAll} 
+            disabled={saving || (Object.keys(pendingTiers).length === 0 && Object.keys(pendingTotalEarnings).length === 0)}
+            className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 whitespace-nowrap"
+            style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
+          >
+            {saving ? 'Saving...' : `Save ${Object.keys(pendingTiers).length + Object.keys(pendingTotalEarnings).length} Changes`}
+          </button>
         </div>
-        <button 
-          onClick={handleSaveAll} 
-          disabled={saving || Object.keys(pendingTiers).length === 0}
-          className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 whitespace-nowrap"
-          style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
-        >
-          {saving ? 'Saving...' : `Save ${Object.keys(pendingTiers).length} Changes`}
-        </button>
+        
+        <div className="p-4 flex flex-col md:flex-row items-center gap-4 bg-gray-50/50 rounded-b-2xl">
+          <input 
+            type="text" 
+            placeholder="Search by Name or EmpID..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full md:w-64 px-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <select 
+            value={sortMode}
+            onChange={(e: any) => setSortMode(e.target.value)}
+            className="w-full md:w-40 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+          >
+            <option value="Name">Sort by Name</option>
+            <option value="EmpID">Sort by EmpID</option>
+            <option value="Load">Sort by Load</option>
+          </select>
+          <div className="hidden md:block w-px h-8 bg-gray-200 mx-2"></div>
+          <select 
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="w-full md:w-48 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-semibold text-indigo-700"
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {group.length === 0 ? (
           <div className="col-span-full text-center py-16 bg-white rounded-2xl border border-gray-100">
-            <p className="text-gray-400">No animators currently in {activeTier}.</p>
+            <p className="text-gray-400">No animators match your criteria.</p>
           </div>
         ) : (
           group.map((a, idx) => {
             const chartData = getAnimatorOutput(a)
-            const isEdited = !!pendingTiers[a.Employee_ID]
+            const isTierEdited = !!pendingTiers[a.Employee_ID]
+            const isEarningEdited = pendingTotalEarnings[a.Employee_ID] !== undefined
+            const isEdited = isTierEdited || isEarningEdited
+            
+            const monthlyEarned = getMonthlyEarned(a.Employee_ID)
             
             return (
-              <div key={idx} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/20' : 'border-gray-200'}`}>
+              <div key={a.Employee_ID} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/10' : 'border-gray-200'}`}>
                 <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
                       style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
                       {(a.Name || '?')[0].toUpperCase()}
@@ -7138,16 +7290,22 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                       <p className="text-xs text-gray-400 font-mono mt-0.5">{a.Employee_ID}</p>
                     </div>
                   </div>
-                  <div className="text-right flex-shrink-0">
+                  <div className="text-right flex-shrink-0 ml-2">
                     <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Load</p>
                     <p className="text-sm font-bold text-gray-800">{a['Current video'] || 0}</p>
                   </div>
                 </div>
+
+                {a['Phone Number'] && (
+                  <div className="mb-3 flex items-center gap-2 text-xs text-gray-600 bg-gray-50 px-2 py-1.5 rounded-lg border border-gray-100">
+                    <span>📞</span> <span className="font-mono">{a['Phone Number']}</span>
+                  </div>
+                )}
                 
-                <div className="mb-5">
+                <div className="mb-4">
                   <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">Tier Assignment</label>
                   <select 
-                    className={`w-full text-sm font-semibold rounded-lg px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors ${isEdited ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}
+                    className={`w-full text-sm font-semibold rounded-lg px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors ${isTierEdited ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'}`}
                     value={activeTier}
                     onChange={(e) => handleTierChange(a.Employee_ID, e.target.value)}
                   >
@@ -7157,10 +7315,35 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                   </select>
                 </div>
 
+                {/* Earnings Section */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="bg-emerald-50/50 rounded-lg p-2 border border-emerald-100">
+                    <label className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider mb-1 block">Total Earned</label>
+                    <div className="flex items-center">
+                      <span className="text-emerald-700 font-bold mr-1">₹</span>
+                      <input 
+                        type="number"
+                        className={`w-full bg-transparent text-sm font-bold focus:outline-none text-emerald-800 ${isEarningEdited ? 'border-b-2 border-emerald-400' : ''}`}
+                        value={isEarningEdited ? pendingTotalEarnings[a.Employee_ID] : (a.total_earnings || 0)}
+                        onChange={(e) => setPendingTotalEarnings(prev => ({ ...prev, [a.Employee_ID]: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="bg-blue-50/50 rounded-lg p-2 border border-blue-100">
+                    <label className="text-[9px] font-bold text-blue-600 uppercase tracking-wider mb-1 block truncate">
+                      {selectedMonth === 'Last 7 Days' ? 'Monthly' : selectedMonth.split(' ')[0]} Earned
+                    </label>
+                    <div className="flex items-center">
+                      <span className="text-blue-700 font-bold mr-1">₹</span>
+                      <span className="text-sm font-bold text-blue-800">{monthlyEarned !== null ? monthlyEarned.toLocaleString() : '—'}</span>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="bg-gray-50/80 rounded-xl p-3 border border-gray-100">
                   <div className="flex justify-between items-center mb-2">
                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Approved Output</p>
-                    <p className="text-[10px] text-gray-400 font-medium">Last 7 Days (Mins)</p>
+                    <p className="text-[10px] text-gray-400 font-medium">Mins</p>
                   </div>
                   <div className="h-20 w-full mt-1">
                     <ResponsiveContainer width="100%" height="100%">
@@ -7176,15 +7359,15 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                           dataKey="minutes" 
                           stroke="#667eea" 
                           strokeWidth={2.5}
-                          dot={{ r: 3, fill: '#667eea', strokeWidth: 0 }}
+                          dot={chartDays.length <= 7 ? { r: 3, fill: '#667eea', strokeWidth: 0 } : false}
                           activeDot={{ r: 5, fill: '#7e22ce' }}
                         />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
                   <div className="flex justify-between mt-1 px-1">
-                    <span className="text-[9px] text-gray-400 font-medium">{last7Days[0].slice(0, 6)}</span>
-                    <span className="text-[9px] text-gray-400 font-medium">{last7Days[last7Days.length-1].slice(0, 6)}</span>
+                    <span className="text-[9px] text-gray-400 font-medium">{chartDays[0].slice(0, 6)}</span>
+                    <span className="text-[9px] text-gray-400 font-medium">{chartDays[chartDays.length-1].slice(0, 6)}</span>
                   </div>
                 </div>
               </div>
@@ -7195,6 +7378,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     </div>
   )
 }
+
 
 export default function ManagerDashboard() {
   const router = useRouter()
