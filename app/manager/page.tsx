@@ -4887,10 +4887,11 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
+  { id: 'tiers', label: 'Animator Tiers', icon: '🏆', managerOnly: true },
   { id: 'assign', label: 'Assign Projects', icon: '🔗', managerOnly: true },
   { id: 'duplicates', label: 'Duplicate Threads', icon: '👯', managerOnly: true },
   { id: 'bank', label: 'Projects', icon: '🗂️' },
@@ -6953,6 +6954,182 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
   )
 }
 
+const TIER_CATEGORIES = [
+  'Tier 1', 'Tier 2', 'Tier 3', 'Concerning', 
+  'Watchlist', 'Animator', 'Lighting', 'Normal Workspace'
+]
+
+function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; projects: Project[]; onRefresh: () => void }) {
+  const [pendingTiers, setPendingTiers] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  
+  // Daily Output Calculation
+  const last7Days = React.useMemo(() => {
+    const days = []
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      days.push(d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }))
+    }
+    return days
+  }, [])
+
+  const getAnimatorOutput = useCallback((empId: string) => {
+    const outputMap: Record<string, number> = {}
+    last7Days.forEach(d => outputMap[d] = 0)
+    
+    projects.forEach(p => {
+      if (p.output_history && Array.isArray(p.output_history)) {
+        p.output_history.forEach((h: any) => {
+          if (h.empId === empId && outputMap[h.date] !== undefined) {
+            outputMap[h.date] += (h.seconds || 0)
+          }
+        })
+      }
+    })
+    return outputMap
+  }, [projects, last7Days])
+
+  const groupedAnimators = React.useMemo(() => {
+    const groups: Record<string, Animator[]> = {}
+    TIER_CATEGORIES.forEach(t => groups[t] = [])
+    
+    animators.forEach(a => {
+      let tier = a.Role || 'Normal Workspace'
+      if (!TIER_CATEGORIES.includes(tier)) tier = 'Normal Workspace'
+      // If it has pending change, group it visually in the NEW tier
+      if (pendingTiers[a.Employee_ID]) {
+        tier = pendingTiers[a.Employee_ID]
+      }
+      if (!groups[tier]) groups[tier] = []
+      groups[tier].push(a)
+    })
+    return groups
+  }, [animators, pendingTiers])
+
+  const handleTierChange = (empId: string, newTier: string) => {
+    setPendingTiers(prev => ({ ...prev, [empId]: newTier }))
+  }
+
+  const handleSaveAll = async () => {
+    const edits = Object.entries(pendingTiers)
+    if (edits.length === 0) return
+    setSaving(true)
+    
+    try {
+      await Promise.all(edits.map(async ([empId, tier]) => {
+        await apiClient.from('animators').update({ Role: tier }).eq('Employee_ID', empId)
+      }))
+      setPendingTiers({})
+      onRefresh()
+    } catch (err) {
+      console.error(err)
+      alert("Error saving tiers.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sticky top-20 z-10 gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">Animator Tiers (Bulk Edit)</h2>
+          <p className="text-sm text-gray-500 mt-1">Move animators to different tiers and track their last 7 days output. Click save to apply all changes.</p>
+        </div>
+        <button 
+          onClick={handleSaveAll} 
+          disabled={saving || Object.keys(pendingTiers).length === 0}
+          className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 whitespace-nowrap"
+          style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
+        >
+          {saving ? 'Saving...' : `Save ${Object.keys(pendingTiers).length} Changes`}
+        </button>
+      </div>
+
+      <div className="space-y-8">
+        {TIER_CATEGORIES.map(tier => {
+          const group = groupedAnimators[tier]
+          if (group.length === 0 && tier !== 'Normal Workspace') return null
+
+          return (
+            <div key={tier} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="bg-gray-50 px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="font-bold text-gray-800 text-lg">{tier}</h3>
+                <span className="px-3 py-1 bg-white border border-gray-200 rounded-full text-xs font-bold text-gray-500">
+                  {group.length} Animators
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-xs text-gray-500 bg-white">
+                      <th className="px-5 py-3 font-medium w-64 min-w-[200px]">Animator</th>
+                      <th className="px-5 py-3 font-medium w-48 min-w-[160px]">Tier Assignment</th>
+                      {last7Days.map(d => (
+                        <th key={d} className="px-3 py-3 font-medium text-center min-w-[70px]">{d.slice(0, 6)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.length === 0 ? (
+                      <tr>
+                        <td colSpan={last7Days.length + 2} className="px-5 py-8 text-center text-gray-400">
+                          No animators in {tier}
+                        </td>
+                      </tr>
+                    ) : (
+                      group.map((a, idx) => {
+                        const output = getAnimatorOutput(a.Employee_ID)
+                        const isEdited = !!pendingTiers[a.Employee_ID]
+                        
+                        return (
+                          <tr key={idx} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50 ${isEdited ? 'bg-indigo-50/30' : ''}`}>
+                            <td className="px-5 py-3">
+                              <p className="font-bold text-gray-800">{a.Name}</p>
+                              <p className="text-xs text-gray-500 font-mono">{a.Employee_ID}</p>
+                            </td>
+                            <td className="px-5 py-3">
+                              <select 
+                                className={`w-full text-xs font-semibold rounded-lg px-2 py-1.5 border focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors ${isEdited ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}
+                                value={tier}
+                                onChange={(e) => handleTierChange(a.Employee_ID, e.target.value)}
+                              >
+                                {TIER_CATEGORIES.map(t => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+                            </td>
+                            {last7Days.map(d => {
+                              const sec = output[d]
+                              const min = Math.round(sec / 60)
+                              return (
+                                <td key={d} className="px-3 py-3 text-center">
+                                  {min > 0 ? (
+                                    <span className={`px-2 py-1 rounded text-xs font-semibold ${min > 120 ? 'bg-emerald-100 text-emerald-700' : min > 60 ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-600'}`} title={`${sec} seconds`}>
+                                      {min}m
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-xs">—</span>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function ManagerDashboard() {
   const router = useRouter()
   const [user, setUser] = useState<DashboardUser | null>(null)
@@ -7098,6 +7275,7 @@ export default function ManagerDashboard() {
           ) : (
             <>
               {activeTab === 'overview' && <OverviewTab projects={projects} animators={animators} />}
+              {activeTab === 'tiers' && <TiersTab animators={animators} projects={projects} onRefresh={fetchData} />}
               {activeTab === 'assign' && <AssignTab projects={projects} animators={animators} onRefresh={fetchData} />}
               {activeTab === 'duplicates' && <DuplicatesTab projects={projects} />}
               {activeTab === 'bank' && <ProjectsTab projects={projects} onRefresh={fetchData} user={user} />}
