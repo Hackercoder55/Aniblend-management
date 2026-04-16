@@ -6962,8 +6962,9 @@ const TIER_CATEGORIES = [
 function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; projects: Project[]; onRefresh: () => void }) {
   const [pendingTiers, setPendingTiers] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const [activeTier, setActiveTier] = useState<string | null>(null)
   
-  // Daily Output Calculation
+  // Daily Output Calculation (Approved based)
   const last7Days = React.useMemo(() => {
     const days = []
     for (let i = 6; i >= 0; i--) {
@@ -6974,20 +6975,34 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     return days
   }, [])
 
-  const getAnimatorOutput = useCallback((empId: string) => {
+  const getAnimatorOutput = useCallback((a: Animator) => {
     const outputMap: Record<string, number> = {}
     last7Days.forEach(d => outputMap[d] = 0)
     
     projects.forEach(p => {
-      if (p.output_history && Array.isArray(p.output_history)) {
-        p.output_history.forEach((h: any) => {
-          if (h.empId === empId && outputMap[h.date] !== undefined) {
-            outputMap[h.date] += (h.seconds || 0)
-          }
-        })
+      const isMatched = p.Employee_ID === a.Employee_ID || 
+                        (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || 
+                        (p.Animator || '').toLowerCase().includes(a.Employee_ID.toLowerCase());
+      
+      if (isMatched && ['Approved', 'Paid', 'Closed'].includes(p.Status)) {
+        const appDateStr = p['Date Approved'] || p.Approved_Date
+        if (appDateStr) {
+          try {
+            const pDate = parseDate(appDateStr).getTime()
+            const matchDay = last7Days.find(d => parseDate(d).getTime() === pDate)
+            if (matchDay) {
+              // using parseDurationSec from module scope
+              outputMap[matchDay] += parseDurationSec(p.Duration || '', p.Project_ID)
+            }
+          } catch(e) {}
+        }
       }
     })
-    return outputMap
+    
+    return last7Days.map(d => ({
+      name: d.slice(0, 6),
+      minutes: Math.round(outputMap[d] / 60)
+    }))
   }, [projects, last7Days])
 
   const groupedAnimators = React.useMemo(() => {
@@ -6997,10 +7012,8 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     animators.forEach(a => {
       let tier = a.Role || 'Normal Workspace'
       if (!TIER_CATEGORIES.includes(tier)) tier = 'Normal Workspace'
-      // If it has pending change, group it visually in the NEW tier
-      if (pendingTiers[a.Employee_ID]) {
-        tier = pendingTiers[a.Employee_ID]
-      }
+      if (pendingTiers[a.Employee_ID]) tier = pendingTiers[a.Employee_ID]
+      
       if (!groups[tier]) groups[tier] = []
       groups[tier].push(a)
     })
@@ -7030,12 +7043,67 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     }
   }
 
+  if (!activeTier) {
+    return (
+      <div className="space-y-6 max-w-7xl mx-auto">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-white rounded-2xl shadow-sm border border-gray-100 p-5 gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">Animator Tiers</h2>
+            <p className="text-sm text-gray-500 mt-1">Select a tier to view and manage its animators.</p>
+          </div>
+          {Object.keys(pendingTiers).length > 0 && (
+             <button 
+                onClick={handleSaveAll} 
+                disabled={saving}
+                className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 whitespace-nowrap"
+                style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}
+             >
+               {saving ? 'Saving...' : `Save ${Object.keys(pendingTiers).length} Changes`}
+             </button>
+          )}
+        </div>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {TIER_CATEGORIES.map(tier => {
+            const count = groupedAnimators[tier].length
+            return (
+              <div 
+                key={tier} 
+                onClick={() => setActiveTier(tier)} 
+                className="cursor-pointer bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md hover:border-indigo-300 transition-all group"
+              >
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl mb-4 bg-indigo-50 text-indigo-500 group-hover:scale-110 transition-transform">
+                  {tier.includes('1') ? '🥇' : tier.includes('2') ? '🥈' : tier.includes('3') ? '🥉' : tier === 'Concerning' ? '⚠️' : tier === 'Watchlist' ? '👀' : tier === 'Lighting' ? '💡' : '🎨'}
+                </div>
+                <h3 className="text-xl font-bold text-gray-800">{tier}</h3>
+                <p className="text-sm text-gray-500 mt-1 font-medium">{count} Animators</p>
+                <div className="mt-4 text-xs font-semibold text-indigo-500 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  View Animators <span className="text-lg">→</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  const group = groupedAnimators[activeTier]
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sticky top-20 z-10 gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-gray-800">Animator Tiers (Bulk Edit)</h2>
-          <p className="text-sm text-gray-500 mt-1">Move animators to different tiers and track their last 7 days output. Click save to apply all changes.</p>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setActiveTier(null)}
+            className="w-10 h-10 rounded-full bg-gray-50 hover:bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-600 transition-colors"
+          >
+            ←
+          </button>
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">{activeTier} <span className="text-sm font-normal text-gray-500 ml-2">({group.length} Animators)</span></h2>
+            <p className="text-sm text-gray-500 mt-1">Bulk edit tiers and track approved daily output.</p>
+          </div>
         </div>
         <button 
           onClick={handleSaveAll} 
@@ -7047,102 +7115,82 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
         </button>
       </div>
 
-      <div className="space-y-8">
-        {TIER_CATEGORIES.map(tier => {
-          const group = groupedAnimators[tier]
-          if (group.length === 0 && tier !== 'Normal Workspace') return null
-
-          return (
-            <div key={tier} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="bg-gray-50 px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-                <h3 className="font-bold text-gray-800 text-lg">{tier}</h3>
-                <span className="px-3 py-1 bg-white border border-gray-200 rounded-full text-xs font-bold text-gray-500">
-                  {group.length} Animators
-                </span>
-              </div>
-              <div className="p-5 bg-gray-50/50">
-                {group.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400 text-sm bg-white rounded-xl border border-gray-100">No animators in {tier}</div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {group.map((a, idx) => {
-                      const output = getAnimatorOutput(a.Employee_ID)
-                      const isEdited = !!pendingTiers[a.Employee_ID]
-                      
-                      return (
-                        <div key={idx} className={`bg-white rounded-xl border p-4 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-300 ring-1 ring-indigo-300 bg-indigo-50/10' : 'border-gray-200'}`}>
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
-                                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                                {(a.Name || '?')[0].toUpperCase()}
-                              </div>
-                              <div className="min-w-0">
-                                <h4 className="font-bold text-gray-800 text-sm truncate">{a.Name}</h4>
-                                <p className="text-xs text-gray-400 font-mono mt-0.5">{a.Employee_ID}</p>
-                              </div>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Load</p>
-                              <p className="text-sm font-bold text-gray-800">{a['Current video'] || 0}</p>
-                            </div>
-                          </div>
-                          
-                          <div className="mb-4">
-                            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Tier Assignment</label>
-                            <select 
-                              className={`w-full text-xs font-semibold rounded-lg px-2 py-2 border focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors ${isEdited ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}
-                              value={tier}
-                              onChange={(e) => handleTierChange(a.Employee_ID, e.target.value)}
-                            >
-                              {TIER_CATEGORIES.map(t => (
-                                <option key={t} value={t}>{t}</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="bg-gray-50 rounded-lg p-2.5 border border-gray-100">
-                            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2 text-center">Last 7 Days Output</p>
-                            <div className="flex items-end gap-1 h-12 pt-2">
-                              {last7Days.map(d => {
-                                const sec = output[d]
-                                const min = Math.round(sec / 60)
-                                // max height cap at 240 mins (4 hours)
-                                const heightPercent = Math.min(100, Math.max(8, (min / 240) * 100))
-                                
-                                return (
-                                  <div key={d} className="flex-1 flex flex-col items-center justify-end group relative h-full">
-                                    {min > 0 ? (
-                                      <div 
-                                        className={`w-full rounded-t-sm transition-all ${min > 120 ? 'bg-emerald-400' : min > 60 ? 'bg-blue-400' : 'bg-indigo-300'}`}
-                                        style={{ height: `${heightPercent}%` }}
-                                      />
-                                    ) : (
-                                      <div className="w-full h-[3px] bg-gray-200 rounded-sm" />
-                                    )}
-                                    {/* Tooltip using group-hover */}
-                                    <div className="absolute bottom-full mb-1 hidden group-hover:block z-10 w-max bg-gray-800 text-white text-[10px] py-1 px-2 rounded shadow-lg pointer-events-none text-center">
-                                      <p className="font-semibold">{d.slice(0, 6)}</p>
-                                      <p>{min} mins</p>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                            <div className="flex justify-between mt-1.5 px-0.5">
-                              <span className="text-[9px] text-gray-400 font-medium">{last7Days[0].slice(0, 6)}</span>
-                              <span className="text-[9px] text-gray-400 font-medium">{last7Days[last7Days.length-1].slice(0, 6)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {group.length === 0 ? (
+          <div className="col-span-full text-center py-16 bg-white rounded-2xl border border-gray-100">
+            <p className="text-gray-400">No animators currently in {activeTier}.</p>
+          </div>
+        ) : (
+          group.map((a, idx) => {
+            const chartData = getAnimatorOutput(a)
+            const isEdited = !!pendingTiers[a.Employee_ID]
+            
+            return (
+              <div key={idx} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/20' : 'border-gray-200'}`}>
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
+                      style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                      {(a.Name || '?')[0].toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-gray-800 text-sm truncate" title={a.Name}>{a.Name}</h4>
+                      <p className="text-xs text-gray-400 font-mono mt-0.5">{a.Employee_ID}</p>
+                    </div>
                   </div>
-                )}
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Load</p>
+                    <p className="text-sm font-bold text-gray-800">{a['Current video'] || 0}</p>
+                  </div>
+                </div>
+                
+                <div className="mb-5">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">Tier Assignment</label>
+                  <select 
+                    className={`w-full text-sm font-semibold rounded-lg px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors ${isEdited ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}
+                    value={activeTier}
+                    onChange={(e) => handleTierChange(a.Employee_ID, e.target.value)}
+                  >
+                    {TIER_CATEGORIES.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="bg-gray-50/80 rounded-xl p-3 border border-gray-100">
+                  <div className="flex justify-between items-center mb-2">
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Approved Output</p>
+                    <p className="text-[10px] text-gray-400 font-medium">Last 7 Days (Mins)</p>
+                  </div>
+                  <div className="h-20 w-full mt-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 0, left: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <Tooltip 
+                          contentStyle={{ borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                          formatter={(value: any) => [`${value} mins`, 'Output']}
+                          labelStyle={{ color: '#6b7280', marginBottom: '2px' }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="minutes" 
+                          stroke="#667eea" 
+                          strokeWidth={2.5}
+                          dot={{ r: 3, fill: '#667eea', strokeWidth: 0 }}
+                          activeDot={{ r: 5, fill: '#7e22ce' }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex justify-between mt-1 px-1">
+                    <span className="text-[9px] text-gray-400 font-medium">{last7Days[0].slice(0, 6)}</span>
+                    <span className="text-[9px] text-gray-400 font-medium">{last7Days[last7Days.length-1].slice(0, 6)}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          )
-        })}
+            )
+          })
+        )}
       </div>
     </div>
   )
