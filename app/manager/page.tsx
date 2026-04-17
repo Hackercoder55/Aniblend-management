@@ -7276,18 +7276,56 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             const isEarningEdited = pendingTotalEarnings[a.Employee_ID] !== undefined
             const isEdited = isTierEdited || isEarningEdited
             
-            const totalMinutes = chartData.reduce((acc, d) => acc + d.minutes, 0)
+            // Calculate exact seconds for only Paid or Closed projects in the selected month
+            let paidClosedSeconds = 0
+            let allTimePaidClosedSeconds = 0
+            projects.forEach(p => {
+              const isMatched = p.Employee_ID === a.Employee_ID || 
+                                (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || 
+                                (p.Animator || '').toLowerCase().includes(a.Employee_ID.toLowerCase());
+              
+              if (isMatched && ['Paid', 'Closed'].includes(p.Status)) {
+                const secs = parseDurationSec(p.Duration || '', p.Project_ID)
+                allTimePaidClosedSeconds += secs
+                
+                const appDateStr = p['Date Approved'] || p.Approved_Date
+                if (appDateStr) {
+                  try {
+                     const pDate = parseDate(appDateStr)
+                     let match = false
+                     if (selectedMonth === 'Last 7 Days') {
+                        const diff = Date.now() - pDate.getTime()
+                        if (diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000) match = true
+                     } else {
+                        const smDate = new Date(`${selectedMonth} 1`)
+                        if (pDate.getMonth() === smDate.getMonth() && pDate.getFullYear() === smDate.getFullYear()) {
+                           match = true
+                        }
+                     }
+                     if (match) {
+                       paidClosedSeconds += secs
+                     }
+                  } catch(e) {}
+                }
+              }
+            });
+
             const compRate = Number(a.Compensation) || 85
-            const liveMonthlyEarned = Math.round(totalMinutes * compRate)
+            const liveMonthlyEarned = Math.round((paidClosedSeconds / 60) * compRate)
             
             const payment = selectedMonth !== 'Last 7 Days' ? payments.find(p => p['Employee ID'] === a.Employee_ID && p['Project ID'] === `Month: ${selectedMonth}`) : null
             const monthlyEarned = payment ? payment.net_paid : liveMonthlyEarned
             
             let defaultTotal = Number(a.total_earnings) || 0
             if (defaultTotal === 0) {
-              defaultTotal = payments.filter(p => p['Employee ID'] === a.Employee_ID).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
-              if (!payment || selectedMonth === 'Last 7 Days') {
-                 defaultTotal += liveMonthlyEarned
+              const totalFromPayments = payments.filter(p => p['Employee ID'] === a.Employee_ID).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
+              if (totalFromPayments > 0) {
+                 defaultTotal = totalFromPayments
+                 if (!payment || selectedMonth === 'Last 7 Days') {
+                    defaultTotal += liveMonthlyEarned
+                 }
+              } else {
+                 defaultTotal = Math.round((allTimePaidClosedSeconds / 60) * compRate)
               }
             }
             
