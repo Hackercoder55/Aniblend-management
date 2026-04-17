@@ -7017,6 +7017,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
   const [pendingTotalEarnings, setPendingTotalEarnings] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [activeTier, setActiveTier] = useState<string | null>(null)
+  const [selectedAnimatorForModal, setSelectedAnimatorForModal] = useState<Animator | null>(null)
   
   const [searchQuery, setSearchQuery] = useState('')
   const [sortMode, setSortMode] = useState<'Name' | 'EmpID' | 'Load'>('Name')
@@ -7291,8 +7292,12 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             }
             
             return (
-              <div key={a.Employee_ID} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/10' : 'border-gray-200'}`}>
-                <div className="flex items-start justify-between mb-4">
+              <div key={a.Employee_ID} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md flex flex-col ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/10' : 'border-gray-200'}`}>
+                <div 
+                  className="flex items-start justify-between mb-4 cursor-pointer hover:bg-gray-50 -mx-3 -mt-3 p-3 rounded-xl transition-colors"
+                  onClick={() => setSelectedAnimatorForModal(a)}
+                  title="Click to view animator projects"
+                >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
                       style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
@@ -7388,6 +7393,84 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
           })
         )}
       </div>
+
+      {selectedAnimatorForModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-gray-100">
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold text-white shadow-sm" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                  {selectedAnimatorForModal.Name[0].toUpperCase()}
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-gray-800">{selectedAnimatorForModal.Name}</h3>
+                  <p className="text-sm text-gray-500 font-mono">{selectedAnimatorForModal.Employee_ID} • {selectedAnimatorForModal.Role || 'Animator'}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedAnimatorForModal(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 text-gray-500 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1 bg-gray-50/30">
+              <div className="bg-white rounded-xl border border-gray-100 overflow-hidden shadow-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Project ID</th>
+                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Duration</th>
+                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Approved Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {projects
+                      .filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()))
+                      .sort((a, b) => {
+                        const da = a.Approved_Date || a['Date Approved'] || a['Date Assigned'];
+                        const db = b.Approved_Date || b['Date Approved'] || b['Date Assigned'];
+                        if (!da) return 1; if (!db) return -1;
+                        try { return parseDate(db).getTime() - parseDate(da).getTime() } catch(e) { return 0 }
+                      })
+                      .map((p, i) => {
+                        const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status)
+                        const isProgress = ['WIP', 'Allocated', 'Review', 'Changes', 'Changes Allocated'].includes(p.Status)
+                        
+                        let badgeColor = 'bg-gray-100 text-gray-600 border-gray-200'
+                        if (isApproved) badgeColor = 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                        else if (p.Status === 'Review') badgeColor = 'bg-amber-100 text-amber-700 border-amber-200'
+                        else if (isProgress) badgeColor = 'bg-blue-100 text-blue-700 border-blue-200'
+                        
+                        return (
+                          <tr key={i} className="hover:bg-gray-50 transition-colors">
+                            <td className="p-3">
+                              <p className="text-sm font-bold text-gray-800">{p.Project_ID}</p>
+                              <p className="text-xs text-gray-500 truncate max-w-[200px]" title={p.Project_title}>{p.Project_title || '—'}</p>
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${badgeColor}`}>
+                                {p.Status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-sm font-semibold text-gray-700">{p.Duration || '—'}</td>
+                            <td className="p-3 text-xs text-gray-500 hidden sm:table-cell">{p.Approved_Date || p['Date Approved'] || '—'}</td>
+                          </tr>
+                        )
+                    })}
+                    {projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase())).length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="p-8 text-center text-gray-400 text-sm">No projects found for this animator.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
