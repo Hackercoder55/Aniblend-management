@@ -5035,7 +5035,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
-  const [section, setSection] = useState<'send' | 'pending' | 'done'>('pending')
+  const [section, setSection] = useState<'send' | 'pending' | 'acknowledged' | 'paid'>('pending')
   const [selectedEids, setSelectedEids] = useState<Set<string>>(new Set())
   const [printInvoice, setPrintInvoice] = useState<Invoice | null>(null)
   const [bulkPrintInvoices, setBulkPrintInvoices] = useState<Invoice[]>([])
@@ -5043,7 +5043,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const monthOptions = (() => {
     const opts: string[] = []
     const now = new Date()
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 13; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
       opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
     }
@@ -5085,9 +5085,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     const map: Record<string, Project[]> = {}
     for (const p of projects) {
       if (p.Status === 'Approved' && p.Payment_Status !== 'Paid' && !invoicedProjectIds.has(p.Project_ID)) {
-        const d = new Date(p['Date Approved'] || p['Date Assigned'] || '')
-        const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
-        if (pMonth !== selectedMonth && pMonth !== '') continue
+        // Month filter removed so it shows all unpaid projects overall
+        // const d = new Date(p['Date Approved'] || p['Date Assigned'] || '')
+        // const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+        // if (pMonth !== selectedMonth && pMonth !== '') continue
 
         let eid = p.Employee_ID || ''
         if (!eid && p.Animator) {
@@ -5110,6 +5111,13 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     const targetEids = overrideEids || selectedEids
     if (targetEids.size === 0) { addToast('Select at least one animator', 'error'); return }
     setSending(true)
+    let targetMonth = selectedMonth
+    if (section === 'send') {
+      const promptMonth = window.prompt("Which month are these invoices for?", selectedMonth)
+      if (!promptMonth) { setSending(false); return }
+      targetMonth = promptMonth
+    }
+
     let successCount = 0
     let failCount = 0
     try {
@@ -5181,10 +5189,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
         const finalNet = Math.round(newTotalVal - tdsAmt)
 
-        // Use the current project thread first, fallback to animator main workspace channel
-        // Support both lowercase thread_id (returned by some DB queries) and uppercase Thread_ID
-        const selectedProjForThread = projs.find(p => (p as any).thread_id || p.Thread_ID)
-        const thread_id = (selectedProjForThread ? ((selectedProjForThread as any).thread_id || selectedProjForThread.Thread_ID) : '') || (anim as any).Discord_Channel_ID || anim.Channel_ID || ''
+        // The Python Discord bot will pick this up and use the permanent "Invoices" thread
+        const thread_id = (anim as any).Discord_Channel_ID || anim.Channel_ID || ''
 
         // Check legal details BEFORE insert to set correct status
         const animAny = anim as any
@@ -5199,7 +5205,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_number: String(invoiceNumber || '').trim(),
           employee_id: String(eid || '').trim(),
           legal_name: (animAny.legal_name || anim.Name || 'Unknown').trim(),
-          month_label: String(selectedMonth || '').trim(),
+          month_label: String(targetMonth || '').trim(),
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
           total_amount: Number(grossTotal || 0),
@@ -5346,7 +5352,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
   const monthInvoices = invoices.filter(inv => inv.month_label === selectedMonth)
   const pendingInvoices = monthInvoices.filter(inv => ['Sent', 'Edit Requested', 'Awaiting Details', 'Draft'].includes(inv.status))
-  const doneInvoices = monthInvoices.filter(inv => ['Acknowledged', 'Paid', 'Downloaded'].includes(inv.status))
+  const acknowledgedInvoices = monthInvoices.filter(inv => inv.status === 'Acknowledged')
+  const paidInvoices = monthInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status))
 
   // Name-wise search helper
   const matchesInvoiceSearch = (nameOrEid: string) => {
@@ -5691,7 +5698,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         <div className="flex items-center gap-3 flex-wrap">
           <button style={tabStyle('pending')} onClick={() => setSection('pending')}>⚠️ Pending Acknowledgement {pendingInvoices.length > 0 && `(${pendingInvoices.length})`}</button>
           <button style={tabStyle('send')} onClick={() => setSection('send')}>📤 Send Invoices</button>
-          <button style={tabStyle('done')} onClick={() => setSection('done')}>✅ Acknowledged / Paid</button>
+          <button style={tabStyle('acknowledged')} onClick={() => setSection('acknowledged')}>✅ Acknowledged</button>
+          <button style={tabStyle('paid')} onClick={() => setSection('paid')}>💰 Paid</button>
         </div>
         <input
           type="text"
@@ -5781,7 +5789,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
-                  {['Animator', 'Invoice #', 'Projects', 'Total', 'Status', 'Sent At'].map(h => (
+                  {['Animator', 'Invoice #', 'Month', 'Projects', 'Total', 'Status', 'Sent At'].map(h => (
                     <th key={h} className="px-4 py-3 text-left">{h}</th>
                   ))}
                 </tr>
@@ -5793,6 +5801,16 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                   <tr key={inv.id} className="border-b border-gray-50 hover:bg-amber-50/30">
                     <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500">
+                      <select value={inv.month_label} onChange={async (e) => {
+                        const newMonth = e.target.value;
+                        await apiClient.from('invoices').update({ month_label: newMonth }).eq('id', inv.id);
+                        addToast(`Changed month to ${newMonth}`, 'success');
+                        fetchInvoices();
+                      }} className="bg-transparent border-b border-gray-200 focus:outline-none cursor-pointer">
+                        {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{(inv.line_items || []).length} project(s)</td>
                     <td className="px-4 py-3 font-medium">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
                     <td className="px-4 py-3">
@@ -5825,22 +5843,13 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         </div>
       )}
 
-      {/* SECTION: Acknowledged / Paid / Downloaded */}
-      {section === 'done' && (
+      {/* SECTION: Acknowledged */}
+      {section === 'acknowledged' && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100">
-            <div className="flex items-center"><h3 className="font-bold text-gray-800">✅ Acknowledged / Paid / Downloaded</h3>
-            {doneInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status)).length > 0 && (
-              <button
-                onClick={() => setBulkPrintInvoices(doneInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status)))}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 ml-4"
-              >
-                📥 Download All (ZIP/PDF)
-              </button>
-            )}
-</div>
+            <div className="flex items-center"><h3 className="font-bold text-gray-800">✅ Acknowledged</h3></div>
           </div>
-          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : doneInvoices.length === 0 ? (
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : acknowledgedInvoices.length === 0 ? (
             <p className="p-6 text-sm text-gray-400">No acknowledged invoices yet.</p>
           ) : (
             <table className="w-full text-sm">
@@ -5852,40 +5861,119 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                 </tr>
               </thead>
               <tbody>
-                {doneInvoices
+                {acknowledgedInvoices
                   .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
                   .map(inv => {
-                  const isPaid = ['Paid', 'Downloaded'].includes(inv.status)
+                  return (
+                    <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        <select value={inv.month_label} onChange={async (e) => {
+                          const newMonth = e.target.value;
+                          await apiClient.from('invoices').update({ month_label: newMonth }).eq('id', inv.id);
+                          addToast(`Changed month to ${newMonth}`, 'success');
+                          fetchInvoices();
+                        }} className="bg-transparent border-b border-gray-200 focus:outline-none cursor-pointer">
+                          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">₹{Math.round(inv.total_amount || 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-red-600">−₹{Math.round(inv.tds_amount || 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 font-semibold text-emerald-700">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-700">
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400 shrink-0">Awaiting payment</span>
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
+                              await apiClient.from('invoices').delete().eq('id', inv.id)
+                              addToast(`Deleted invoice #${inv.invoice_number}`, 'success')
+                              fetchInvoices()
+                            }}
+                            className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100 shrink-0"
+                            title="Delete Invoice"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* SECTION: Paid / Downloaded */}
+      {section === 'paid' && (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <div className="flex items-center"><h3 className="font-bold text-gray-800">💰 Paid / Downloaded</h3>
+            {paidInvoices.length > 0 && (
+              <button
+                onClick={() => setBulkPrintInvoices(paidInvoices)}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 ml-4"
+              >
+                📥 Download All (ZIP/PDF)
+              </button>
+            )}
+            </div>
+          </div>
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : paidInvoices.length === 0 ? (
+            <p className="p-6 text-sm text-gray-400">No paid invoices yet.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  {['Animator', 'Invoice #', 'Month', 'Gross', 'TDS', 'Net', 'Status', 'Action'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {paidInvoices
+                  .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
+                  .map(inv => {
                   const isDownloaded = inv.status === 'Downloaded'
                   return (
                     <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
                       <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">{inv.month_label}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        <select value={inv.month_label} onChange={async (e) => {
+                          const newMonth = e.target.value;
+                          await apiClient.from('invoices').update({ month_label: newMonth }).eq('id', inv.id);
+                          addToast(`Changed month to ${newMonth}`, 'success');
+                          fetchInvoices();
+                        }} className="bg-transparent border-b border-gray-200 focus:outline-none cursor-pointer">
+                          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </td>
                       <td className="px-4 py-3">₹{Math.round(inv.total_amount || 0).toLocaleString()}</td>
                       <td className="px-4 py-3 text-red-600">−₹{Math.round(inv.tds_amount || 0).toLocaleString()}</td>
                       <td className="px-4 py-3 font-semibold text-emerald-700">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isDownloaded ? 'bg-gray-100 text-gray-600' :
-                          isPaid ? 'bg-emerald-100 text-emerald-700' :
-                            'bg-violet-100 text-violet-700'
-                          }`}>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isDownloaded ? 'bg-gray-100 text-gray-600' : 'bg-emerald-100 text-emerald-700'}`}>
                           {isDownloaded ? '✓ Downloaded' : inv.status}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          {isPaid ? (
-                            <button
-                              onClick={() => handleDownload(inv)}
-                              className="px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0"
-                              style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
-                            >
-                              {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-400 shrink-0">Awaiting payment</span>
-                          )}
+                          <button
+                            onClick={() => handleDownload(inv)}
+                            className="px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0"
+                            style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
+                          >
+                            {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
+                          </button>
                           <button
                             onClick={async () => {
                               if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
@@ -5971,6 +6059,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
 
   const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0, bonusNote: string = "") => {
+    const targetMonth = window.prompt("Which month should this payment be recorded under?", selectedMonth || monthOptions[1])
+    if (!targetMonth) return // User cancelled
+    
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
@@ -6010,9 +6101,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus: bonus > 0 ? bonus : 0,
         paid_date: formatDate(),
         Timestamp: new Date().toISOString(),
-        'Project ID': `Month: ${selectedMonth}`
+        'Project ID': `Month: ${targetMonth}`
       };
-      const monthPay = paymentForMonthByEmpId[eid];
+      // For upserting monthPay we check against targetMonth now
+      const monthPay = payments.find(p => p['Employee ID'] === eid && p['Project ID'] === `Month: ${targetMonth}`);
       let payErr;
       if (monthPay && monthPay.Payment_Status !== 'Paid') {
         const { error } = await apiClient.from('payments').update(payPayload).match({ id: monthPay.id });
@@ -6048,9 +6140,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .eq('employee_id', eid)
           .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details']);
         
-        if (selectedMonth !== 'All') {
-          q = q.eq('month_label', selectedMonth);
-        }
+        // We shouldn't restrict the invoice paid update by selectedMonth since it's an overall list now,
+        // but let's update invoices that match the targetMonth if needed, or just all open invoices.
+        // The user said "paid krte hi woh paid wale me chale jaye jis month me pay hua h".
+        // Let's update any pending invoices for this targetMonth.
+        q = q.eq('month_label', targetMonth);
         await q;
       } catch (invErr) {
         console.error('Failed to update invoice status:', invErr)
@@ -6204,8 +6298,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const approvedSecondsByEmpId: Record<string, number> = {}
   projects.filter(p => 
     p.Status === 'Approved' && 
-    !deferredProjects.has(p.Project_ID) &&
-    (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth))
+    !deferredProjects.has(p.Project_ID)
+    // Month filter removed for overall view
   ).forEach(p => {
     // Collect all unique Employee IDs for this project (both primary and shared group animators)
     const empIds = new Set<string>()
@@ -6268,8 +6362,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     const proj = projects.find(p => 
       p.Project_ID === projectId && 
       p.Status === 'Approved' && 
-      !deferredProjects.has(p.Project_ID) &&
-      (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth))
+      !deferredProjects.has(p.Project_ID)
+      // Month filter removed
     )
     if (!proj) return
 
@@ -6297,13 +6391,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // Helper: check if animator has any approved project in the selected month
+  // Helper: check if animator has any approved project overall
   const animatorInMonth = (eid: string, animName: string) => {
-    if (selectedMonth === 'All') return true
     return projects.some(p =>
       p.Status === 'Approved' &&
-      (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase())) &&
-      (p['Date Approved'] || '').includes(selectedMonth)
+      (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase()))
     )
   }
 
@@ -6332,7 +6424,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const animatorProjects = [
         ...projects.filter(p =>
           p.Status === 'Approved' &&
-          (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth)) &&
           (p.Employee_ID === eid ||
             (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
@@ -6401,12 +6492,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹5000/minute.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <select
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none">
-              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
+            {/* Month select removed to make the view overall */}
           </div>
         </div>
         <div className="relative mb-4">
