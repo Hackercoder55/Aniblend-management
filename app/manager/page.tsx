@@ -42,6 +42,9 @@ interface Project {
   animation_revision_date?: string
   ready_to_render_date?: string
   render_qa_date?: string
+  Lighting_Artist?: string
+  Lighting_Discord_ID?: string
+  stl_override?: boolean
 }
 
 interface Animator {
@@ -62,6 +65,7 @@ interface Animator {
   'Contract Type': string
   Compensation: string
   Render: string
+  others_amount?: number | string
 }
 
 interface DashboardUser {
@@ -4550,6 +4554,7 @@ function NotesTab({ user }: { user: DashboardUser }) {
 // ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
 
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
+  const [printInvoice, setPrintInvoice] = useState<any>(null)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [dateFieldFilters, setDateFieldFilters] = useState<string[]>(['Date Assigned'])
@@ -4562,6 +4567,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     { label: 'Approved', key: 'Date Approved' },
   ]
   const [channelFilter, setChannelFilter] = useState('all')
+  const [leadFilter, setLeadFilter] = useState('all')
   const [projSearch, setProjSearch] = useState('')
   const [markingId, setMarkingId] = useState<string | null>(null)
   const [reportModalStage, setReportModalStage] = useState<string | null>(null)
@@ -4611,6 +4617,13 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   const byChannel = (list: Project[]) =>
     channelFilter === 'all' ? list : list.filter(p => getChannel(p.Project_ID) === channelFilter)
 
+  const byLead = (list: Project[]) =>
+    leadFilter === 'all' ? list : list.filter(p => (p.Lead || '').toLowerCase() === leadFilter.toLowerCase())
+
+  const availableLeads = Array.from(
+    new Set(projects.map(p => p.Lead).filter(Boolean))
+  ).sort()
+
   const availableChannels = Array.from(
     new Set(projects.map(p => getChannel(p.Project_ID)).filter(Boolean))
   ).sort()
@@ -4652,7 +4665,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     setMarkingId(null)
   }
 
-  const ProjectCard = ({ project, showMarkPaid = false }: { project: Project; showMarkPaid?: boolean }) => {
+  const ProjectCard = ({ project, showMarkPaid = false, showRemoveSTL = false }: { project: Project; showMarkPaid?: boolean; showRemoveSTL?: boolean }) => {
     const durStr = formatSec(parseDurationSec(project.Duration, project.Project_ID))
     
     const statusDateStr = getDateForStage(project, project.Status)
@@ -4710,16 +4723,16 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
   // Helper to generate the data for the requested report
   const generateReportData = (stage: string) => {
-    let projs = byChannel(dedup(projects.filter(p => {
+    let projs = byLead(byChannel(dedup(projects.filter(p => {
        const secs = parseDurationSec(p.Duration, p.Project_ID)
        if (stage === 'STL') {
-         return secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
+         return secs > 180 && !p.stl_override && matchProj(p)
        } else {
-         const isSTL = secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
+         const isSTL = secs > 180 && !p.stl_override
          if (isSTL) return false
          return p.Status === stage && matchProj(p)
        }
-    })))
+    }))))
     
     if (dateFrom || dateTo) {
       projs = projs.filter(p => {
@@ -4873,16 +4886,16 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
       <div className="flex gap-4 overflow-x-auto pb-4 items-start w-full">
         {TRACKER_STAGES.map(stage => {
           // Filter projects for this column
-          let stageProjects = byChannel(dedup(projects.filter(p => {
+          let stageProjects = byLead(byChannel(dedup(projects.filter(p => {
              const secs = parseDurationSec(p.Duration, p.Project_ID)
              if (stage === 'STL') {
-               return secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
+               return secs > 180 && !p.stl_override && matchProj(p)
              } else {
-               const isSTL = secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
+               const isSTL = secs > 180 && !p.stl_override
                if (isSTL) return false // hide from standard viewport/render stages
                return p.Status === stage && matchProj(p)
              }
-          })))
+          }))))
 
           if (dateFrom || dateTo) {
             stageProjects = stageProjects.filter(p => {
@@ -6411,16 +6424,41 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const currentMinsStr = manualMinutes[eid] !== undefined ? manualMinutes[eid] : autoMins.toFixed(2)
       const currentMins = parseFloat(currentMinsStr) || 0
 
-      const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
-      const gross = currentMins * 5000
+      const tdsPct = parseFloat(tdsPercents[eid] || '10') || 10
+      const othersAmt = parseFloat(String(a.others_amount || '0')) || 0
       const bonusParsed = parseFloat(bonusAmounts[eid] || '0') || 0
-      const totalAmount = gross + bonusParsed
+      // Gross calculation: check each approved project for lighting split pricing
+      const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
+      let calculatedGross = 0
+      let leadBonus = 0
+      const animatorProjectsForCalc = projects.filter(p =>
+        p.Status === 'Approved' &&
+        (p.Employee_ID === eid ||
+          (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase())) ||
+          (p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()))
+      )
+      animatorProjectsForCalc.forEach(p => {
+        const projSec = parseDurationSec(p.Duration || '', p.Project_ID)
+        const projMins = projSec / 60
+        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()
+        const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()))
+        const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase()
+        if (isLead) leadBonus += 1000
+        if (isLighting) {
+          calculatedGross += projMins * 2000
+        } else if (isAnim) {
+          const rate = p.Lighting_Artist ? 3000 : 5000
+          calculatedGross += projMins * rate
+        }
+      })
+      const gross = calculatedGross > 0 ? calculatedGross : currentMins * 5000
+      const totalBonusParsed = bonusParsed + leadBonus
+      const totalAmount = gross + totalBonusParsed + othersAmt
       const net = totalAmount - (totalAmount * tdsPct / 100)
 
       const payInfo = latestPaymentByEmpId[eid]
 
       // Filter this animator's approved projects (exact name match, not substring)
-      const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
       const animatorProjects = [
         ...projects.filter(p =>
           p.Status === 'Approved' &&
@@ -6459,8 +6497,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         gross,
         net,
         tdsPct,
-        bonusAmt: bonusParsed,
-        bankDisplay,
+        bonusAmt: totalBonusParsed,
+        othersAmt,
+        totalAmount,
         animatorProjects: animatorProjects as Project[]
       }
     })
@@ -6514,11 +6553,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                 <tr className="bg-gray-50 border-y border-gray-100 text-gray-500 text-xs uppercase font-semibold">
                   <th className="px-4 py-3">Animator</th>
                   <th className="px-4 py-3">Total Minutes</th>
-                  <th className="px-4 py-3">Bank / UPI</th>
                   <th className="px-4 py-3 text-right">Gross (₹)</th>
+                  <th className="px-4 py-3 text-right">Bonus (₹)</th>
+                  <th className="px-4 py-3 text-right">Others (₹)</th>
+                  <th className="px-4 py-3 text-right">Total (₹)</th>
                   <th className="px-4 py-3 text-right">TDS %</th>
                   <th className="px-4 py-3 text-right">Net (₹)</th>
-                  <th className="px-4 py-3 text-right">Bonus (₹)</th>
                   <th className="px-4 py-3 text-center">Save / Pay</th>
                 </tr>
               </thead>
@@ -6557,11 +6597,29 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
-                        {r.bankDisplay}
-                      </td>
                       <td className="px-4 py-3 text-right font-mono text-gray-600">
                         ₹{r.gross.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={bonusAmounts[r.animator.Employee_ID] ?? ''}
+                              onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                              className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-gray-500">
+                        ₹{(r.othersAmt || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-semibold text-gray-800">
+                        ₹{(r.totalAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -6580,21 +6638,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                         <span className="font-mono font-bold text-lg text-emerald-600">
                           ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col items-end gap-1">
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-gray-400">₹</span>
-                            <input
-                              type="number"
-                              min="0"
-                              placeholder="0"
-                              value={bonusAmounts[r.animator.Employee_ID] ?? ''}
-                              onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
-                              className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
-                            />
-                          </div>
-                        </div>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col gap-2 items-center">
@@ -6623,7 +6666,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                     </tr>
                     {expandedAnimators.has(r.animator.Employee_ID) && (
                       <tr className="bg-gray-50/80">
-                        <td colSpan={6} className="px-10 py-4 border-b border-gray-100">
+                        <td colSpan={9} className="px-10 py-4 border-b border-gray-100">
                           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-inner">
                             <div className="flex items-center justify-between mb-3">
                               <h4 className="text-xs font-bold text-gray-700 uppercase">Projects ({r.animatorProjects.length})</h4>
@@ -7637,6 +7680,19 @@ export default function ManagerDashboard() {
 
   // In this system: role='manager' = Head user, role='head' = Manager user
   const isHead = user.role === 'manager'
+  // For Lead (non-Head) users, filter projects and animators to only their assigned ones
+  const leadName = user.full_name || ''
+  // Leads are also animators — show projects they lead AND their own animation work
+  const leadAnimator = animators.find(a => a.Name.toLowerCase() === leadName.toLowerCase())
+  const leadEid = leadAnimator?.Employee_ID || ''
+  const filteredProjects = isHead ? projects : projects.filter(p =>
+    (p.Lead || '').toLowerCase() === leadName.toLowerCase() ||
+    p.Employee_ID === leadEid ||
+    (leadName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(leadName.toLowerCase()))
+  )
+  const leadAnimatorEids = new Set(filteredProjects.map(p => p.Employee_ID).filter(Boolean))
+  if (leadEid) leadAnimatorEids.add(leadEid) // always include themselves
+  const filteredAnimators = isHead ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
   // managerOnly:true = show ONLY to Head (manager role)
   const TABS = ALL_TABS.filter(t => !t.managerOnly || isHead)
 
@@ -7744,20 +7800,20 @@ export default function ManagerDashboard() {
             </div>
           ) : (
             <>
-              {activeTab === 'overview' && <OverviewTab projects={projects} animators={animators} />}
+              {activeTab === 'overview' && <OverviewTab projects={filteredProjects} animators={filteredAnimators} />}
               {activeTab === 'tiers' && <TiersTab animators={animators} projects={projects} onRefresh={fetchData} />}
               {activeTab === 'assign' && <AssignTab projects={projects} animators={animators} onRefresh={fetchData} />}
               {activeTab === 'duplicates' && <DuplicatesTab projects={projects} />}
-              {activeTab === 'bank' && <ProjectsTab projects={projects} onRefresh={fetchData} user={user} />}
-              {activeTab === 'team' && <TeamTab animators={animators} projects={projects} user={user} onRefresh={fetchData} />}
+              {activeTab === 'bank' && <ProjectsTab projects={filteredProjects} onRefresh={fetchData} user={user} />}
+              {activeTab === 'team' && <TeamTab animators={filteredAnimators} projects={filteredProjects} user={user} onRefresh={fetchData} />}
               {activeTab === 'create' && <CreateProjectTab onRefresh={fetchData} projects={projects} />}
               {activeTab === 'submissions' && <FormSubmissionsTab animators={animators} userRole={user.role} userLead={user.full_name} />}
-              {activeTab === 'analytics' && <AnalyticsTab projects={projects} animators={animators} />}
+              {activeTab === 'analytics' && <AnalyticsTab projects={filteredProjects} animators={filteredAnimators} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
-              {activeTab === 'budget' && <BudgetTrackerTab projects={projects} onRefresh={fetchData} />}
+              {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
             </>
           )}
         </div>
