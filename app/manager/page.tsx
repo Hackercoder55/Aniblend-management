@@ -4949,9 +4949,225 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
 
 
+
+// ─── User Management Tab ──────────────────────────────────────────────────────
+function UserManagementTab({ user }: { user: DashboardUser }) {
+  const { addToast } = useToast()
+  const [users, setUsers] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'head' as string, employee_id: '' })
+
+  const fetchUsers = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/manage-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list', caller_email: user.email, caller_role: user.role })
+      })
+      const data = await res.json()
+      if (data.data) setUsers(data.data)
+      else if (data.error) addToast('❌ ' + data.error, 'error')
+    } catch (e: any) {
+      addToast('❌ Failed to load users', 'error')
+    }
+    setLoading(false)
+  }, [user])
+
+  useEffect(() => { fetchUsers() }, [fetchUsers])
+
+  const handleCreate = async () => {
+    if (!form.email || !form.password || !form.full_name) {
+      addToast('⚠️ Email, password, and full name are required', 'error')
+      return
+    }
+    setCreating(true)
+    try {
+      const res = await fetch('/api/manage-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          caller_email: user.email,
+          caller_role: user.role,
+          ...form
+        })
+      })
+      const data = await res.json()
+      if (data.data) {
+        addToast(`✅ User "${form.full_name}" created successfully`)
+        setForm({ email: '', password: '', full_name: '', role: 'head', employee_id: '' })
+        setShowForm(false)
+        fetchUsers()
+      } else {
+        addToast('❌ ' + (data.error || 'Failed to create user'), 'error')
+      }
+    } catch (e: any) {
+      addToast('❌ ' + e.message, 'error')
+    }
+    setCreating(false)
+  }
+
+  const handleDelete = async (userId: string, userName: string) => {
+    if (!window.confirm(`Are you sure you want to delete user "${userName}"? This cannot be undone.`)) return
+    try {
+      const res = await fetch('/api/manage-users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', caller_email: user.email, caller_role: user.role, user_id: userId })
+      })
+      const data = await res.json()
+      if (data.message) {
+        addToast(`✅ Deleted "${userName}"`)
+        fetchUsers()
+      } else {
+        addToast('❌ ' + (data.error || 'Failed'), 'error')
+      }
+    } catch (e: any) {
+      addToast('❌ ' + e.message, 'error')
+    }
+  }
+
+  const roleLabels: Record<string, string> = { manager: '👑 Head', head: '👤 Manager/Lead' }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">🔐 User Management</h2>
+            <p className="text-xs text-gray-500">Create and manage dashboard login accounts. Only you (Head) can access this.</p>
+          </div>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="px-4 py-2 text-sm font-semibold text-white rounded-lg transition-all"
+            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+            {showForm ? '✕ Cancel' : '+ Create User'}
+          </button>
+        </div>
+
+        {/* Create User Form */}
+        {showForm && (
+          <div className="mb-6 p-5 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl">
+            <h3 className="font-semibold text-gray-800 mb-4">Create New User</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  value={form.full_name}
+                  onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+                  placeholder="e.g. Divya"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Must match the Lead name used in /lead command</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Email *</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="e.g. divya@tfa.com"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Password *</label>
+                <input
+                  type="text"
+                  value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="Set a password"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Role *</label>
+                <select
+                  value={form.role}
+                  onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+                  <option value="head">👤 Manager / Lead</option>
+                  <option value="manager">👑 Head (Full Access)</option>
+                </select>
+              </div>
+            </div>
+            <button
+              onClick={handleCreate}
+              disabled={creating}
+              className="mt-4 px-6 py-2 text-sm font-semibold text-white rounded-lg disabled:opacity-50 transition-all"
+              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+              {creating ? 'Creating...' : '✅ Create Account'}
+            </button>
+          </div>
+        )}
+
+        {/* Users List */}
+        {loading ? (
+          <p className="text-center text-sm text-gray-400 py-10">Loading users...</p>
+        ) : users.length === 0 ? (
+          <p className="text-center text-sm text-gray-400 py-10">No users found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-y border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Role</th>
+                  <th className="px-4 py-3">Last Login</th>
+                  <th className="px-4 py-3 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                          style={{ background: u.role === 'manager' ? 'linear-gradient(135deg, #7e22ce, #a855f7)' : 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                          {(u.full_name || '?')[0]}
+                        </div>
+                        <span className="font-medium text-gray-800">{u.full_name || '—'}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{u.email}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'manager' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                        {roleLabels[u.role] || u.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-400">
+                      {u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {u.email === user.email ? (
+                        <span className="text-xs text-gray-400">You</span>
+                      ) : (
+                        <button
+                          onClick={() => handleDelete(u.id, u.full_name || u.email)}
+                          className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100">
+                          🗑️ Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -4968,6 +5184,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
+  { id: 'users', label: 'User Management', icon: '🔐', managerOnly: true },
 ]
 
 
@@ -7814,6 +8031,7 @@ export default function ManagerDashboard() {
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
+              {activeTab === 'users' && <UserManagementTab user={user} />}
             </>
           )}
         </div>
