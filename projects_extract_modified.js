@@ -1,1309 +1,3 @@
-'use client'
-
-import React, { useState, useEffect, useCallback, Fragment } from 'react'
-import { useRouter } from 'next/navigation'
-
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer
-} from 'recharts'
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface Project {
-  Project_ID: string
-  Project_title: string
-  Project_link: string
-  Animator: string
-  Employee_ID: string
-  Lead: string
-  Status: string
-  assigned_head?: string
-  'Date Assigned': string
-  'Date Approved': string
-  Approved_Date: string
-  Duration: string
-  Payment_Status: string
-  Approved_Video: string
-  Thread_ID: string
-  Discord_ID: string
-  Discord_Username: string
-  WIP: boolean
-  client_paid_date: string
-  paid_date?: string
-  Priority?: string
-  Head_Comment?: string
-  progress?: string
-  emp_type?: string
-  warning?: string
-  acknowledgement?: string
-  output_history?: { date: string; empId: string; seconds: number }[]
-  viewport_date?: string
-  animation_revision_date?: string
-  ready_to_render_date?: string
-  render_qa_date?: string
-  Lighting_Artist?: string
-  Lighting_Discord_ID?: string
-  stl_override?: boolean
-}
-
-interface Animator {
-  Employee_ID: string
-  Name: string
-  'Current video': number
-  'Total video': number
-  Role: string
-  total_earnings?: number
-  Discord_ID: string
-  Discord_Username: string
-  Channel_ID: string
-  'Interview notes': string
-  'Phone Number': string
-  'E-mail': string
-  phone?: string
-  email?: string
-  'Contract Type': string
-  Compensation: string
-  Render: string
-  others_amount?: number | string
-}
-
-interface DashboardUser {
-  id: string
-  email: string
-  role: string
-  full_name: string
-  employee_id: string
-}
-
-interface FormSubmission {
-  id: number
-  timestamp: string
-  project_id: string
-  employee_id: string
-  lead_name: string
-  version: string
-  video_link: string
-  comments: string
-  title: string
-  status: string
-  feedback: string
-  animator_notified: boolean
-  discord_notified: string
-  created_at: string
-}
-
-interface Payment {
-  id: number
-  Timestamp: string
-  'Employee ID': string
-  'Project ID': string
-  'Contract Type': string
-  'UPI ID': string
-  'Account Number': string
-  Name: string
-  'IFSC CODE': string
-  'Account Holder Name': string
-  'Bank Branch'?: string
-  'PAN Number': string
-  'Full Name': string
-  Payment_Status: string
-  Discord_ID: string
-  Discord_Username: string
-  Discord_Notified: string
-  paid_date?: string
-  gross?: number          // stored on Mark Paid
-  tds_percent?: number    // stored on Mark Paid
-  net_paid?: number       // stored on Mark Paid
-  bonus?: number          // stored on Mark Paid
-  bonus_note?: string
-}
-
-interface Note {
-  id: number
-  created_by: string
-  assigned_to: string
-  content: string
-  is_todo: boolean
-  is_done: boolean
-  priority: 'low' | 'medium' | 'high'
-  created_at: string
-  updated_at: string
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-export const STATUS_LABELS: Record<string, string> = {
-  'Pending': 'Pending',
-  'Ongoing': 'Ongoing',
-  'Active': 'Animation in Progress',
-  'Review': 'Viewport',
-  'Changes Requested': 'Animation Revision',
-  'Ready to Render': 'Ready to Render',
-  'Render QA': 'Render Q/A',
-  'Approved': 'Approved',
-  'Paid': 'Paid',
-  'Closed': 'Closed'
-}
-
-function formatDate(d?: Date): string {
-  return (d || new Date()).toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  })
-}
-
-/** Parse "DD MMM YYYY" or "DD MMM YY" into a Date (local midnight, cross-browser safe) */
-function parseDate(s: string): Date {
-  if (!s) return new Date(0)
-  const MONTHS: Record<string, number> = {
-    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
-    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
-  }
-  const parts = s.trim().split(' ')
-  if (parts.length === 3) {
-    const day = parseInt(parts[0], 10)
-    const mon = MONTHS[parts[1]]
-    const yr = parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2], 10)
-    if (!isNaN(day) && mon !== undefined && !isNaN(yr)) {
-      return new Date(yr, mon, day) // local midnight — no timezone shift
-    }
-  }
-  // ISO fallback: "2026-02-21" → local midnight via T00:00:00
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s.trim())) {
-    const [y, m, d] = s.trim().split('-').map(Number)
-    return new Date(y, m - 1, d)
-  }
-  const native = new Date(s)
-  return isNaN(native.getTime()) ? new Date(0) : native
-}
-
-/** Extract duration from Project_ID: "NUMBER_DURATION_CHANNEL" → "80 sec" */
-function extractDuration(projectId: string): string {
-  if (!projectId) return ''
-  const parts = projectId.split('_')
-  if (parts.length >= 2 && parts[1] && !isNaN(Number(parts[1]))) {
-    return `${parts[1]} sec`
-  }
-  return ''
-}
-
-/** Extract channel from Project_ID: last segment, normalized to plip/her/his/other */
-function extractChannel(projectId: string): string {
-  if (!projectId) return 'other'
-  const parts = projectId.split('_')
-  if (parts.length < 2) return 'other'
-  const last = parts[parts.length - 1].toLowerCase()
-  if (['plip', 'her', 'his'].includes(last)) return last
-  return 'other'
-}
-
-/** Parse duration value to seconds: "80 sec" → 80, "2 min" → 120 */
-function parseDurationSec(duration: string, projectId?: string): number {
-  const raw = duration || (projectId ? extractDuration(projectId) : '') || ''
-  if (!raw) return 0
-  const str = raw.toLowerCase()
-  const n = parseFloat(str.replace(/[^0-9.]/g, '')) || 0
-  if (str.includes('min') || str.includes('m')) return n * 60
-  if (str.includes('day') || str.includes('d')) return n * 24 * 60 * 60
-  if (str.includes('hr') || str.includes('h')) return n * 60 * 60
-  return n
-}
-
-/** Format seconds as "Xm Ys" or "Xs" */
-function formatSec(sec: number): string {
-  if (!sec || sec <= 0) return '—'
-  sec = Math.round(sec)
-  if (sec < 60) return `${sec} sec`
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  if (s === 0) return `${m} min`
-  return `${m} min ${s} sec`
-}
-
-/** Display a Duration field: if purely numeric append " sec", else return as-is */
-function formatDurationDisplay(duration: string, projectId?: string): string {
-  const d = duration || (projectId ? extractDuration(projectId) : '') || ''
-  if (!d) return '—'
-  if (/^\d+$/.test(d.trim())) return `${d.trim()} sec`
-  return d
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, { bg: string; text: string }> = {
-    Approved: { bg: '#dcfce7', text: '#15803d' },
-    Active: { bg: '#dbeafe', text: '#1d4ed8' },
-    Review: { bg: '#fef9c3', text: '#854d0e' },
-    Pending: { bg: '#ede9fe', text: '#6d28d9' },
-    Unassigned: { bg: '#f1f5f9', text: '#64748b' },
-    'Changes Requested': { bg: '#fff1f2', text: '#be123c' },
-    'Ready to Render': { bg: '#e0e7ff', text: '#4338ca' },
-    'Render QA': { bg: '#ffedd5', text: '#c2410c' },
-    Paid: { bg: '#dcfce7', text: '#15803d' },
-    Closed: { bg: '#f1f5f9', text: '#64748b' },
-  }
-  const s = styles[status] || { bg: '#f1f5f9', text: '#64748b' }
-  const displayLabel = STATUS_LABELS[status] || status
-  return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-      style={{ backgroundColor: s.bg, color: s.text }}>
-      {displayLabel}
-    </span>
-  )
-}
-
-// ─── Toast ────────────────────────────────────────────────────────────────────
-
-interface ToastMsg { id: number; text: string; type: 'success' | 'error' }
-
-function Toast({ toasts, onDismiss }: { toasts: ToastMsg[]; onDismiss: (id: number) => void }) {
-  return (
-    <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 pointer-events-none">
-      {toasts.map(t => (
-        <div key={t.id}
-          className="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white max-w-xs"
-          style={{ background: t.type === 'success' ? 'linear-gradient(135deg,#10b981,#059669)' : 'linear-gradient(135deg,#ef4444,#dc2626)' }}>
-          <span>{t.type === 'success' ? '✅' : '❌'}</span>
-          <span className="flex-1">{t.text}</span>
-          <button onClick={() => onDismiss(t.id)} className="opacity-70 hover:opacity-100">✕</button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function useToast() {
-  const [toasts, setToasts] = useState<ToastMsg[]>([])
-  const addToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
-    const id = Date.now()
-    setToasts(prev => [...prev, { id, text, type }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500)
-  }, [])
-  const dismiss = useCallback((id: number) => setToasts(prev => prev.filter(t => t.id !== id)), [])
-  return { toasts, addToast, dismiss }
-}
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-  return (
-    <button onClick={copy} className="ml-1 text-gray-300 hover:text-indigo-500 transition-colors" title="Copy">
-      {copied
-        ? <svg className="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-        : <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-      }
-    </button>
-  )
-}
-
-// ─── Notes & Rating helpers ───────────────────────────────────────────────────
-
-interface NoteEntry {
-  id: string
-  date: string
-  author: string
-  role: 'manager' | 'head'
-  note: string
-  rating?: number
-}
-
-function parseNotes(raw: string): NoteEntry[] {
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) return parsed
-  } catch {
-    if (raw.trim()) return [{ id: 'legacy', date: '', author: 'System', role: 'manager', note: raw.trim() }]
-  }
-  return []
-}
-
-function serializeNotes(entries: NoteEntry[]): string { return JSON.stringify(entries) }
-
-function avgRating(entries: NoteEntry[]): number | null {
-  const rated = entries.filter(e => e.rating != null)
-  if (rated.length === 0) return null
-  return Math.round((rated.reduce((s, e) => s + (e.rating ?? 0), 0) / rated.length) * 10) / 10
-}
-
-function RatingStars({ value, max = 10 }: { value: number; max?: number }) {
-  const filled = Math.round(value)
-  const color = filled >= 8 ? '#10b981' : filled >= 5 ? '#f59e0b' : '#ef4444'
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      {Array.from({ length: max }).map((_, i) => (
-        <svg key={i} className="w-3 h-3" viewBox="0 0 20 20" fill={i < filled ? color : '#e5e7eb'}>
-          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-        </svg>
-      ))}
-      <span className="ml-1 text-xs font-semibold" style={{ color }}>{value}/10</span>
-    </span>
-  )
-}
-
-function InteractiveRatingPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const [hovered, setHovered] = useState(0)
-  const display = hovered || value
-  const color = display >= 8 ? '#10b981' : display >= 5 ? '#f59e0b' : '#ef4444'
-  return (
-    <div className="flex items-center gap-1">
-      {Array.from({ length: 10 }).map((_, i) => (
-        <button key={i} type="button" onClick={() => onChange(i + 1)}
-          onMouseEnter={() => setHovered(i + 1)} onMouseLeave={() => setHovered(0)}
-          className="transition-transform hover:scale-125">
-          <svg className="w-5 h-5" viewBox="0 0 20 20" fill={i < display ? color : '#e5e7eb'}>
-            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-          </svg>
-        </button>
-      ))}
-      <span className="ml-2 text-sm font-bold" style={{ color, minWidth: 32 }}>{display ? `${display}/10` : '—'}</span>
-    </div>
-  )
-}
-
-// ─── Overview Tab ─────────────────────────────────────────────────────────────
-
-function OverviewTab({ projects, animators }: { projects: Project[]; animators: Animator[] }) {
-  const today = formatDate()
-  const [activePanel, setActivePanel] = useState<string | null>(null)
-
-  const activeProjectsList = projects.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status))
-  const approvedTodayList = projects.filter(p => p['Date Approved'] === today)
-  const workingAnimatorsList = animators.filter(a => (a['Current video'] || 0) > 0)
-  const pendingProjectsList = projects.filter(p => p.Status === 'Pending')
-
-  const days: { label: string; assigned: number; approved: number }[] = []
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i)
-    const full = formatDate(d)
-    const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-    days.push({
-      label,
-      assigned: projects.filter(p => p['Date Assigned'] === full).length,
-      approved: projects.filter(p => p['Date Approved'] === full).length,
-    })
-  }
-
-  const recent = [...projects]
-    .filter(p => p['Date Assigned'])
-    .sort((a, b) => parseDate(b['Date Assigned']).getTime() - parseDate(a['Date Assigned']).getTime())
-    .slice(0, 5)
-
-  const approvedList = projects.filter(p => p.Status === 'Approved')
-  const uniqueProjectCount = new Set(projects.map(p => p.Project_ID)).size
-  const stats = [
-    { label: 'Total Projects', value: uniqueProjectCount, icon: '🗂️', color: '#374151', bg: '#f9fafb' },
-    { label: 'Active Projects', value: activeProjectsList.length, icon: '🎬', color: '#667eea', bg: '#f0f0ff' },
-    { label: 'Approved Today', value: approvedTodayList.length, icon: '✅', color: '#10b981', bg: '#ecfdf5' },
-    { label: 'Working Animators', value: workingAnimatorsList.length, icon: '👥', color: '#f59e0b', bg: '#fffbeb' },
-    { label: 'Pending Projects', value: pendingProjectsList.length, icon: '⏳', color: '#ef4444', bg: '#fef2f2' },
-  ]
-
-  const panelData: Record<string, React.ReactNode> = {
-    'Total Projects': (
-      <><p className="text-xs text-gray-400 mb-3">All {projects.length} projects · Approved: {approvedList.length} · Active: {activeProjectsList.length}</p>
-        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Project ID', 'Title', 'Animator', 'Status'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-          <tbody>{projects.map((p, i) => (
-            <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-              <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
-              <td className="px-3 py-2 text-xs font-medium text-gray-800 max-w-[130px] truncate">{p.Project_title || '—'}</td>
-              <td className="px-3 py-2 text-xs text-gray-600">{p.Animator || '—'}</td>
-              <td className="px-3 py-2"><StatusBadge status={p.Status} /></td>
-            </tr>))}</tbody></table></>
-    ),
-    'Active Projects': (
-      <><p className="text-xs text-gray-400 mb-3">Active, Review, or Changes Requested</p>
-        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Project ID', 'Title', 'Animator', 'Status'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-          <tbody>{activeProjectsList.length === 0 ? <tr><td colSpan={4} className="text-center py-6 text-gray-400">No active projects</td></tr> : activeProjectsList.map((p, i) => (
-            <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-              <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
-              <td className="px-3 py-2 text-xs font-medium text-gray-800 max-w-[130px] truncate">{p.Project_title || '—'}</td>
-              <td className="px-3 py-2 text-xs text-gray-600">{p.Animator || '—'}</td>
-              <td className="px-3 py-2"><StatusBadge status={p.Status} /></td>
-            </tr>))}</tbody></table></>
-    ),
-    'Approved Today': (
-      <><p className="text-xs text-gray-400 mb-3">Approved on {today}</p>
-        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Project ID', 'Title', 'Animator', 'Date Approved'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-          <tbody>{approvedTodayList.length === 0 ? <tr><td colSpan={4} className="text-center py-6 text-gray-400">No approvals today</td></tr> : approvedTodayList.map((p, i) => (
-            <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-              <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
-              <td className="px-3 py-2 text-xs font-medium text-gray-800 max-w-[130px] truncate">{p.Project_title || '—'}</td>
-              <td className="px-3 py-2 text-xs text-gray-600">{p.Animator || '—'}</td>
-              <td className="px-3 py-2 text-xs text-gray-500">{p['Date Approved'] || '—'}</td>
-            </tr>))}</tbody></table></>
-    ),
-    'Working Animators': (
-      <><p className="text-xs text-gray-400 mb-3">Animators with Current video &gt; 0</p>
-        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Name', 'Employee ID', 'Current Videos'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-          <tbody>{workingAnimatorsList.length === 0 ? <tr><td colSpan={3} className="text-center py-6 text-gray-400">No working animators</td></tr> : workingAnimatorsList.map((a, i) => (
-            <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-              <td className="px-3 py-2 text-xs font-medium text-gray-800">{a.Name}</td>
-              <td className="px-3 py-2 font-mono text-xs text-gray-500">{a.Employee_ID}</td>
-              <td className="px-3 py-2 font-bold text-amber-600">{a['Current video'] || 0}</td>
-            </tr>))}</tbody></table></>
-    ),
-    'Pending Projects': (
-      <><p className="text-xs text-gray-400 mb-3">Projects waiting to be assigned</p>
-        <table className="w-full text-sm"><thead><tr className="border-b border-gray-100">{['Project ID', 'Title', 'Status'].map(h => <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase">{h}</th>)}</tr></thead>
-          <tbody>{pendingProjectsList.length === 0 ? <tr><td colSpan={3} className="text-center py-6 text-gray-400">No pending projects</td></tr> : pendingProjectsList.map((p, i) => (
-            <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-              <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
-              <td className="px-3 py-2 text-xs font-medium text-gray-800 max-w-[130px] truncate">{p.Project_title || '—'}</td>
-              <td className="px-3 py-2"><StatusBadge status={p.Status} /></td>
-            </tr>))}</tbody></table></>
-    ),
-  }
-
-
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        {stats.map(s => (
-          <button key={s.label} onClick={() => setActivePanel(activePanel === s.label ? null : s.label)}
-            className="bg-white rounded-2xl p-5 shadow-sm border-2 text-left transition-all hover:shadow-md"
-            style={{ borderColor: activePanel === s.label ? s.color : '#f1f5f9' }}>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl mb-3" style={{ background: s.bg }}>{s.icon}</div>
-            <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
-            <p className="text-sm text-gray-500 mt-1">{s.label}</p>
-            <p className="text-xs mt-2" style={{ color: s.color }}>Click to view list →</p>
-          </button>
-        ))}
-      </div>
-
-      {/* Detail panel */}
-      {activePanel && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-800">{activePanel}</h3>
-            <button onClick={() => setActivePanel(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
-          </div>
-          <div className="overflow-x-auto">
-            {panelData[activePanel]}
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Project Activity (Last 14 Days)</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={days} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip /><Legend />
-            <Bar dataKey="assigned" name="Assigned" fill="#667eea" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="approved" name="Approved" fill="#10b981" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Recent Projects</h3>
-        {recent.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-4">No recent projects</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-gray-100">
-                {['Project ID', 'Title', 'Animator', 'Status', 'Date Assigned'].map(h => (
-                  <th key={h} className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {recent.map((p, i) => (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                    <td className="px-3 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
-                    <td className="px-3 py-2 text-xs font-medium text-gray-800 max-w-[160px] truncate">{p.Project_title || '—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-600">{p.Animator || '—'}</td>
-                    <td className="px-3 py-2"><StatusBadge status={p.Status} /></td>
-                    <td className="px-3 py-2 text-xs text-gray-400">{p['Date Assigned'] || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-
-// ─── Quick Assign Modal ───────────────────────────────────────────────────────
-
-// ─── Group Assign Modal ───────────────────────────────────────────────────────
-function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
-  projects: Project[]; animators: Animator[]; onClose: () => void; onSuccess: (msg: string) => void
-}) {
-  const [projSearch, setProjSearch] = useState('')
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
-  const [animSearch, setAnimSearch] = useState('')
-  const [selectedAnimators, setSelectedAnimators] = useState<Animator[]>([])
-  const [leadName, setLeadName] = useState('')
-  const [assigning, setAssigning] = useState(false)
-  const [error, setError] = useState('')
-
-  const matchProj = (p: Project) => !projSearch ||
-    p.Project_ID.toLowerCase().includes(projSearch.toLowerCase()) ||
-    (p.Project_title || '').toLowerCase().includes(projSearch.toLowerCase())
-  const displayedProjects = projSearch ? projects.filter(matchProj) : projects.slice(0, 80)
-  const filteredAnims = animators.filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
-
-  const toggleAnimator = (a: Animator) => {
-    setSelectedAnimators(prev =>
-      prev.find(x => x.Employee_ID === a.Employee_ID)
-        ? prev.filter(x => x.Employee_ID !== a.Employee_ID)
-        : [...prev, a]
-    )
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedProject) { setError('Select a project first.'); return }
-    if (selectedAnimators.length < 1) { setError('Select at least one animator.'); return }
-    setAssigning(true); setError('')
-    const duration = extractDuration(selectedProject.Project_ID) || selectedProject.Duration || null
-    let ok = 0; let failMsg = ''
-
-    // Remove any existing unassigned row for this project to avoid duplicates
-    await apiClient.from('projects').delete().eq('Project_ID', selectedProject.Project_ID).eq('Employee_ID', null)
-
-    for (const animator of selectedAnimators) {
-      const { error: err } = await apiClient.from('projects').insert({
-        Project_ID: selectedProject.Project_ID,
-        Project_title: selectedProject.Project_title || null,
-        Project_link: selectedProject.Project_link || null,
-        Duration: duration,
-        Animator: animator.Name,
-        Employee_ID: animator.Employee_ID,
-        Discord_ID: animator.Discord_ID || null,
-        Discord_Username: animator.Discord_Username || null,
-        Lead: leadName || selectedProject.Lead || null,
-        Status: 'Pending',
-        'Date Assigned': formatDate(),
-        Thread_ID: null,
-        WIP: false,
-      })
-      if (!err) {
-        await apiClient.from('animators').update({ 'Current video': (animator['Current video'] || 0) + 1 }).eq('Employee_ID', animator.Employee_ID)
-        ok++
-      } else { failMsg = err.message }
-    }
-    if (ok > 0) {
-      onSuccess(`Group workspace: ${ok} animator${ok > 1 ? 's' : ''} assigned to "${selectedProject.Project_title || selectedProject.Project_ID}"`)
-      onClose()
-    } else { setError(`Failed: ${failMsg}`); setAssigning(false) }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <div>
-            <h3 className="font-bold text-gray-800 text-lg">👥 Group Assign</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Pick one project + multiple animators → creates one row per animator</p>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex-1 overflow-hidden flex min-h-0">
-          {/* LEFT — project picker */}
-          <div className="w-1/2 border-r border-gray-100 flex flex-col overflow-hidden">
-            <div className="px-3 py-2.5 border-b border-gray-100 flex-shrink-0">
-              <input type="text" value={projSearch} onChange={e => setProjSearch(e.target.value)}
-                placeholder="Search project ID or title…"
-                className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-800" />
-            </div>
-            <p className="px-4 py-2 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-100 flex-shrink-0">
-              Select Project ({displayedProjects.length} shown)
-            </p>
-            <div className="overflow-y-auto p-2 space-y-1 flex-1">
-              {displayedProjects.length === 0
-                ? <p className="text-xs text-gray-400 text-center py-6">No projects found</p>
-                : displayedProjects.map(p => (
-                  <button key={p.Project_ID + p.Animator} type="button" onClick={() => setSelectedProject(p)}
-                    className="w-full text-left p-2.5 rounded-lg text-xs transition-all border"
-                    style={{ borderColor: selectedProject?.Project_ID === p.Project_ID ? '#667eea' : 'transparent', backgroundColor: selectedProject?.Project_ID === p.Project_ID ? '#f0f0ff' : 'transparent' }}>
-                    <p className="font-mono text-gray-400">{p.Project_ID}</p>
-                    <p className="font-medium text-gray-800 truncate mt-0.5">{p.Project_title || '—'}</p>
-                    {p.Animator && <p className="text-gray-400 mt-0.5">Currently: {p.Animator}</p>}
-                  </button>
-                ))}
-            </div>
-          </div>
-
-          {/* RIGHT — animators multi-select + lead */}
-          <div className="w-1/2 flex flex-col overflow-hidden">
-            {selectedProject && (
-              <div className="mx-4 mt-4 p-3 bg-indigo-50 rounded-xl text-xs border border-indigo-100 flex-shrink-0">
-                <p className="font-semibold text-indigo-800 truncate">{selectedProject.Project_title || selectedProject.Project_ID}</p>
-                <p className="font-mono text-indigo-400 mt-0.5">{selectedProject.Project_ID}</p>
-              </div>
-            )}
-            <div className="px-4 pt-4 pb-2 flex-shrink-0">
-              <p className="text-xs font-semibold text-gray-700 mb-1.5">
-                Animators <span className="text-indigo-500 font-bold">{selectedAnimators.length > 0 ? `(${selectedAnimators.length} selected)` : '(select multiple)'}</span>
-              </p>
-              <input type="text" value={animSearch} onChange={e => setAnimSearch(e.target.value)}
-                placeholder="Search animator…"
-                className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-800 mb-2" />
-              <div className="border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: '200px' }}>
-                {filteredAnims.map(a => {
-                  const checked = !!selectedAnimators.find(x => x.Employee_ID === a.Employee_ID)
-                  const load = a['Current video'] || 0
-                  const entries = parseNotes(a['Interview notes'])
-                  const avg = avgRating(entries)
-                  return (
-                    <button key={a.Employee_ID} type="button" onClick={() => toggleAnimator(a)}
-                      className="w-full text-left px-3 py-2.5 flex items-center gap-2.5 border-b border-gray-50 last:border-0 transition-all"
-                      style={{ backgroundColor: checked ? '#f0f0ff' : 'transparent' }}>
-                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border-2 transition-all`}
-                        style={{ borderColor: checked ? '#667eea' : '#d1d5db', backgroundColor: checked ? '#667eea' : 'transparent' }}>
-                        {checked && <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                      </div>
-                      <span className="flex-1 text-sm font-medium text-gray-800 truncate">{a.Name}</span>
-                      <span className="flex items-center gap-1.5 flex-shrink-0">
-                        {avg !== null && (
-                          <span className="text-xs font-bold px-1 py-0.5 rounded-full"
-                            style={{ backgroundColor: avg >= 7 ? '#dcfce7' : avg >= 5 ? '#fef9c3' : '#fee2e2', color: avg >= 7 ? '#15803d' : avg >= 5 ? '#854d0e' : '#b91c1c' }}>
-                            ⭐{avg}
-                          </span>
-                        )}
-                        <span className="text-xs" style={{ color: load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444' }}>{load}▪</span>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-            {selectedAnimators.length > 0 && (
-              <div className="px-4 pb-1 flex gap-1 flex-wrap flex-shrink-0">
-                {selectedAnimators.map(a => (
-                  <span key={a.Employee_ID} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full flex items-center gap-1">
-                    {a.Name}
-                    <button type="button" onClick={() => toggleAnimator(a)} className="text-indigo-400 hover:text-indigo-700">✕</button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="px-4 pb-4 mt-2 space-y-2 flex-shrink-0">
-              <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)}
-                placeholder="Lead name…"
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-              {error && <p className="text-xs text-red-500 bg-red-50 p-2 rounded-lg">{error}</p>}
-              <button type="submit" disabled={assigning || !selectedProject || selectedAnimators.length === 0}
-                className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                {assigning ? 'Creating…' : `Create Group Workspace (${selectedAnimators.length} animator${selectedAnimators.length !== 1 ? 's' : ''})`}
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
-  projects: Project[]; animators: Animator[]; onClose: () => void; onSuccess: (msg: string) => void
-}) {
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
-  const [projSearch, setProjSearch] = useState('')
-  const [animSearch, setAnimSearch] = useState('')
-  const [selectedAnimator, setSelectedAnimator] = useState<Animator | null>(null)
-  const [leadName, setLeadName] = useState('')
-  const [assigning, setAssigning] = useState(false)
-  const [error, setError] = useState('')
-
-  const available = projects.filter(p => p.Status === 'Unassigned' || (p.Status === 'Pending' && !p.Employee_ID))
-  const allAssigned = projects.filter(p => p.Employee_ID)
-  const matchProj = (p: Project) => !projSearch ||
-    p.Project_ID.toLowerCase().includes(projSearch.toLowerCase()) ||
-    (p.Project_title || '').toLowerCase().includes(projSearch.toLowerCase())
-  const filteredAvailable = available.filter(matchProj)
-  // When searching: scan ALL assigned projects (no cap) so nothing is missed
-  const filteredAssigned = projSearch
-    ? allAssigned.filter(matchProj)
-    : allAssigned.slice(0, 60)
-
-  const filteredAnims = animators.filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedProject || !selectedAnimator) { setError('Select a project and an animator.'); return }
-    setAssigning(true); setError('')
-    const duration = extractDuration(selectedProject.Project_ID)
-
-    if (selectedProject.Employee_ID && selectedProject.Thread_ID) {
-      try { await fetch(`/api/discord/thread?threadId=${selectedProject.Thread_ID}`, { method: 'DELETE' }) } catch { }
-    }
-
-    const { error: err } = await apiClient.from('projects').update({
-      Employee_ID: selectedAnimator.Employee_ID,
-      Animator: selectedAnimator.Name,
-      Discord_ID: selectedAnimator.Discord_ID || null,
-      Discord_Username: selectedAnimator.Discord_Username || null,
-      Lead: leadName || selectedProject.Lead,
-      Status: 'Pending',
-      'Date Assigned': formatDate(),
-      Duration: duration || selectedProject.Duration,
-      Thread_ID: null
-    }).eq('Project_ID', selectedProject.Project_ID)
-    if (!err) {
-      await apiClient.from('animators')
-        .update({ 'Current video': (selectedAnimator['Current video'] || 0) + 1 })
-        .eq('Employee_ID', selectedAnimator.Employee_ID)
-      onSuccess(`Assigned "${selectedProject.Project_title || selectedProject.Project_ID}" to ${selectedAnimator.Name}`)
-      onClose()
-    } else {
-      setError('Failed to assign. Please try again.')
-      setAssigning(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <div>
-            <h3 className="font-bold text-gray-800 text-lg">⚡ Quick Assign</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Select a project then pick an animator</p>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-hidden flex min-h-0">
-          {/* LEFT: project lists */}
-          <div className="w-1/2 border-r border-gray-100 flex flex-col overflow-hidden">
-            {/* Project search */}
-            <div className="px-3 py-2.5 border-b border-gray-100 flex-shrink-0">
-              <input type="text" value={projSearch} onChange={e => setProjSearch(e.target.value)}
-                placeholder="Search project ID or title…"
-                className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none text-gray-800" />
-            </div>
-            {/* Available */}
-            <div className="px-4 py-2 bg-green-50 border-b border-green-100 flex-shrink-0">
-              <p className="text-xs font-semibold text-green-800">✅ Available ({filteredAvailable.length})</p>
-            </div>
-            <div className="overflow-y-auto p-2 space-y-1" style={{ maxHeight: '200px' }}>
-              {filteredAvailable.length === 0
-                ? <p className="text-xs text-gray-400 text-center py-4">No available projects</p>
-                : filteredAvailable.map(p => (
-                  <button key={p.Project_ID} onClick={() => setSelectedProject(p)}
-                    className="w-full text-left p-2.5 rounded-lg text-xs transition-all border"
-                    style={{ borderColor: selectedProject?.Project_ID === p.Project_ID ? '#667eea' : 'transparent', backgroundColor: selectedProject?.Project_ID === p.Project_ID ? '#f0f0ff' : 'transparent' }}>
-                    <p className="font-mono text-gray-400">{p.Project_ID}</p>
-                    <p className="font-medium text-gray-800 truncate mt-0.5">{p.Project_title || '—'}</p>
-                  </button>
-                ))}
-            </div>
-            {/* Already assigned */}
-            <div className="px-4 py-2 bg-gray-50 border-b border-t border-gray-100 flex-shrink-0">
-              <p className="text-xs font-semibold text-gray-600">📌 Already Assigned ({filteredAssigned.length})</p>
-            </div>
-            <div className="overflow-y-auto p-2 space-y-1" style={{ maxHeight: '170px' }}>
-              {filteredAssigned.map(p => (
-                <button key={p.Project_ID} onClick={() => setSelectedProject(p)}
-                  className="w-full text-left p-2.5 rounded-lg text-xs transition-all border"
-                  style={{ borderColor: selectedProject?.Project_ID === p.Project_ID ? '#667eea' : 'transparent', backgroundColor: selectedProject?.Project_ID === p.Project_ID ? '#f0f0ff' : 'transparent' }}>
-                  <p className="font-mono text-gray-400">{p.Project_ID}</p>
-                  <p className="text-gray-600 truncate mt-0.5">{p.Animator || '—'} · {p.Project_title || '—'}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* RIGHT: form */}
-          <div className="w-1/2 p-5 flex flex-col gap-4 overflow-y-auto">
-            {selectedProject && (
-              <div className="p-3 bg-indigo-50 rounded-xl text-xs border border-indigo-100">
-                <p className="font-semibold text-indigo-800 truncate">{selectedProject.Project_title || selectedProject.Project_ID}</p>
-                <p className="font-mono text-indigo-500 mt-0.5">{selectedProject.Project_ID}</p>
-                {extractDuration(selectedProject.Project_ID) && (
-                  <p className="text-indigo-400 mt-0.5">⏱ {extractDuration(selectedProject.Project_ID)}</p>
-                )}
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4 flex-1">
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1">Animator</label>
-                <input type="text" placeholder="Search animator name..." value={animSearch}
-                  onChange={e => setAnimSearch(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800 mb-1" />
-                <div className="border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: '180px' }}>
-                  {filteredAnims.map(a => {
-                    const load = a['Current video'] || 0
-                    const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
-                    const entries = parseNotes(a['Interview notes'])
-                    const avg = avgRating(entries)
-                    const textNotes = entries.map(n => n.note).join('\n')
-                    return (
-                      <button key={a.Employee_ID} type="button" onClick={() => setSelectedAnimator(a)}
-                        title={textNotes}
-                        className="w-full text-left px-3 py-2.5 flex items-center justify-between transition-all border-b border-gray-50 last:border-0"
-                        style={{ backgroundColor: selectedAnimator?.Employee_ID === a.Employee_ID ? '#f0f0ff' : 'transparent' }}>
-                        <div>
-                          <span className="text-sm font-medium text-gray-800 block">{a.Name}</span>
-                          <span className="text-xs text-gray-400 font-mono block">{a.Employee_ID}</span>
-                        </div>
-                        <span className="flex items-center gap-2 flex-shrink-0">
-                          {avg !== null && (
-                            <span className="text-xs font-bold px-1.5 py-0.5 rounded-full"
-                              style={{ backgroundColor: avg >= 7 ? '#dcfce7' : avg >= 5 ? '#fef9c3' : '#fee2e2', color: avg >= 7 ? '#15803d' : avg >= 5 ? '#854d0e' : '#b91c1c' }}>
-                              ⭐{avg}
-                            </span>
-                          )}
-                          <span className="text-xs font-bold" style={{ color: loadColor }}>{load} active</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                {selectedAnimator && (() => {
-                  const entries = parseNotes(selectedAnimator['Interview notes'])
-                  const avg = avgRating(entries)
-                  const load = selectedAnimator['Current video'] || 0
-                  const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
-                  return (
-                    <div className="mt-2 p-2.5 bg-indigo-50 rounded-xl border border-indigo-100 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-indigo-800">{selectedAnimator.Name}</p>
-                        <p className="text-xs text-indigo-400 mt-0.5">{selectedAnimator.Role || 'Animator'}</p>
-                      </div>
-                      <div className="flex gap-3 flex-shrink-0">
-                        <div className="text-center">
-                          <p className="text-sm font-bold" style={{ color: loadColor }}>{load}</p>
-                          <p className="text-xs text-gray-400">active</p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-sm font-bold text-gray-600">{selectedAnimator['Total video'] || 0}</p>
-                          <p className="text-xs text-gray-400">total</p>
-                        </div>
-                        {avg !== null && (
-                          <div className="text-center">
-                            <p className="text-sm font-bold" style={{ color: avg >= 7 ? '#10b981' : avg >= 5 ? '#f59e0b' : '#ef4444' }}>{avg}/10</p>
-                            <p className="text-xs text-gray-400">rating</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })()}
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1">Lead Name</label>
-                <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)}
-                  placeholder="Enter lead name"
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-              </div>
-
-              {error && <p className="text-xs text-red-500 bg-red-50 p-2 rounded-lg">{error}</p>}
-
-              <button type="submit" disabled={assigning || !selectedProject || !selectedAnimator}
-                className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-50 mt-auto"
-                style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                {assigning ? 'Assigning...' : 'Assign Project'}
-              </button>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Assign Projects Tab ──────────────────────────────────────────────────────
-
-function AssignTab({ projects, animators, onRefresh }: {
-  projects: Project[]; animators: Animator[]; onRefresh: () => void
-}) {
-  const { toasts, addToast, dismiss } = useToast()
-  const [showQuickAssign, setShowQuickAssign] = useState(false)
-  const [showGroupAssign, setShowGroupAssign] = useState(false)
-
-  // Per-animator assign modal state
-  const [assignModal, setAssignModal] = useState<Animator | null>(null)
-  const [projectSearch, setProjectSearch] = useState('')
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
-  const [leadName, setLeadName] = useState('')
-  const [assigning, setAssigning] = useState(false)
-  const [groupAssigning, setGroupAssigning] = useState(false)
-  const [threadConflict, setThreadConflict] = useState<Project | null>(null)
-
-  // Animators list search/sort
-  const [animSearch, setAnimSearch] = useState('')
-  const [sortBy, setSortBy] = useState<'mostActive' | 'leastActive' | 'nameAZ' | 'available'>('nameAZ')
-
-  const unassignedProjects = projects.filter(p => p.Status === 'Unassigned' || (p.Status === 'Pending' && !p.Employee_ID))
-
-  // When searching: scan ALL projects so nothing is missed; no search = show unassigned only
-  const filteredUnassigned = projectSearch
-    ? projects.filter(p =>
-      p.Project_ID.toLowerCase().includes(projectSearch.toLowerCase()) ||
-      (p.Project_title || '').toLowerCase().includes(projectSearch.toLowerCase())
-    )
-    : unassignedProjects
-
-  const sortedAnimators = [...animators]
-    .filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
-    .sort((a, b) => {
-      if (sortBy === 'mostActive') return (b['Current video'] || 0) - (a['Current video'] || 0)
-      if (sortBy === 'leastActive') return (a['Current video'] || 0) - (b['Current video'] || 0)
-      return a.Name.localeCompare(b.Name)
-    })
-
-  const handleOpenModal = (animator: Animator) => {
-    setAssignModal(animator)
-    setProjectSearch(''); setSelectedProject(null); setLeadName(''); setThreadConflict(null)
-  }
-
-  const doAssign = async (animator: Animator, project: Project, lead: string, clearThread: boolean) => {
-    setAssigning(true)
-    const duration = extractDuration(project.Project_ID)
-    const updateData: Record<string, string | null> = {
-      Employee_ID: animator.Employee_ID,
-      Animator: animator.Name,
-      Discord_ID: animator.Discord_ID || null,
-      Discord_Username: animator.Discord_Username || null,
-      Lead: lead || project.Lead,
-      Status: 'Pending',
-      'Date Assigned': formatDate(),
-      Duration: duration || project.Duration,
-    }
-    if (clearThread) updateData.Thread_ID = null
-
-    // Track old animator to decrement their count
-    const oldAnimatorId = project.Employee_ID && project.Employee_ID !== animator.Employee_ID ? project.Employee_ID : null
-
-    const { error } = await apiClient.from('projects').update(updateData).eq('Project_ID', project.Project_ID)
-    if (!error) {
-      // Increment new animator
-      await apiClient.from('animators')
-        .update({ 'Current video': (animator['Current video'] || 0) + 1 })
-        .eq('Employee_ID', animator.Employee_ID)
-
-      // Decrement old animator if changed
-      if (oldAnimatorId) {
-        const { data: oldAnim } = await apiClient.from('animators').select('*').eq('Employee_ID', oldAnimatorId).single()
-        if (oldAnim) {
-          await apiClient.from('animators')
-            .update({ 'Current video': Math.max(0, (oldAnim['Current video'] || 1) - 1) })
-            .eq('Employee_ID', oldAnimatorId)
-        }
-      }
-
-      addToast(`Assigned "${project.Project_title || project.Project_ID}" to ${animator.Name}`)
-      setAssignModal(null); setThreadConflict(null)
-      onRefresh()
-    } else {
-      addToast('Failed to assign project.', 'error')
-    }
-    setAssigning(false)
-  }
-
-  const doGroupWorkspace = async (animator: Animator, project: Project, lead: string) => {
-    setGroupAssigning(true)
-    // Insert a new row with the SAME Project_ID — bot sees two rows with same ID,
-    // deletes the old thread from private workspace, creates a group workspace for both.
-    // Requires Project_ID to NOT be a primary key in Supabase (use a separate id column).
-    const duration = extractDuration(project.Project_ID) || project.Duration || null
-    const { error } = await apiClient.from('projects').insert({
-      Project_ID: project.Project_ID,          // same as original
-      Project_title: project.Project_title || null,  // same
-      Project_link: project.Project_link || null,    // same
-      Duration: duration,                            // same
-      Animator: animator.Name,                       // new animator
-      Employee_ID: animator.Employee_ID,             // new animator's ID
-      Discord_ID: animator.Discord_ID || null,       // new animator's Discord
-      Discord_Username: animator.Discord_Username || null,
-      Lead: lead || project.Lead || null,
-      Status: 'Pending',
-      'Date Assigned': formatDate(),
-      Thread_ID: null,   // bot picks this up to create group workspace thread
-      WIP: false,
-    })
-    if (!error) {
-      await apiClient.from('animators')
-        .update({ 'Current video': (animator['Current video'] || 0) + 1 })
-        .eq('Employee_ID', animator.Employee_ID)
-      addToast(`Group workspace: Added ${animator.Name} to "${project.Project_title || project.Project_ID}"`)
-      setAssignModal(null); setThreadConflict(null)
-      onRefresh()
-    } else {
-      addToast(`Failed: ${error.message}`, 'error')
-    }
-    setGroupAssigning(false)
-  }
-
-  const handleSubmitAssign = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!assignModal || !selectedProject) return
-    if (selectedProject.Thread_ID) {
-      setThreadConflict(selectedProject)
-    } else {
-      await doAssign(assignModal, selectedProject, leadName, false)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <Toast toasts={toasts} onDismiss={dismiss} />
-
-      {/* Quick Assign Modal */}
-      {showQuickAssign && (
-        <QuickAssignModal
-          projects={projects}
-          animators={animators}
-          onClose={() => setShowQuickAssign(false)}
-          onSuccess={(msg) => { addToast(msg); onRefresh() }}
-        />
-      )}
-
-      {/* Group Assign Modal */}
-      {showGroupAssign && (
-        <GroupAssignModal
-          projects={projects}
-          animators={animators}
-          onClose={() => setShowGroupAssign(false)}
-          onSuccess={(msg) => { addToast(msg); onRefresh() }}
-        />
-      )}
-
-      {/* Per-Animator Assign Modal */}
-      {assignModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-              <div>
-                <h3 className="font-bold text-gray-800">Assign Project</h3>
-                <p className="text-xs text-gray-400 mt-0.5">To: <span className="font-medium text-indigo-600">{assignModal.Name}</span></p>
-              </div>
-              <button onClick={() => setAssignModal(null)} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-
-            {/* Animator stats */}
-            {(() => {
-              const load = assignModal['Current video'] || 0
-              const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
-              const entries = parseNotes(assignModal['Interview notes'])
-              const avg = avgRating(entries)
-              return (
-                <div className="px-5 pt-4 pb-2 grid grid-cols-3 gap-3 flex-shrink-0">
-                  {[
-                    { label: 'Current', value: load, color: loadColor },
-                    { label: 'Total', value: assignModal['Total video'] || 0, color: '#374151' },
-                    { label: 'Rating', value: avg !== null ? `${avg}/10` : '—', color: avg !== null ? (avg >= 7 ? '#10b981' : avg >= 5 ? '#f59e0b' : '#ef4444') : '#cbd5e1' },
-                  ].map(s => (
-                    <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
-                      <p className="text-xl font-bold" style={{ color: s.color }}>{s.value}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
-                    </div>
-                  ))}
-                </div>
-              )
-            })()}
-
-            <div className="flex-1 overflow-y-auto">
-              <form onSubmit={handleSubmitAssign} className="p-5 pt-2 space-y-4">
-                {/* Project search */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Search & Select Project <span className="text-red-400">*</span></label>
-                  <input type="text" value={projectSearch}
-                    onChange={e => { setProjectSearch(e.target.value); setSelectedProject(null); setThreadConflict(null) }}
-                    placeholder="Type project ID or title..."
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 text-gray-800" />
-                  {!selectedProject && (
-                    <div className="mt-1 border border-gray-200 rounded-lg overflow-y-auto" style={{ maxHeight: '200px' }}>
-                      {filteredUnassigned.length === 0
-                        ? <p className="p-3 text-xs text-gray-400 text-center">No pending projects available</p>
-                        : filteredUnassigned.slice(0, 50).map(p => (
-                          <button key={p.Project_ID} type="button"
-                            onClick={() => { setSelectedProject(p); setProjectSearch(p.Project_ID); setThreadConflict(null) }}
-                            className="w-full text-left px-3 py-2 hover:bg-indigo-50 transition-colors border-b border-gray-50 last:border-0">
-                            <p className="font-mono text-xs text-gray-500">{p.Project_ID}</p>
-                            <p className="text-xs font-medium text-gray-800 truncate">{p.Project_title || '—'}</p>
-                          </button>
-                        ))}
-                    </div>
-                  )}
-                  {selectedProject && (
-                    <div className="mt-2 p-2.5 bg-indigo-50 rounded-lg text-xs border border-indigo-100">
-                      <div className="flex items-center justify-between">
-                        <p className="font-mono text-indigo-500">{selectedProject.Project_ID}</p>
-                        <button type="button" onClick={() => { setSelectedProject(null); setProjectSearch(''); setThreadConflict(null) }}
-                          className="text-indigo-300 hover:text-indigo-600 text-xs">✕ clear</button>
-                      </div>
-                      <p className="font-medium text-indigo-800 mt-0.5">{selectedProject.Project_title || '—'}</p>
-                      {extractDuration(selectedProject.Project_ID) && (
-                        <p className="text-indigo-400 mt-0.5">⏱ Auto-duration: <strong>{extractDuration(selectedProject.Project_ID)}</strong></p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Lead Name <span className="text-red-400">*</span></label>
-                  <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)} required
-                    placeholder="Enter lead name"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 text-gray-800" />
-                </div>
-
-                {/* Thread conflict */}
-                {threadConflict && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                    <p className="text-sm font-semibold text-amber-800">⚠️ This project has an active thread</p>
-                    <p className="text-xs text-amber-600 font-mono mt-1 mb-3">Thread ID: {threadConflict.Thread_ID}</p>
-                    <p className="text-xs font-semibold text-amber-800 mb-2">Choose action:</p>
-                    <div className="flex flex-col gap-2">
-                      <button type="button" onClick={() => doAssign(assignModal, threadConflict, leadName, true)} disabled={assigning}
-                        className="w-full px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60"
-                        style={{ backgroundColor: '#ef4444' }}>
-                        {assigning ? '...' : '🔄 Reassign — delete old thread, assign only to this animator'}
-                      </button>
-                      <button type="button" onClick={() => doGroupWorkspace(assignModal, threadConflict, leadName)} disabled={groupAssigning}
-                        className="w-full px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60"
-                        style={{ backgroundColor: '#667eea' }}>
-                        {groupAssigning ? '...' : '👥 Group Workspace — keep old animator + add this one'}
-                      </button>
-                      <button type="button" onClick={() => setThreadConflict(null)}
-                        className="w-full px-3 py-2 rounded-lg text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {!threadConflict && (
-                  <button type="submit" disabled={assigning || !selectedProject}
-                    className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
-                    style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                    {assigning ? 'Assigning...' : 'Assign Project'}
-                  </button>
-                )}
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Top bar */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-800">All Animators</h3>
-          <p className="text-sm text-gray-400 mt-0.5">{unassignedProjects.length} unassigned projects · {animators.length} animators</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowGroupAssign(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm"
-            style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            Group Assign
-          </button>
-          <button onClick={() => setShowQuickAssign(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            Quick Assign
-          </button>
-        </div>
-      </div>
-
-      {/* Animators list */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
-        <div className="p-4 border-b border-gray-100">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input type="text" placeholder="Search animators..." value={animSearch} onChange={e => setAnimSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              {([
-                { key: 'nameAZ', label: 'Name A–Z' },
-                { key: 'leastActive', label: 'Least Active' },
-                { key: 'mostActive', label: 'Most Active' },
-                { key: 'available', label: 'Available (0 active)' },
-              ] as const).map(s => (
-                <button key={s.key} onClick={() => setSortBy(s.key)}
-                  className="px-3 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
-                  style={{ backgroundColor: sortBy === s.key ? '#667eea' : '#f1f5f9', color: sortBy === s.key ? 'white' : '#64748b' }}>
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto">
-          {sortedAnimators.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-6">No animators found</p>
-          ) : sortedAnimators.map(a => {
-            const load = a['Current video'] || 0
-            const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
-            const entries = parseNotes(a['Interview notes'])
-            const avg = avgRating(entries)
-            return (
-              <div key={a.Employee_ID} className="p-4 rounded-xl border border-gray-100 bg-gray-50 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
-                    style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                    {(a.Name || '?')[0]}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{a.Name}</p>
-                    <p className="text-xs text-gray-400">{a.Role || 'Animator'} · {a.Employee_ID}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4 flex-shrink-0">
-                  <div className="text-center">
-                    <p className="text-sm font-bold" style={{ color: loadColor }}>{load}</p>
-                    <p className="text-xs text-gray-400">active</p>
-                  </div>
-                  {avg !== null && (
-                    <div className="text-center">
-                      <p className="text-sm font-bold" style={{ color: avg >= 7 ? '#10b981' : avg >= 5 ? '#f59e0b' : '#ef4444' }}>{avg}</p>
-                      <p className="text-xs text-gray-400">rating</p>
-                    </div>
-                  )}
-                  <button onClick={() => handleOpenModal(a)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-all"
-                    style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                    Assign
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
-
-
-// ─── Projects Tab ──────────────────────────────────────────────────────────────
-
 function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRefresh: () => void; user: DashboardUser }) {
   const { toasts, addToast, dismiss } = useToast()
   const isHead = user.role === 'head'
@@ -1877,13 +571,21 @@ We will notify you here once the payment has been sent. Thank you for your excel
                         </>
                       ) : editingRows.has(p.Project_ID) ? (
                         <>
-                          <button onClick={() => setEditingRows(prev => { const n = new Set(prev); n.delete(p.Project_ID); return n; })} disabled={isUpdating} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50">Done</button>
+                          <button onClick={() => handleSaveStatus(p)} disabled={isUpdating} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-colors">Save</button>
                           <button onClick={() => cancelEditing(p.Project_ID)} disabled={isUpdating} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-xs font-medium transition-colors">Cancel</button>
                         </>
                       ) : (
                         <>
                           <button onClick={() => {
-                            startEditing(p);
+                            setEditingProjectId(p.Project_ID);
+                            setNewStatus(p.Status);
+                            setNewPriority(p.Priority || 'Low');
+                            setNewComment(p.Head_Comment || '');
+                            setNewAssignedHead(p.assigned_head || '');
+                            setNewProgress(p.progress || '');
+                            setNewEmpType(p.emp_type || '');
+                            setNewWarning(p.warning || '');
+                            setNewAcknowledgement(p.acknowledgement || '');
                             setDeletingProjectId(null)
                           }} className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">Edit</button>
                           {!isHead && (
@@ -4554,7 +3256,6 @@ function NotesTab({ user }: { user: DashboardUser }) {
 // ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
 
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
-  const [printInvoice, setPrintInvoice] = useState<any>(null)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [dateFieldFilters, setDateFieldFilters] = useState<string[]>(['Date Assigned'])
@@ -4567,7 +3268,6 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     { label: 'Approved', key: 'Date Approved' },
   ]
   const [channelFilter, setChannelFilter] = useState('all')
-  const [leadFilter, setLeadFilter] = useState('all')
   const [projSearch, setProjSearch] = useState('')
   const [markingId, setMarkingId] = useState<string | null>(null)
   const [reportModalStage, setReportModalStage] = useState<string | null>(null)
@@ -4617,13 +3317,6 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   const byChannel = (list: Project[]) =>
     channelFilter === 'all' ? list : list.filter(p => getChannel(p.Project_ID) === channelFilter)
 
-  const byLead = (list: Project[]) =>
-    leadFilter === 'all' ? list : list.filter(p => (p.Lead || '').toLowerCase() === leadFilter.toLowerCase())
-
-  const availableLeads = Array.from(
-    new Set(projects.map(p => p.Lead).filter(Boolean))
-  ).sort()
-
   const availableChannels = Array.from(
     new Set(projects.map(p => getChannel(p.Project_ID)).filter(Boolean))
   ).sort()
@@ -4665,7 +3358,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     setMarkingId(null)
   }
 
-  const ProjectCard = ({ project, showMarkPaid = false, showRemoveSTL = false }: { project: Project; showMarkPaid?: boolean; showRemoveSTL?: boolean }) => {
+  const ProjectCard = ({ project, showMarkPaid = false }: { project: Project; showMarkPaid?: boolean }) => {
     const durStr = formatSec(parseDurationSec(project.Duration, project.Project_ID))
     
     const statusDateStr = getDateForStage(project, project.Status)
@@ -4723,16 +3416,16 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
   // Helper to generate the data for the requested report
   const generateReportData = (stage: string) => {
-    let projs = byLead(byChannel(dedup(projects.filter(p => {
+    let projs = byChannel(dedup(projects.filter(p => {
        const secs = parseDurationSec(p.Duration, p.Project_ID)
        if (stage === 'STL') {
-         return secs > 180 && !p.stl_override && matchProj(p)
+         return secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
        } else {
-         const isSTL = secs > 180 && !p.stl_override
+         const isSTL = secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
          if (isSTL) return false
          return p.Status === stage && matchProj(p)
        }
-    }))))
+    })))
     
     if (dateFrom || dateTo) {
       projs = projs.filter(p => {
@@ -4886,16 +3579,16 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
       <div className="flex gap-4 overflow-x-auto pb-4 items-start w-full">
         {TRACKER_STAGES.map(stage => {
           // Filter projects for this column
-          let stageProjects = byLead(byChannel(dedup(projects.filter(p => {
+          let stageProjects = byChannel(dedup(projects.filter(p => {
              const secs = parseDurationSec(p.Duration, p.Project_ID)
              if (stage === 'STL') {
-               return secs > 180 && !p.stl_override && matchProj(p)
+               return secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status) && matchProj(p)
              } else {
-               const isSTL = secs > 180 && !p.stl_override
+               const isSTL = secs > 180 && !['Approved', 'Paid', 'Closed'].includes(p.Status)
                if (isSTL) return false // hide from standard viewport/render stages
                return p.Status === stage && matchProj(p)
              }
-          }))))
+          })))
 
           if (dateFrom || dateTo) {
             stageProjects = stageProjects.filter(p => {
@@ -4949,264 +3642,9 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
 
 
 
-
-// ─── User Management Tab ──────────────────────────────────────────────────────
-function UserManagementTab({ user }: { user: DashboardUser }) {
-  const { addToast } = useToast()
-  const [users, setUsers] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'head' as string, employee_id: '' })
-  const [leads, setLeads] = useState<{Head_Name: string; Discord_ID: string}[]>([])
-  const [nameMode, setNameMode] = useState<'lead' | 'manual'>('lead')
-
-  const fetchUsers = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/manage-users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'list', caller_email: user.email, caller_role: user.role })
-      })
-      const data = await res.json()
-      if (data.data) setUsers(data.data)
-      else if (data.error) addToast('❌ ' + data.error, 'error')
-    } catch (e: any) {
-      addToast('❌ Failed to load users', 'error')
-    }
-    // Also fetch leads table
-    try {
-      const leadsRes = await apiClient.from('leads').select('Head_Name, Discord_ID')
-      if (leadsRes.data) setLeads(leadsRes.data as any[])
-    } catch {}
-    setLoading(false)
-  }, [user])
-
-  useEffect(() => { fetchUsers() }, [fetchUsers])
-
-  const handleCreate = async () => {
-    if (!form.email || !form.password || !form.full_name) {
-      addToast('⚠️ Email, password, and full name are required', 'error')
-      return
-    }
-    setCreating(true)
-    try {
-      const res = await fetch('/api/manage-users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create',
-          caller_email: user.email,
-          caller_role: user.role,
-          ...form
-        })
-      })
-      const data = await res.json()
-      if (data.data) {
-        addToast(`✅ User "${form.full_name}" created successfully`)
-        setForm({ email: '', password: '', full_name: '', role: 'head', employee_id: '' })
-        setShowForm(false)
-        fetchUsers()
-      } else {
-        addToast('❌ ' + (data.error || 'Failed to create user'), 'error')
-      }
-    } catch (e: any) {
-      addToast('❌ ' + e.message, 'error')
-    }
-    setCreating(false)
-  }
-
-  const handleDelete = async (userId: string, userName: string) => {
-    if (!window.confirm(`Are you sure you want to delete user "${userName}"? This cannot be undone.`)) return
-    try {
-      const res = await fetch('/api/manage-users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', caller_email: user.email, caller_role: user.role, user_id: userId })
-      })
-      const data = await res.json()
-      if (data.message) {
-        addToast(`✅ Deleted "${userName}"`)
-        fetchUsers()
-      } else {
-        addToast('❌ ' + (data.error || 'Failed'), 'error')
-      }
-    } catch (e: any) {
-      addToast('❌ ' + e.message, 'error')
-    }
-  }
-
-  const roleLabels: Record<string, string> = { manager: '👑 Head', head: '👤 Manager/Lead' }
-
-  return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-lg font-bold text-gray-800">🔐 User Management</h2>
-            <p className="text-xs text-gray-500">Create and manage dashboard login accounts. Only you (Head) can access this.</p>
-          </div>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2 text-sm font-semibold text-white rounded-lg transition-all"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-            {showForm ? '✕ Cancel' : '+ Create User'}
-          </button>
-        </div>
-
-        {/* Leads without dashboard accounts */}
-        {(() => {
-          const existingNames = new Set(users.map(u => (u.full_name || '').toLowerCase()))
-          const unleaded = leads.filter(l => !existingNames.has((l.Head_Name || '').toLowerCase()))
-          return null // just compute for the form below
-        })()}
-
-        {/* Create User Form */}
-        {showForm && (
-          <div className="mb-6 p-5 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl">
-            <h3 className="font-semibold text-gray-800 mb-4">Create New User</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Full Name *</label>
-                <div className="flex gap-2 mb-1">
-                  <button onClick={() => { setNameMode('lead'); setForm(f => ({ ...f, full_name: '' })) }}
-                    className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-all ${nameMode === 'lead' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                    📋 From Leads
-                  </button>
-                  <button onClick={() => { setNameMode('manual'); setForm(f => ({ ...f, full_name: '' })) }}
-                    className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-all ${nameMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                    ✏️ Manual
-                  </button>
-                </div>
-                {nameMode === 'lead' ? (
-                  <select
-                    value={form.full_name}
-                    onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
-                    <option value="">— Select a Lead —</option>
-                    {leads
-                      .filter(l => !users.some(u => (u.full_name || '').toLowerCase() === (l.Head_Name || '').toLowerCase()))
-                      .map(l => (
-                        <option key={l.Discord_ID} value={l.Head_Name}>{l.Head_Name}</option>
-                      ))
-                    }
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={form.full_name}
-                    onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                    placeholder="Enter name manually"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                  />
-                )}
-                <p className="text-[10px] text-gray-400 mt-1">{nameMode === 'lead' ? 'Only shows leads without accounts' : 'Use for view-only access accounts'}</p>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Email *</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  placeholder="e.g. divya@tfa.com"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Password *</label>
-                <input
-                  type="text"
-                  value={form.password}
-                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  placeholder="Set a password"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Role *</label>
-                <select
-                  value={form.role}
-                  onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
-                  <option value="head">👤 Manager / Lead</option>
-                  <option value="manager">👑 Head (Full Access)</option>
-                </select>
-              </div>
-            </div>
-            <button
-              onClick={handleCreate}
-              disabled={creating}
-              className="mt-4 px-6 py-2 text-sm font-semibold text-white rounded-lg disabled:opacity-50 transition-all"
-              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-              {creating ? 'Creating...' : '✅ Create Account'}
-            </button>
-          </div>
-        )}
-
-        {/* Users List */}
-        {loading ? (
-          <p className="text-center text-sm text-gray-400 py-10">Loading users...</p>
-        ) : users.length === 0 ? (
-          <p className="text-center text-sm text-gray-400 py-10">No users found.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-y border-gray-100 text-gray-500 text-xs uppercase font-semibold">
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Last Login</th>
-                  <th className="px-4 py-3 text-center">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map(u => (
-                  <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-                          style={{ background: u.role === 'manager' ? 'linear-gradient(135deg, #7e22ce, #a855f7)' : 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                          {(u.full_name || '?')[0]}
-                        </div>
-                        <span className="font-medium text-gray-800">{u.full_name || '—'}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{u.email}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'manager' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'}`}>
-                        {roleLabels[u.role] || u.role}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-400">
-                      {u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {u.email === user.email ? (
-                        <span className="text-xs text-gray-400">You</span>
-                      ) : (
-                        <button
-                          onClick={() => handleDelete(u.id, u.full_name || u.email)}
-                          className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100">
-                          🗑️ Delete
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -5223,7 +3661,6 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; h
   { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
-  { id: 'users', label: 'User Management', icon: '🔐', managerOnly: true },
 ]
 
 
@@ -5304,7 +3741,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
-  const [section, setSection] = useState<'send' | 'pending' | 'acknowledged' | 'paid'>('pending')
+  const [section, setSection] = useState<'send' | 'pending' | 'done'>('pending')
   const [selectedEids, setSelectedEids] = useState<Set<string>>(new Set())
   const [printInvoice, setPrintInvoice] = useState<Invoice | null>(null)
   const [bulkPrintInvoices, setBulkPrintInvoices] = useState<Invoice[]>([])
@@ -5312,7 +3749,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const monthOptions = (() => {
     const opts: string[] = []
     const now = new Date()
-    for (let i = 0; i < 13; i++) {
+    for (let i = 0; i < 6; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
       opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
     }
@@ -5354,10 +3791,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     const map: Record<string, Project[]> = {}
     for (const p of projects) {
       if (p.Status === 'Approved' && p.Payment_Status !== 'Paid' && !invoicedProjectIds.has(p.Project_ID)) {
-        // Month filter removed so it shows all unpaid projects overall
-        // const d = new Date(p['Date Approved'] || p['Date Assigned'] || '')
-        // const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
-        // if (pMonth !== selectedMonth && pMonth !== '') continue
+        const d = new Date(p['Date Approved'] || p['Date Assigned'] || '')
+        const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+        if (pMonth !== selectedMonth && pMonth !== '') continue
 
         let eid = p.Employee_ID || ''
         if (!eid && p.Animator) {
@@ -5380,13 +3816,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     const targetEids = overrideEids || selectedEids
     if (targetEids.size === 0) { addToast('Select at least one animator', 'error'); return }
     setSending(true)
-    let targetMonth = selectedMonth
-    if (section === 'send') {
-      const promptMonth = window.prompt("Which month are these invoices for?", selectedMonth)
-      if (!promptMonth) { setSending(false); return }
-      targetMonth = promptMonth
-    }
-
     let successCount = 0
     let failCount = 0
     try {
@@ -5458,8 +3887,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
         const finalNet = Math.round(newTotalVal - tdsAmt)
 
-        // The Python Discord bot will pick this up and use the permanent "Invoices" thread
-        const thread_id = (anim as any).Discord_Channel_ID || anim.Channel_ID || ''
+        // Use the current project thread first, fallback to animator main workspace channel
+        // Support both lowercase thread_id (returned by some DB queries) and uppercase Thread_ID
+        const selectedProjForThread = projs.find(p => (p as any).thread_id || p.Thread_ID)
+        const thread_id = (selectedProjForThread ? ((selectedProjForThread as any).thread_id || selectedProjForThread.Thread_ID) : '') || (anim as any).Discord_Channel_ID || anim.Channel_ID || ''
 
         // Check legal details BEFORE insert to set correct status
         const animAny = anim as any
@@ -5474,7 +3905,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_number: String(invoiceNumber || '').trim(),
           employee_id: String(eid || '').trim(),
           legal_name: (animAny.legal_name || anim.Name || 'Unknown').trim(),
-          month_label: String(targetMonth || '').trim(),
+          month_label: String(selectedMonth || '').trim(),
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
           total_amount: Number(grossTotal || 0),
@@ -5621,8 +4052,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
   const monthInvoices = invoices.filter(inv => inv.month_label === selectedMonth)
   const pendingInvoices = monthInvoices.filter(inv => ['Sent', 'Edit Requested', 'Awaiting Details', 'Draft'].includes(inv.status))
-  const acknowledgedInvoices = monthInvoices.filter(inv => inv.status === 'Acknowledged')
-  const paidInvoices = monthInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status))
+  const doneInvoices = monthInvoices.filter(inv => ['Acknowledged', 'Paid', 'Downloaded'].includes(inv.status))
 
   // Name-wise search helper
   const matchesInvoiceSearch = (nameOrEid: string) => {
@@ -5967,8 +4397,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         <div className="flex items-center gap-3 flex-wrap">
           <button style={tabStyle('pending')} onClick={() => setSection('pending')}>⚠️ Pending Acknowledgement {pendingInvoices.length > 0 && `(${pendingInvoices.length})`}</button>
           <button style={tabStyle('send')} onClick={() => setSection('send')}>📤 Send Invoices</button>
-          <button style={tabStyle('acknowledged')} onClick={() => setSection('acknowledged')}>✅ Acknowledged</button>
-          <button style={tabStyle('paid')} onClick={() => setSection('paid')}>💰 Paid</button>
+          <button style={tabStyle('done')} onClick={() => setSection('done')}>✅ Acknowledged / Paid</button>
         </div>
         <input
           type="text"
@@ -6058,7 +4487,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
-                  {['Animator', 'Invoice #', 'Month', 'Projects', 'Total', 'Status', 'Sent At'].map(h => (
+                  {['Animator', 'Invoice #', 'Projects', 'Total', 'Status', 'Sent At'].map(h => (
                     <th key={h} className="px-4 py-3 text-left">{h}</th>
                   ))}
                 </tr>
@@ -6070,16 +4499,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                   <tr key={inv.id} className="border-b border-gray-50 hover:bg-amber-50/30">
                     <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
-                    <td className="px-4 py-3 text-xs text-gray-500">
-                      <select value={inv.month_label} onChange={async (e) => {
-                        const newMonth = e.target.value;
-                        await apiClient.from('invoices').update({ month_label: newMonth }).eq('id', inv.id);
-                        addToast(`Changed month to ${newMonth}`, 'success');
-                        fetchInvoices();
-                      }} className="bg-transparent border-b border-gray-200 focus:outline-none cursor-pointer">
-                        {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                    </td>
                     <td className="px-4 py-3 text-gray-600">{(inv.line_items || []).length} project(s)</td>
                     <td className="px-4 py-3 font-medium">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
                     <td className="px-4 py-3">
@@ -6112,13 +4531,22 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         </div>
       )}
 
-      {/* SECTION: Acknowledged */}
-      {section === 'acknowledged' && (
+      {/* SECTION: Acknowledged / Paid / Downloaded */}
+      {section === 'done' && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100">
-            <div className="flex items-center"><h3 className="font-bold text-gray-800">✅ Acknowledged</h3></div>
+            <div className="flex items-center"><h3 className="font-bold text-gray-800">✅ Acknowledged / Paid / Downloaded</h3>
+            {doneInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status)).length > 0 && (
+              <button
+                onClick={() => setBulkPrintInvoices(doneInvoices.filter(inv => ['Paid', 'Downloaded'].includes(inv.status)))}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 ml-4"
+              >
+                📥 Download All (ZIP/PDF)
+              </button>
+            )}
+</div>
           </div>
-          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : acknowledgedInvoices.length === 0 ? (
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : doneInvoices.length === 0 ? (
             <p className="p-6 text-sm text-gray-400">No acknowledged invoices yet.</p>
           ) : (
             <table className="w-full text-sm">
@@ -6130,119 +4558,40 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                 </tr>
               </thead>
               <tbody>
-                {acknowledgedInvoices
+                {doneInvoices
                   .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
                   .map(inv => {
-                  return (
-                    <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        <select value={inv.month_label} onChange={async (e) => {
-                          const newMonth = e.target.value;
-                          await apiClient.from('invoices').update({ month_label: newMonth }).eq('id', inv.id);
-                          addToast(`Changed month to ${newMonth}`, 'success');
-                          fetchInvoices();
-                        }} className="bg-transparent border-b border-gray-200 focus:outline-none cursor-pointer">
-                          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">₹{Math.round(inv.total_amount || 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-red-600">−₹{Math.round(inv.tds_amount || 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 font-semibold text-emerald-700">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-700">
-                          {inv.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-400 shrink-0">Awaiting payment</span>
-                          <button
-                            onClick={async () => {
-                              if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
-                              await apiClient.from('invoices').delete().eq('id', inv.id)
-                              addToast(`Deleted invoice #${inv.invoice_number}`, 'success')
-                              fetchInvoices()
-                            }}
-                            className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100 shrink-0"
-                            title="Delete Invoice"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-
-      {/* SECTION: Paid / Downloaded */}
-      {section === 'paid' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100">
-            <div className="flex items-center"><h3 className="font-bold text-gray-800">💰 Paid / Downloaded</h3>
-            {paidInvoices.length > 0 && (
-              <button
-                onClick={() => setBulkPrintInvoices(paidInvoices)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 ml-4"
-              >
-                📥 Download All (ZIP/PDF)
-              </button>
-            )}
-            </div>
-          </div>
-          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : paidInvoices.length === 0 ? (
-            <p className="p-6 text-sm text-gray-400">No paid invoices yet.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
-                  {['Animator', 'Invoice #', 'Month', 'Gross', 'TDS', 'Net', 'Status', 'Action'].map(h => (
-                    <th key={h} className="px-4 py-3 text-left">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paidInvoices
-                  .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
-                  .map(inv => {
+                  const isPaid = ['Paid', 'Downloaded'].includes(inv.status)
                   const isDownloaded = inv.status === 'Downloaded'
                   return (
                     <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
                       <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        <select value={inv.month_label} onChange={async (e) => {
-                          const newMonth = e.target.value;
-                          await apiClient.from('invoices').update({ month_label: newMonth }).eq('id', inv.id);
-                          addToast(`Changed month to ${newMonth}`, 'success');
-                          fetchInvoices();
-                        }} className="bg-transparent border-b border-gray-200 focus:outline-none cursor-pointer">
-                          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{inv.month_label}</td>
                       <td className="px-4 py-3">₹{Math.round(inv.total_amount || 0).toLocaleString()}</td>
                       <td className="px-4 py-3 text-red-600">−₹{Math.round(inv.tds_amount || 0).toLocaleString()}</td>
                       <td className="px-4 py-3 font-semibold text-emerald-700">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isDownloaded ? 'bg-gray-100 text-gray-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isDownloaded ? 'bg-gray-100 text-gray-600' :
+                          isPaid ? 'bg-emerald-100 text-emerald-700' :
+                            'bg-violet-100 text-violet-700'
+                          }`}>
                           {isDownloaded ? '✓ Downloaded' : inv.status}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleDownload(inv)}
-                            className="px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0"
-                            style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
-                          >
-                            {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
-                          </button>
+                          {isPaid ? (
+                            <button
+                              onClick={() => handleDownload(inv)}
+                              className="px-3 py-1.5 text-xs font-semibold rounded-lg shrink-0"
+                              style={{ background: isDownloaded ? '#f1f5f9' : 'linear-gradient(135deg,#667eea,#764ba2)', color: isDownloaded ? '#64748b' : '#fff' }}
+                            >
+                              {isDownloaded ? '🖨️ Re-print' : '📥 Download'}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 shrink-0">Awaiting payment</span>
+                          )}
                           <button
                             onClick={async () => {
                               if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
@@ -6328,9 +4677,6 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
 
   const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0, bonusNote: string = "") => {
-    const targetMonth = window.prompt("Which month should this payment be recorded under?", selectedMonth || monthOptions[1])
-    if (!targetMonth) return // User cancelled
-    
     setPayingId(eid)
     try {
       const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
@@ -6370,10 +4716,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         bonus: bonus > 0 ? bonus : 0,
         paid_date: formatDate(),
         Timestamp: new Date().toISOString(),
-        'Project ID': `Month: ${targetMonth}`
+        'Project ID': `Month: ${selectedMonth}`
       };
-      // For upserting monthPay we check against targetMonth now
-      const monthPay = payments.find(p => p['Employee ID'] === eid && p['Project ID'] === `Month: ${targetMonth}`);
+      const monthPay = paymentForMonthByEmpId[eid];
       let payErr;
       if (monthPay && monthPay.Payment_Status !== 'Paid') {
         const { error } = await apiClient.from('payments').update(payPayload).match({ id: monthPay.id });
@@ -6409,11 +4754,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .eq('employee_id', eid)
           .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details']);
         
-        // We shouldn't restrict the invoice paid update by selectedMonth since it's an overall list now,
-        // but let's update invoices that match the targetMonth if needed, or just all open invoices.
-        // The user said "paid krte hi woh paid wale me chale jaye jis month me pay hua h".
-        // Let's update any pending invoices for this targetMonth.
-        q = q.eq('month_label', targetMonth);
+        if (selectedMonth !== 'All') {
+          q = q.eq('month_label', selectedMonth);
+        }
         await q;
       } catch (invErr) {
         console.error('Failed to update invoice status:', invErr)
@@ -6567,8 +4910,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const approvedSecondsByEmpId: Record<string, number> = {}
   projects.filter(p => 
     p.Status === 'Approved' && 
-    !deferredProjects.has(p.Project_ID)
-    // Month filter removed for overall view
+    !deferredProjects.has(p.Project_ID) &&
+    (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth))
   ).forEach(p => {
     // Collect all unique Employee IDs for this project (both primary and shared group animators)
     const empIds = new Set<string>()
@@ -6631,8 +4974,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     const proj = projects.find(p => 
       p.Project_ID === projectId && 
       p.Status === 'Approved' && 
-      !deferredProjects.has(p.Project_ID)
-      // Month filter removed
+      !deferredProjects.has(p.Project_ID) &&
+      (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth))
     )
     if (!proj) return
 
@@ -6660,11 +5003,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     }
   })
 
-  // Helper: check if animator has any approved project overall
+  // Helper: check if animator has any approved project in the selected month
   const animatorInMonth = (eid: string, animName: string) => {
+    if (selectedMonth === 'All') return true
     return projects.some(p =>
       p.Status === 'Approved' &&
-      (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase()))
+      (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase())) &&
+      (p['Date Approved'] || '').includes(selectedMonth)
     )
   }
 
@@ -6680,44 +5025,20 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const currentMinsStr = manualMinutes[eid] !== undefined ? manualMinutes[eid] : autoMins.toFixed(2)
       const currentMins = parseFloat(currentMinsStr) || 0
 
-      const tdsPct = parseFloat(tdsPercents[eid] || '10') || 10
-      const othersAmt = parseFloat(String(a.others_amount || '0')) || 0
+      const tdsPct = parseFloat(tdsPercents[eid] || '0') || 0
+      const gross = currentMins * 5000
       const bonusParsed = parseFloat(bonusAmounts[eid] || '0') || 0
-      // Gross calculation: check each approved project for lighting split pricing
-      const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
-      let calculatedGross = 0
-      let leadBonus = 0
-      const animatorProjectsForCalc = projects.filter(p =>
-        p.Status === 'Approved' &&
-        (p.Employee_ID === eid ||
-          (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase())) ||
-          (p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()))
-      )
-      animatorProjectsForCalc.forEach(p => {
-        const projSec = parseDurationSec(p.Duration || '', p.Project_ID)
-        const projMins = projSec / 60
-        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()
-        const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()))
-        const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase()
-        if (isLead) leadBonus += 1000
-        if (isLighting) {
-          calculatedGross += projMins * 2000
-        } else if (isAnim) {
-          const rate = p.Lighting_Artist ? 3000 : 5000
-          calculatedGross += projMins * rate
-        }
-      })
-      const gross = calculatedGross > 0 ? calculatedGross : currentMins * 5000
-      const totalBonusParsed = bonusParsed + leadBonus
-      const totalAmount = gross + totalBonusParsed + othersAmt
+      const totalAmount = gross + bonusParsed
       const net = totalAmount - (totalAmount * tdsPct / 100)
 
       const payInfo = latestPaymentByEmpId[eid]
 
       // Filter this animator's approved projects (exact name match, not substring)
+      const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
       const animatorProjects = [
         ...projects.filter(p =>
           p.Status === 'Approved' &&
+          (selectedMonth === 'All' || (p['Date Approved'] || '').includes(selectedMonth)) &&
           (p.Employee_ID === eid ||
             (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
@@ -6753,9 +5074,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         gross,
         net,
         tdsPct,
-        bonusAmt: totalBonusParsed,
-        othersAmt,
-        totalAmount,
+        bonusAmt: bonusParsed,
+        bankDisplay,
         animatorProjects: animatorProjects as Project[]
       }
     })
@@ -6787,7 +5107,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹5000/minute.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {/* Month select removed to make the view overall */}
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white focus:outline-none">
+              {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
           </div>
         </div>
         <div className="relative mb-4">
@@ -6809,12 +5134,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                 <tr className="bg-gray-50 border-y border-gray-100 text-gray-500 text-xs uppercase font-semibold">
                   <th className="px-4 py-3">Animator</th>
                   <th className="px-4 py-3">Total Minutes</th>
+                  <th className="px-4 py-3">Bank / UPI</th>
                   <th className="px-4 py-3 text-right">Gross (₹)</th>
-                  <th className="px-4 py-3 text-right">Bonus (₹)</th>
-                  <th className="px-4 py-3 text-right">Others (₹)</th>
-                  <th className="px-4 py-3 text-right">Total (₹)</th>
                   <th className="px-4 py-3 text-right">TDS %</th>
                   <th className="px-4 py-3 text-right">Net (₹)</th>
+                  <th className="px-4 py-3 text-right">Bonus (₹)</th>
                   <th className="px-4 py-3 text-center">Save / Pay</th>
                 </tr>
               </thead>
@@ -6853,29 +5177,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           )}
                         </div>
                       </td>
+                      <td className="px-4 py-3">
+                        {r.bankDisplay}
+                      </td>
                       <td className="px-4 py-3 text-right font-mono text-gray-600">
                         ₹{r.gross.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col items-end gap-1">
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-gray-400">₹</span>
-                            <input
-                              type="number"
-                              min="0"
-                              placeholder="0"
-                              value={bonusAmounts[r.animator.Employee_ID] ?? ''}
-                              onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
-                              className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
-                            />
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-gray-500">
-                        ₹{(r.othersAmt || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-gray-800">
-                        ₹{(r.totalAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
@@ -6894,6 +5200,21 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                         <span className="font-mono font-bold text-lg text-emerald-600">
                           ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={bonusAmounts[r.animator.Employee_ID] ?? ''}
+                              onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                              className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
+                            />
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col gap-2 items-center">
@@ -6922,7 +5243,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                     </tr>
                     {expandedAnimators.has(r.animator.Employee_ID) && (
                       <tr className="bg-gray-50/80">
-                        <td colSpan={9} className="px-10 py-4 border-b border-gray-100">
+                        <td colSpan={6} className="px-10 py-4 border-b border-gray-100">
                           <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-inner">
                             <div className="flex items-center justify-between mb-3">
                               <h4 className="text-xs font-bold text-gray-700 uppercase">Projects ({r.animatorProjects.length})</h4>
@@ -7402,7 +5723,6 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
   const [pendingTotalEarnings, setPendingTotalEarnings] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [activeTier, setActiveTier] = useState<string | null>(null)
-  const [selectedAnimatorForModal, setSelectedAnimatorForModal] = useState<Animator | null>(null)
   
   const [searchQuery, setSearchQuery] = useState('')
   const [sortMode, setSortMode] = useState<'Name' | 'EmpID' | 'Load'>('Name')
@@ -7420,7 +5740,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
   const [selectedMonth, setSelectedMonth] = useState<string>('Last 7 Days')
 
   useEffect(() => {
-    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+    apiClient.from('payments').select('*').then(({ data }) => {
       setPayments(data || [])
       setLoadingPayments(false)
     })
@@ -7661,66 +5981,11 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             const isEarningEdited = pendingTotalEarnings[a.Employee_ID] !== undefined
             const isEdited = isTierEdited || isEarningEdited
             
-            // Calculate exact seconds for only Paid or Closed projects in the selected month
-            let paidClosedSeconds = 0
-            let allTimePaidClosedSeconds = 0
-            projects.forEach(p => {
-              const isMatched = p.Employee_ID === a.Employee_ID || 
-                                (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || 
-                                (p.Animator || '').toLowerCase().includes(a.Employee_ID.toLowerCase());
-              
-              if (isMatched && ['Paid', 'Closed'].includes(p.Status)) {
-                const secs = parseDurationSec(p.Duration || '', p.Project_ID)
-                allTimePaidClosedSeconds += secs
-                
-                const appDateStr = p['Date Approved'] || p.Approved_Date
-                if (appDateStr) {
-                  try {
-                     const pDate = parseDate(appDateStr)
-                     let match = false
-                     if (selectedMonth === 'Last 7 Days') {
-                        const diff = Date.now() - pDate.getTime()
-                        if (diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000) match = true
-                     } else {
-                        const smDate = new Date(`${selectedMonth} 1`)
-                        if (pDate.getMonth() === smDate.getMonth() && pDate.getFullYear() === smDate.getFullYear()) {
-                           match = true
-                        }
-                     }
-                     if (match) {
-                       paidClosedSeconds += secs
-                     }
-                  } catch(e) {}
-                }
-              }
-            });
-
-            const compRate = Number(a.Compensation) || 85
-            const liveMonthlyEarned = Math.round((paidClosedSeconds / 60) * compRate)
-            
-            const payment = selectedMonth !== 'Last 7 Days' ? payments.find(p => p['Employee ID'] === a.Employee_ID && p['Project ID'] === `Month: ${selectedMonth}`) : null
-            const monthlyEarned = payment ? payment.net_paid : liveMonthlyEarned
-            
-            let defaultTotal = Number(a.total_earnings) || 0
-            if (defaultTotal === 0) {
-              const totalFromPayments = payments.filter(p => p['Employee ID'] === a.Employee_ID).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
-              if (totalFromPayments > 0) {
-                 defaultTotal = totalFromPayments
-                 if (!payment || selectedMonth === 'Last 7 Days') {
-                    defaultTotal += liveMonthlyEarned
-                 }
-              } else {
-                 defaultTotal = Math.round((allTimePaidClosedSeconds / 60) * compRate)
-              }
-            }
+            const monthlyEarned = getMonthlyEarned(a.Employee_ID)
             
             return (
-              <div key={a.Employee_ID} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md flex flex-col ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/10' : 'border-gray-200'}`}>
-                <div 
-                  className="flex items-start justify-between mb-4 cursor-pointer hover:bg-gray-50 -mx-3 -mt-3 p-3 rounded-xl transition-colors"
-                  onClick={() => setSelectedAnimatorForModal(a)}
-                  title="Click to view animator projects"
-                >
+              <div key={a.Employee_ID} className={`bg-white rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${isEdited ? 'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/10' : 'border-gray-200'}`}>
+                <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
                       style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
@@ -7765,7 +6030,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                       <input 
                         type="number"
                         className={`w-full bg-transparent text-sm font-bold focus:outline-none text-emerald-800 ${isEarningEdited ? 'border-b-2 border-emerald-400' : ''}`}
-                        value={isEarningEdited ? pendingTotalEarnings[a.Employee_ID] : defaultTotal}
+                        value={isEarningEdited ? pendingTotalEarnings[a.Employee_ID] : (a.total_earnings || 0)}
                         onChange={(e) => setPendingTotalEarnings(prev => ({ ...prev, [a.Employee_ID]: e.target.value }))}
                       />
                     </div>
@@ -7776,7 +6041,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                     </label>
                     <div className="flex items-center">
                       <span className="text-blue-700 font-bold mr-1">₹</span>
-                      <span className="text-sm font-bold text-blue-800">{monthlyEarned != null ? Number(monthlyEarned).toLocaleString('en-IN') : '—'}</span>
+                      <span className="text-sm font-bold text-blue-800">{monthlyEarned !== null ? monthlyEarned.toLocaleString() : '—'}</span>
                     </div>
                   </div>
                 </div>
@@ -7816,265 +6081,6 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
           })
         )}
       </div>
-
-      {selectedAnimatorForModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-gray-100">
-            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold text-white shadow-sm" style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-                  {selectedAnimatorForModal.Name[0].toUpperCase()}
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-gray-800">{selectedAnimatorForModal.Name}</h3>
-                  <p className="text-sm text-gray-500 font-mono">{selectedAnimatorForModal.Employee_ID} • {selectedAnimatorForModal.Role || 'Animator'}</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setSelectedAnimatorForModal(null)}
-                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 text-gray-500 transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-5 overflow-y-auto flex-1 bg-gray-50/30">
-              <div className="bg-white rounded-xl border border-gray-100 overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Project ID</th>
-                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Duration</th>
-                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Approved Date</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {projects
-                      .filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()))
-                      .sort((a, b) => {
-                        const da = a.Approved_Date || a['Date Approved'] || a['Date Assigned'];
-                        const db = b.Approved_Date || b['Date Approved'] || b['Date Assigned'];
-                        if (!da) return 1; if (!db) return -1;
-                        try { return parseDate(db).getTime() - parseDate(da).getTime() } catch(e) { return 0 }
-                      })
-                      .map((p, i) => {
-                        const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status)
-                        const isProgress = ['WIP', 'Allocated', 'Review', 'Changes', 'Changes Allocated'].includes(p.Status)
-                        
-                        let badgeColor = 'bg-gray-100 text-gray-600 border-gray-200'
-                        if (isApproved) badgeColor = 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                        else if (p.Status === 'Review') badgeColor = 'bg-amber-100 text-amber-700 border-amber-200'
-                        else if (isProgress) badgeColor = 'bg-blue-100 text-blue-700 border-blue-200'
-                        
-                        return (
-                          <tr key={i} className="hover:bg-gray-50 transition-colors">
-                            <td className="p-3">
-                              <p className="text-sm font-bold text-gray-800">{p.Project_ID}</p>
-                              <p className="text-xs text-gray-500 truncate max-w-[200px]" title={p.Project_title}>{p.Project_title || '—'}</p>
-                            </td>
-                            <td className="p-3">
-                              <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border ${badgeColor}`}>
-                                {p.Status}
-                              </span>
-                            </td>
-                            <td className="p-3 text-sm font-semibold text-gray-700">{p.Duration || '—'}</td>
-                            <td className="p-3 text-xs text-gray-500 hidden sm:table-cell">{p.Approved_Date || p['Date Approved'] || '—'}</td>
-                          </tr>
-                        )
-                    })}
-                    {projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase())).length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="p-8 text-center text-gray-400 text-sm">No projects found for this animator.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-
-export default function ManagerDashboard() {
-  const router = useRouter()
-  const [user, setUser] = useState<DashboardUser | null>(null)
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
-  const [projects, setProjects] = useState<Project[]>([])
-  const [animators, setAnimators] = useState<Animator[]>([])
-  const [loading, setLoading] = useState(true)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-
-  useEffect(() => {
-    const stored = localStorage.getItem('tfa_user')
-    if (!stored) { router.push('/'); return }
-    setUser(JSON.parse(stored))
-  }, [router])
-
-  const fetchData = useCallback(async () => {
-    if (!user) return
-    setLoading(true)
-    let query = apiClient.from('projects').select('*')
-    // Removing the explicit assigned_head filter here so Head can view all projects in Analytics
-    const [{ data: pData }, { data: aData }] = await Promise.all([
-      query,
-      apiClient.from('animators').select('*'),
-    ])
-    setProjects((pData as Project[]) || [])
-    setAnimators((aData as Animator[]) || [])
-    setLoading(false)
-  }, [user])
-
-  useEffect(() => { if (user) fetchData() }, [user, fetchData])
-
-  const handleLogout = () => { localStorage.removeItem('tfa_user'); router.push('/') }
-
-  if (!user) return null
-
-  // In this system: role='manager' = Head user, role='head' = Manager user
-  const isHead = user.role === 'manager'
-  // For Lead (non-Head) users, filter projects and animators to only their assigned ones
-  const leadName = user.full_name || ''
-  // Leads are also animators — show projects they lead AND their own animation work
-  const leadAnimator = animators.find(a => a.Name.toLowerCase() === leadName.toLowerCase())
-  const leadEid = leadAnimator?.Employee_ID || ''
-  const filteredProjects = isHead ? projects : projects.filter(p =>
-    (p.Lead || '').toLowerCase() === leadName.toLowerCase() ||
-    p.Employee_ID === leadEid ||
-    (leadName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(leadName.toLowerCase()))
-  )
-  const leadAnimatorEids = new Set(filteredProjects.map(p => p.Employee_ID).filter(Boolean))
-  if (leadEid) leadAnimatorEids.add(leadEid) // always include themselves
-  const filteredAnimators = isHead ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
-  // managerOnly:true = show ONLY to Head (manager role)
-  const TABS = ALL_TABS.filter(t => !t.managerOnly || isHead)
-
-  const SidebarContent = () => (
-    <>
-      <div className="p-5 border-b border-gray-100">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
-            <img
-              src="/logo.png"
-              alt="Logo"
-              className="w-full h-full object-contain drop-shadow-md"
-              onError={(e) => {
-                e.currentTarget.src = 'https://ui-avatars.com/api/?name=TFA&background=667eea&color=fff&rounded=true';
-              }}
-            />
-          </div>
-          <div>
-            <p className="font-bold text-gray-800 text-sm">TFA Dashboard</p>
-            <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
-          </div>
-        </div>
-      </div>
-
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {TABS.map(tab => (
-          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSidebarOpen(false) }}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-            style={{ backgroundColor: activeTab === tab.id ? '#f0f0ff' : 'transparent', color: activeTab === tab.id ? '#667eea' : '#64748b' }}>
-            <span>{tab.icon}</span>
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-
-      <div className="p-4 border-t border-gray-100 flex-shrink-0">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-            {(user.full_name || user.email)[0].toUpperCase()}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-800 truncate">{user.full_name || user.email}</p>
-            <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
-          </div>
-        </div>
-        <button onClick={handleLogout} className="w-full py-2 rounded-lg text-xs font-medium text-red-500 border border-red-200 hover:bg-red-50">Sign out</button>
-      </div>
-    </>
-  )
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex-col bg-white border-r border-gray-100 shadow-sm hidden lg:flex">
-        <SidebarContent />
-      </aside>
-
-      {/* Mobile overlay */}
-      {sidebarOpen && <div className="fixed inset-0 z-30 bg-black bg-opacity-40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
-
-      {/* Mobile Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex flex-col bg-white border-r border-gray-100 shadow-lg lg:hidden transition-transform"
-        style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <span className="font-bold text-gray-800">TFA Dashboard</span>
-          <button onClick={() => setSidebarOpen(false)} className="text-gray-400 text-xl">✕</button>
-        </div>
-        <SidebarContent />
-      </aside>
-
-      {/* Main */}
-      <main className="flex-1 lg:ml-64 flex flex-col min-h-screen">
-        {/* Top bar */}
-        <header className="sticky top-0 z-20 bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 rounded-lg hover:bg-gray-100">
-              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <div>
-              <h1 className="font-bold text-gray-800">{TABS.find(t => t.id === activeTab)?.label}</h1>
-              <p className="text-xs text-gray-400">{formatDate()}</p>
-            </div>
-          </div>
-          <button onClick={fetchData} className="p-2 rounded-lg hover:bg-gray-100 transition-colors" title="Refresh">
-            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-        </header>
-
-        {/* Content */}
-        <div className="flex-1 p-4 lg:p-6">
-          {loading ? (
-            <div className="flex items-center justify-center py-32">
-              <div className="text-center">
-                <svg className="animate-spin h-8 w-8 mx-auto mb-3" style={{ color: '#667eea' }} fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                <p className="text-gray-400 text-sm">Loading data...</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              {activeTab === 'overview' && <OverviewTab projects={filteredProjects} animators={filteredAnimators} />}
-              {activeTab === 'tiers' && <TiersTab animators={animators} projects={projects} onRefresh={fetchData} />}
-              {activeTab === 'assign' && <AssignTab projects={projects} animators={animators} onRefresh={fetchData} />}
-              {activeTab === 'duplicates' && <DuplicatesTab projects={projects} />}
-              {activeTab === 'bank' && <ProjectsTab projects={filteredProjects} onRefresh={fetchData} user={user} />}
-              {activeTab === 'team' && <TeamTab animators={filteredAnimators} projects={filteredProjects} user={user} onRefresh={fetchData} />}
-              {activeTab === 'create' && <CreateProjectTab onRefresh={fetchData} projects={projects} />}
-              {activeTab === 'submissions' && <FormSubmissionsTab animators={animators} userRole={user.role} userLead={user.full_name} />}
-              {activeTab === 'analytics' && <AnalyticsTab projects={filteredProjects} animators={filteredAnimators} />}
-              {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
-              {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
-              {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
-              {activeTab === 'notes' && <NotesTab user={user} />}
-              {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
-              {activeTab === 'users' && <UserManagementTab user={user} />}
-            </>
-          )}
-        </div>
-      </main>
     </div>
   )
 }
