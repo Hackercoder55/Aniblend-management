@@ -8146,6 +8146,7 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
 }
 
 
+export default function ManagerDashboard() {
   const router = useRouter()
   const [user, setUser] = useState<DashboardUser | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
