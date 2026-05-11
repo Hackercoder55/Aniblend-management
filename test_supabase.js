@@ -1,24 +1,25 @@
-const fs = require('fs');
+const { createClient } = require('@supabase/supabase-js');
+const dotenv = require('dotenv');
+dotenv.config({ path: '.env.local' });
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
-const envFile = fs.readFileSync('d:\\Docs\\TFA Dashboard\\tfa-dashboard\\.env.local', 'utf8');
-let supabaseUrl = '';
-let supabaseKey = '';
+async function test() {
+  let allProjects = [];
+  let from = 0;
+  const step = 1000;
+  let keepFetching = true;
 
-envFile.split('\n').forEach(line => {
-    if (line.includes('NEXT_PUBLIC_SUPABASE_URL=')) {
-        supabaseUrl = line.split('="')[1].replace('"', '').trim();
+  while (keepFetching) {
+    const { data, error } = await supabase.from('projects').select('*').range(from, from + step - 1);
+    if (error) {
+      console.error('ERROR:', error);
+      break;
     }
-    if (line.includes('SUPABASE_SERVICE_ROLE_KEY=')) {
-        supabaseKey = line.split('="')[1].replace('"', '').trim();
-    }
-});
-
-// Since the url is missing in env.local, I'll fallback to known from history if blank
-if (!supabaseUrl) {
-    supabaseUrl = 'https://sgszohgxtmpxlajkcdzj.supabase.co'; // Replace with a fake or throw error, wait, I can just read it from Next Config.
+    if (!data) break;
+    allProjects = [...allProjects, ...data];
+    if (data.length < step) keepFetching = false;
+    from += step;
+  }
+  console.log('Fetched:', allProjects.length);
 }
-
-async function run() {
-    console.log("Cannot run securely without URL");
-}
-run();
+test();
