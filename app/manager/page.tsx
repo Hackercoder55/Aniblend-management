@@ -8165,28 +8165,14 @@ export default function ManagerDashboard() {
     if (!user) return
     setLoading(true)
     try {
-      // Fetch animators (usually < 1000)
-      const { data: aData } = await apiClient.from('animators').select('*')
+      // Fetch up to 2000 projects safely to bypass the 1000 row limit, without using while loop that could freeze
+      const [{ data: p1 }, { data: p2 }, { data: aData }] = await Promise.all([
+        apiClient.from('projects').select('*').range(0, 999),
+        apiClient.from('projects').select('*').range(1000, 1999),
+        apiClient.from('animators').select('*')
+      ])
       
-      // Fetch all projects using pagination to bypass 1000 row limit safely
-      let allProjects: any[] = []
-      let from = 0
-      const step = 1000
-      let keepFetching = true
-      
-      while (keepFetching) {
-        const { data, error } = await apiClient.from('projects')
-          .select('*')
-          .range(from, from + step - 1)
-          
-        if (error || !data) break
-        
-        allProjects = [...allProjects, ...data]
-        if (data.length < step) {
-          keepFetching = false
-        }
-        from += step
-      }
+      const allProjects = [...(p1 || []), ...(p2 || [])]
       
       setProjects((allProjects as Project[]) || [])
       setAnimators((aData as Animator[]) || [])
