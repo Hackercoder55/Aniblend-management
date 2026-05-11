@@ -3187,13 +3187,14 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
   // Count projects created today (matching today's DD+M prefix) to get next sequence number
   const todayProjectCount = projects.filter(p => {
     const pid = p.Project_ID || ''
-    const numericPart = pid.split('_')[0] // e.g. "12524" from "12524_80_his"
+    const numericPart = pid.split('_')[0] // e.g. "1251" from "1251_80_his"
     if (!/^\d+$/.test(numericPart)) return false
     // Must start with today's prefix and have more digits after (the seq number)
     if (!numericPart.startsWith(todayPrefix)) return false
     const seqStr = numericPart.slice(todayPrefix.length)
-    // Must have at least 1 digit sequence AND the full ID must have underscore parts after
-    return /^\d+$/.test(seqStr) && pid.includes('_')
+    // Seq must be 1-3 digits (max 999 projects/day) to avoid matching old IDs like "125261"
+    // Also the full ID must have underscore parts (e.g. _80_his)
+    return /^\d{1,3}$/.test(seqStr) && pid.includes('_')
   }).length
 
   const nextNumber = todayProjectCount + 1
