@@ -8166,9 +8166,10 @@ export default function ManagerDashboard() {
     setLoading(true)
     try {
       // Fetch up to 2000 projects safely to bypass the 1000 row limit, without using while loop that could freeze
+      // IMPORTANT: Pagination requires deterministic sorting, otherwise Postgres can return overlapping ranges
       const [{ data: p1 }, { data: p2 }, { data: aData }] = await Promise.all([
-        apiClient.from('projects').select('*').range(0, 999),
-        apiClient.from('projects').select('*').range(1000, 1999),
+        apiClient.from('projects').select('*').order('id', { ascending: false }).range(0, 999),
+        apiClient.from('projects').select('*').order('id', { ascending: false }).range(1000, 1999),
         apiClient.from('animators').select('*')
       ])
       
