@@ -5208,9 +5208,9 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
 
 type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments'
 
-const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
+const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; leadOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
-  { id: 'lead_payments', label: 'My Payments', icon: '💰' },
+  { id: 'lead_payments', label: 'My Payments', icon: '💰', leadOnly: true },
   { id: 'tiers', label: 'Animator Tiers', icon: '🏆', managerOnly: true },
   { id: 'assign', label: 'Assign Projects', icon: '🔗', managerOnly: true },
   { id: 'duplicates', label: 'Duplicate Threads', icon: '👯', managerOnly: true },
@@ -8197,8 +8197,12 @@ export default function ManagerDashboard() {
   if (leadEid) leadAnimatorEids.add(leadEid) // always include themselves
   const filteredAnimators = isHead ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
   // managerOnly:true = show ONLY to Head (manager role)
-  const TABS = ALL_TABS.filter(t => !t.managerOnly || isHead)
-
+  // leadOnly:true = show ONLY to Lead (head role)
+  const TABS = ALL_TABS.filter(t => {
+    if (t.managerOnly && !isHead) return false;
+    if (t.leadOnly && isHead) return false;
+    return true;
+  })
   const SidebarContent = () => (
     <>
       <div className="p-5 border-b border-gray-100">
