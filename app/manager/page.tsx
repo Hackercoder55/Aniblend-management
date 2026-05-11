@@ -5206,10 +5206,11 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
+  { id: 'lead_payments', label: 'My Payments', icon: '💰' },
   { id: 'tiers', label: 'Animator Tiers', icon: '🏆', managerOnly: true },
   { id: 'assign', label: 'Assign Projects', icon: '🔗', managerOnly: true },
   { id: 'duplicates', label: 'Duplicate Threads', icon: '👯', managerOnly: true },
@@ -6695,19 +6696,23 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       )
       animatorProjectsForCalc.forEach(p => {
         const projSec = parseDurationSec(p.Duration || '', p.Project_ID)
-        const projMins = projSec / 60
         const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()
         const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()))
         const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase()
+        
         if (isLead) leadBonus += 1000
+        
         if (isLighting) {
-          calculatedGross += projMins * 2000
+          calculatedGross += projSec * (2000 / 60)
         } else if (isAnim) {
           const rate = p.Lighting_Artist ? 3000 : 5000
-          calculatedGross += projMins * rate
+          calculatedGross += projSec * (rate / 60)
         }
       })
-      const gross = calculatedGross > 0 ? calculatedGross : currentMins * 5000
+      
+      // Nearest 100 round off
+      let baseGross = calculatedGross > 0 ? calculatedGross : currentMins * 5000;
+      const gross = Math.round(baseGross / 100) * 100;
       const totalBonusParsed = bonusParsed + leadBonus
       const totalAmount = gross + totalBonusParsed + othersAmt
       const net = totalAmount - (totalAmount * tdsPct / 100)
@@ -7838,6 +7843,81 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
               </button>
             </div>
             <div className="p-5 overflow-y-auto flex-1 bg-gray-50/30">
+            {(() => {
+              const animProjects = projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()));
+              let allTimeEarned = 0;
+              let allTimePaid = 0;
+              let pendingPayout = 0;
+              
+              // Last month is current month - 1
+              const now = new Date();
+              const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+              let lastMonthApprovedCount = 0;
+              let lastMonthPaidCount = 0;
+
+              animProjects.forEach(p => {
+                const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status);
+                if (isApproved) {
+                  let projEarn = 0;
+                  const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
+                  const animName = selectedAnimatorForModal.Name;
+                  const eid = selectedAnimatorForModal.Employee_ID;
+                  const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
+                  const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
+                  const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
+                  
+                  if (isLead) projEarn += 1000;
+                  if (isLighting) {
+                     projEarn += projSec * (2000 / 60);
+                  } else if (isAnim) {
+                     const rate = p.Lighting_Artist ? 3000 : 5000;
+                     projEarn += projSec * (rate / 60);
+                  }
+                  projEarn = Math.round(projEarn / 100) * 100;
+                  
+                  allTimeEarned += projEarn;
+                  if (p.Payment_Status === 'Paid') {
+                    allTimePaid += projEarn;
+                  } else {
+                    pendingPayout += projEarn;
+                  }
+
+                  // Last month check
+                  const appDateStr = p.Approved_Date || p['Date Approved'];
+                  if (appDateStr) {
+                    try {
+                      const pDate = parseDate(appDateStr);
+                      if (pDate.getMonth() === lastMonth.getMonth() && pDate.getFullYear() === lastMonth.getFullYear()) {
+                        lastMonthApprovedCount++;
+                        if (p.Payment_Status === 'Paid') lastMonthPaidCount++;
+                      }
+                    } catch(e) {}
+                  }
+                }
+              });
+
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
+                   <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center">
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Total Earned (All Time)</p>
+                     <p className="text-xl font-bold text-gray-800">₹{allTimeEarned.toLocaleString()}</p>
+                   </div>
+                   <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 shadow-sm flex flex-col justify-center">
+                     <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-1">Total Paid</p>
+                     <p className="text-xl font-bold text-emerald-700">₹{allTimePaid.toLocaleString()}</p>
+                   </div>
+                   <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 shadow-sm flex flex-col justify-center">
+                     <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1">Pending Payout</p>
+                     <p className="text-xl font-bold text-amber-700">₹{pendingPayout.toLocaleString()}</p>
+                   </div>
+                   <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm flex flex-col justify-center">
+                     <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1">Last Month</p>
+                     <p className="text-xl font-bold text-blue-700">{lastMonthApprovedCount} Vids <span className="text-xs font-medium text-blue-500">({lastMonthPaidCount} Paid)</span></p>
+                   </div>
+                </div>
+              );
+            })()}
+
               <div className="bg-white rounded-xl border border-gray-100 overflow-hidden shadow-sm">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -7845,6 +7925,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                       <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Project ID</th>
                       <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                       <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Duration</th>
+                      <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Earnings</th>
                       <th className="p-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Approved Date</th>
                     </tr>
                   </thead>
@@ -7866,6 +7947,26 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                         else if (p.Status === 'Review') badgeColor = 'bg-amber-100 text-amber-700 border-amber-200'
                         else if (isProgress) badgeColor = 'bg-blue-100 text-blue-700 border-blue-200'
                         
+                        // Calculate specific project earnings for this animator
+                        let projEarn = 0;
+                        if (isApproved) {
+                           const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
+                           const animName = selectedAnimatorForModal.Name;
+                           const eid = selectedAnimatorForModal.Employee_ID;
+                           const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
+                           const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
+                           const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
+                           
+                           if (isLead) projEarn += 1000;
+                           if (isLighting) {
+                              projEarn += projSec * (2000 / 60);
+                           } else if (isAnim) {
+                              const rate = p.Lighting_Artist ? 3000 : 5000;
+                              projEarn += projSec * (rate / 60);
+                           }
+                           projEarn = Math.round(projEarn / 100) * 100;
+                        }
+
                         return (
                           <tr key={i} className="hover:bg-gray-50 transition-colors">
                             <td className="p-3">
@@ -7878,6 +7979,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                               </span>
                             </td>
                             <td className="p-3 text-sm font-semibold text-gray-700">{p.Duration || '—'}</td>
+                            <td className="p-3 text-sm font-bold text-emerald-600">{isApproved && projEarn > 0 ? `₹${projEarn.toLocaleString()}` : '—'}</td>
                             <td className="p-3 text-xs text-gray-500 hidden sm:table-cell">{p.Approved_Date || p['Date Approved'] || '—'}</td>
                           </tr>
                         )
@@ -7898,8 +8000,152 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
   )
 }
 
+// ─── LeadPaymentsTab ─────────────────────────────────────────────────────────
 
-export default function ManagerDashboard() {
+function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: DashboardUser }) {
+  const [filter, setFilter] = useState<'all' | 'own' | 'lead'>('all');
+  
+  const leadName = user.full_name || '';
+  
+  const myProjects = projects.filter(p => {
+    const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+    const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
+    
+    if (filter === 'own') return isOwn;
+    if (filter === 'lead') return isLead;
+    return isOwn || isLead;
+  });
+
+  // Calculate earnings
+  const totalEarned = myProjects.reduce((sum, p) => {
+    if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return sum;
+    let earn = 0;
+    const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
+    const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+    
+    if (isLead) earn += 1000;
+    if (isOwn) {
+      const isLighting = (p.Lighting_Artist || '').toLowerCase() === leadName.toLowerCase();
+      const rate = isLighting ? 2000 : (p.Lighting_Artist ? 3000 : 5000);
+      const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
+      earn += projSec * (rate / 60);
+    }
+    return sum + (Math.round(earn / 100) * 100);
+  }, 0);
+
+  const totalPaid = myProjects.reduce((sum, p) => {
+    if (p.Payment_Status !== 'Paid') return sum;
+    let earn = 0;
+    const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
+    const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+    if (isLead) earn += 1000;
+    if (isOwn) {
+      const isLighting = (p.Lighting_Artist || '').toLowerCase() === leadName.toLowerCase();
+      const rate = isLighting ? 2000 : (p.Lighting_Artist ? 3000 : 5000);
+      const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
+      earn += projSec * (rate / 60);
+    }
+    return sum + (Math.round(earn / 100) * 100);
+  }, 0);
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between bg-white rounded-2xl shadow-sm border border-gray-100 p-5 gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">My Payments Tracking</h2>
+          <p className="text-sm text-gray-500 mt-1">Track your earnings for your own animations and the projects you lead.</p>
+        </div>
+        <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl border border-gray-200">
+          <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${filter === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>All</button>
+          <button onClick={() => setFilter('own')} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${filter === 'own' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>My Animations</button>
+          <button onClick={() => setFilter('lead')} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${filter === 'lead' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Lead Projects</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Total Earned</p>
+          <p className="text-3xl font-black text-gray-800">₹{totalEarned.toLocaleString()}</p>
+        </div>
+        <div className="bg-emerald-50 p-5 rounded-2xl border border-emerald-100 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Total Paid</p>
+          <p className="text-3xl font-black text-emerald-700">₹{totalPaid.toLocaleString()}</p>
+        </div>
+        <div className="bg-amber-50 p-5 rounded-2xl border border-amber-100 shadow-sm flex flex-col justify-center">
+          <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1">Pending Payout</p>
+          <p className="text-3xl font-black text-amber-700">₹{(totalEarned - totalPaid).toLocaleString()}</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="px-4 py-3 font-semibold text-gray-600 uppercase tracking-wider text-xs">Project</th>
+                <th className="px-4 py-3 font-semibold text-gray-600 uppercase tracking-wider text-xs">Role</th>
+                <th className="px-4 py-3 font-semibold text-gray-600 uppercase tracking-wider text-xs text-center">Status</th>
+                <th className="px-4 py-3 font-semibold text-gray-600 uppercase tracking-wider text-xs text-center">Payment</th>
+                <th className="px-4 py-3 font-semibold text-gray-600 uppercase tracking-wider text-xs text-right">Earned (₹)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {myProjects.length === 0 ? (
+                <tr><td colSpan={5} className="p-8 text-center text-gray-400">No projects found.</td></tr>
+              ) : myProjects.sort((a,b) => {
+                const da = a.Approved_Date || a['Date Approved'] || a['Date Assigned'];
+                const db = b.Approved_Date || b['Date Approved'] || b['Date Assigned'];
+                if (!da) return 1; if (!db) return -1;
+                try { return parseDate(db).getTime() - parseDate(da).getTime() } catch(e) { return 0 }
+              }).map((p, i) => {
+                const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+                const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
+                const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status);
+                
+                let earn = 0;
+                if (isApproved) {
+                  if (isLead) earn += 1000;
+                  if (isOwn) {
+                    const isLighting = (p.Lighting_Artist || '').toLowerCase() === leadName.toLowerCase();
+                    const rate = isLighting ? 2000 : (p.Lighting_Artist ? 3000 : 5000);
+                    const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
+                    earn += projSec * (rate / 60);
+                  }
+                  earn = Math.round(earn / 100) * 100;
+                }
+
+                let roleBadge = [];
+                if (isOwn) roleBadge.push(<span key="anim" className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase mr-1">Animator</span>);
+                if (isLead) roleBadge.push(<span key="lead" className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Lead</span>);
+
+                return (
+                  <tr key={i} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="font-bold text-gray-800">{p.Project_ID}</p>
+                      <p className="text-xs text-gray-500 truncate max-w-[200px]" title={p.Project_title}>{p.Project_title || '—'}</p>
+                    </td>
+                    <td className="px-4 py-3">{roleBadge}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${isApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{p.Status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${p.Payment_Status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{p.Payment_Status === 'Paid' ? 'Paid' : 'Pending'}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-gray-800">
+                      {isApproved && earn > 0 ? `₹${earn.toLocaleString()}` : <span className="text-gray-400 font-normal">—</span>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
   const router = useRouter()
   const [user, setUser] = useState<DashboardUser | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
@@ -8065,6 +8311,7 @@ export default function ManagerDashboard() {
               {activeTab === 'create' && <CreateProjectTab onRefresh={fetchData} projects={projects} />}
               {activeTab === 'submissions' && <FormSubmissionsTab animators={animators} userRole={user.role} userLead={user.full_name} />}
               {activeTab === 'analytics' && <AnalyticsTab projects={filteredProjects} animators={filteredAnimators} />}
+              {activeTab === 'lead_payments' && <LeadPaymentsTab projects={projects} user={user} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
