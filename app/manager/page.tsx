@@ -3174,17 +3174,42 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
   const [successInfo, setSuccessInfo] = useState<{ title: string; id: string } | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [recentOpen, setRecentOpen] = useState(true)
+  const [suffix, setSuffix] = useState('') // user types _80_his
+
+  // Auto-generate today's prefix: DD + M(M) + next_number
+  const todayPrefix = (() => {
+    const now = new Date()
+    const dd = String(now.getDate())
+    const m = String(now.getMonth() + 1) // no padding — May=5, Nov=11
+    return dd + m
+  })()
+
+  // Count today's projects to determine next number
+  const todayProjectCount = projects.filter(p => {
+    const pid = p.Project_ID || ''
+    // Match projects that start with today's prefix and have a number after
+    if (!pid.startsWith(todayPrefix)) return false
+    // After the prefix, the next chars until _ should be digits (project number)
+    const rest = pid.slice(todayPrefix.length)
+    const numPart = rest.split('_')[0]
+    return /^\d+$/.test(numPart)
+  }).length
+
+  const nextNumber = todayProjectCount + 1
+  const autoPrefix = todayPrefix + nextNumber
+
+  // Combine auto prefix + user suffix into Project_ID
+  useEffect(() => {
+    const fullId = autoPrefix + suffix
+    const dur = extractDuration(fullId)
+    setForm(prev => ({ ...prev, Project_ID: fullId, Duration: dur || prev.Duration }))
+  }, [autoPrefix, suffix])
 
   // Only Pending projects, sorted by true chronological mathematical sequence (latest = highest seq), top 3
   const recentPending = [...projects]
     .filter(p => p.Project_ID && p.Status === 'Pending')
     .sort((a, b) => parseProjectSeq(b.Project_ID) - parseProjectSeq(a.Project_ID))
     .slice(0, 3)
-
-  const handleProjectIdChange = (val: string) => {
-    const dur = extractDuration(val)
-    setForm(prev => ({ ...prev, Project_ID: val, Duration: dur || prev.Duration }))
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -3201,6 +3226,7 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
       setErrorMsg(error.message || 'Failed to create project')
     } else {
       setSuccessInfo({ title: form.Project_title, id: form.Project_ID })
+      setSuffix('')
       setForm({ Project_ID: '', Project_title: '', Project_link: '', Lead: '', Duration: '' })
       onRefresh()
       setTimeout(() => setSuccessInfo(null), 6000)
@@ -3253,9 +3279,16 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Project ID <span className="text-red-400">*</span></label>
-              <input type="text" value={form.Project_ID} onChange={e => handleProjectIdChange(e.target.value)} required
-                placeholder="e.g. 2022_80_plip"
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+              <div className="flex items-center gap-0 border border-gray-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-indigo-200">
+                <span className="px-3 py-2.5 bg-indigo-50 text-indigo-700 font-mono text-sm font-semibold border-r border-gray-200 whitespace-nowrap select-all cursor-pointer" title="Auto-generated: Date + Month + Project #">{autoPrefix}</span>
+                <input type="text" value={suffix} onChange={e => setSuffix(e.target.value)} required
+                  placeholder="_80_his"
+                  className="flex-1 px-3 py-2.5 text-sm focus:outline-none text-gray-800 font-mono" />
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                <span className="font-medium text-indigo-500">{autoPrefix}</span> = {new Date().getDate()} (date) + {new Date().getMonth() + 1} (month) + {nextNumber} (project #{nextNumber} today)
+                <span className="mx-1">·</span>Full ID: <span className="font-mono font-medium text-gray-600">{form.Project_ID || autoPrefix}</span>
+              </p>
               {form.Duration && <p className="text-xs text-indigo-500 mt-1">Auto-detected duration: <strong>{form.Duration}</strong></p>}
             </div>
             {[
