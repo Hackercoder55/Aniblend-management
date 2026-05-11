@@ -5240,6 +5240,7 @@ const apiClient = {
     let _order: any = null;
     let _single = false;
     let _options: any = null;
+    let _range: any = null;
 
     const builder: any = {
       select(params?: string) { _action = 'select'; _payload = params; return builder; },
@@ -5253,12 +5254,13 @@ const apiClient = {
       in(col: string, vals: any[]) { _inMatch = { column: col, values: vals }; return builder; },
       order(col: string, opts?: any) { _order = { column: col, options: opts }; return builder; },
       limit(n: number) { _order = { ...(_order || {}), limit: n }; return builder; },
+      range(from: number, to: number) { _range = { from, to }; return builder; },
       single() { _single = true; return builder; },
       then(resolve: (value: any) => void, reject: (reason?: any) => void) {
         fetch(`/api/${table}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, order: _order, single: _single, options: _options })
+          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, order: _order, single: _single, options: _options, range: _range })
         })
           .then(res => res.json().then(data => res.ok ? data : Promise.reject(data.error)))
           .then(data => resolve({ data: data.data, error: null }))
