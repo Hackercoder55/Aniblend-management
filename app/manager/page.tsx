@@ -8164,14 +8164,35 @@ export default function ManagerDashboard() {
   const fetchData = useCallback(async () => {
     if (!user) return
     setLoading(true)
-    let query = apiClient.from('projects').select('*').limit(10000)
-    // Removing the explicit assigned_head filter here so Head can view all projects in Analytics
-    const [{ data: pData }, { data: aData }] = await Promise.all([
-      query,
-      apiClient.from('animators').select('*').limit(5000),
-    ])
-    setProjects((pData as Project[]) || [])
-    setAnimators((aData as Animator[]) || [])
+    try {
+      // Fetch animators (usually < 1000)
+      const { data: aData } = await apiClient.from('animators').select('*')
+      
+      // Fetch all projects using pagination to bypass 1000 row limit safely
+      let allProjects: any[] = []
+      let from = 0
+      const step = 1000
+      let keepFetching = true
+      
+      while (keepFetching) {
+        const { data, error } = await apiClient.from('projects')
+          .select('*')
+          .range(from, from + step - 1)
+          
+        if (error || !data) break
+        
+        allProjects = [...allProjects, ...data]
+        if (data.length < step) {
+          keepFetching = false
+        }
+        from += step
+      }
+      
+      setProjects((allProjects as Project[]) || [])
+      setAnimators((aData as Animator[]) || [])
+    } catch (err) {
+      console.error(err)
+    }
     setLoading(false)
   }, [user])
 
