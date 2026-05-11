@@ -3176,23 +3176,24 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
   const [recentOpen, setRecentOpen] = useState(true)
   const [suffix, setSuffix] = useState('') // user types _80_his
 
-  // Auto-generate today's prefix: DD + M(M) + next_number
-  const todayPrefix = (() => {
-    const now = new Date()
-    const dd = String(now.getDate())
-    const m = String(now.getMonth() + 1) // no padding — May=5, Nov=11
-    return dd + m
-  })()
 
-  // Count today's projects to determine next number
+  // Auto-generate today's prefix: DD + M(M) + next_number (resets each day)
+  const todayDate = (() => {
+    const now = new Date()
+    return { dd: String(now.getDate()), m: String(now.getMonth() + 1) }
+  })()
+  const todayPrefix = todayDate.dd + todayDate.m
+
+  // Count projects created today (matching today's DD+M prefix) to get next sequence number
   const todayProjectCount = projects.filter(p => {
     const pid = p.Project_ID || ''
-    // Match projects that start with today's prefix and have a number after
-    if (!pid.startsWith(todayPrefix)) return false
-    // After the prefix, the next chars until _ should be digits (project number)
-    const rest = pid.slice(todayPrefix.length)
-    const numPart = rest.split('_')[0]
-    return /^\d+$/.test(numPart)
+    const numericPart = pid.split('_')[0] // e.g. "12524" from "12524_80_his"
+    if (!/^\d+$/.test(numericPart)) return false
+    // Must start with today's prefix and have more digits after (the seq number)
+    if (!numericPart.startsWith(todayPrefix)) return false
+    const seqStr = numericPart.slice(todayPrefix.length)
+    // Must have at least 1 digit sequence AND the full ID must have underscore parts after
+    return /^\d+$/.test(seqStr) && pid.includes('_')
   }).length
 
   const nextNumber = todayProjectCount + 1
@@ -3286,7 +3287,7 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
                   className="flex-1 px-3 py-2.5 text-sm focus:outline-none text-gray-800 font-mono" />
               </div>
               <p className="text-xs text-gray-400 mt-1.5">
-                <span className="font-medium text-indigo-500">{autoPrefix}</span> = {new Date().getDate()} (date) + {new Date().getMonth() + 1} (month) + {nextNumber} (project #{nextNumber} today)
+                <span className="font-medium text-indigo-500">{autoPrefix}</span> = {todayDate.dd} (date) + {todayDate.m} (month) + {nextNumber} (#{nextNumber} aaj)
                 <span className="mx-1">·</span>Full ID: <span className="font-mono font-medium text-gray-600">{form.Project_ID || autoPrefix}</span>
               </p>
               {form.Duration && <p className="text-xs text-indigo-500 mt-1">Auto-detected duration: <strong>{form.Duration}</strong></p>}
