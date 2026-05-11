@@ -8164,11 +8164,11 @@ export default function ManagerDashboard() {
   const fetchData = useCallback(async () => {
     if (!user) return
     setLoading(true)
-    let query = apiClient.from('projects').select('*')
+    let query = apiClient.from('projects').select('*').limit(10000)
     // Removing the explicit assigned_head filter here so Head can view all projects in Analytics
     const [{ data: pData }, { data: aData }] = await Promise.all([
       query,
-      apiClient.from('animators').select('*'),
+      apiClient.from('animators').select('*').limit(5000),
     ])
     setProjects((pData as Project[]) || [])
     setAnimators((aData as Animator[]) || [])
