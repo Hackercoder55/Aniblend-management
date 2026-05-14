@@ -74,6 +74,7 @@ interface DashboardUser {
   role: string
   full_name: string
   employee_id: string
+  access_level?: string  // 'full' = see all data, 'lead' = only own projects
 }
 
 interface FormSubmission {
@@ -4992,7 +4993,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'head' as string, employee_id: '' })
+  const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'head' as string, employee_id: '', access_level: 'lead' as string })
   const [leads, setLeads] = useState<{Head_Name: string; Discord_ID: string}[]>([])
   const [nameMode, setNameMode] = useState<'lead' | 'manual'>('lead')
 
@@ -5040,7 +5041,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
       const data = await res.json()
       if (data.data) {
         addToast(`✅ User "${form.full_name}" created successfully`)
-        setForm({ email: '', password: '', full_name: '', role: 'head', employee_id: '' })
+        setForm({ email: '', password: '', full_name: '', role: 'head', employee_id: '', access_level: 'lead' })
         setShowForm(false)
         fetchUsers()
       } else {
@@ -5105,13 +5106,13 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Full Name *</label>
                 <div className="flex gap-2 mb-1">
-                  <button onClick={() => { setNameMode('lead'); setForm(f => ({ ...f, full_name: '' })) }}
+                  <button onClick={() => { setNameMode('lead'); setForm(f => ({ ...f, full_name: '', access_level: 'lead' })) }}
                     className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-all ${nameMode === 'lead' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
                     📋 From Leads
                   </button>
-                  <button onClick={() => { setNameMode('manual'); setForm(f => ({ ...f, full_name: '' })) }}
+                  <button onClick={() => { setNameMode('manual'); setForm(f => ({ ...f, full_name: '', access_level: 'full' })) }}
                     className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-all ${nameMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                    ✏️ Manual
+                    ✏️ Manual (Full Access)
                   </button>
                 </div>
                 {nameMode === 'lead' ? (
@@ -5136,7 +5137,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
                   />
                 )}
-                <p className="text-[10px] text-gray-400 mt-1">{nameMode === 'lead' ? 'Only shows leads without accounts' : 'Use for view-only access accounts'}</p>
+                <p className="text-[10px] text-gray-400 mt-1">{nameMode === 'lead' ? 'Only shows leads without accounts — will see only their own projects' : '⚡ Full access — will see ALL projects like Head'}</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Email *</label>
@@ -5192,6 +5193,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3">Role</th>
+                  <th className="px-4 py-3">Access</th>
                   <th className="px-4 py-3">Last Login</th>
                   <th className="px-4 py-3 text-center">Action</th>
                 </tr>
@@ -5213,6 +5215,15 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${u.role === 'manager' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'}`}>
                         {roleLabels[u.role] || u.role}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {u.role === 'manager' ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-700">👑 Full</span>
+                      ) : u.access_level === 'full' ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">⚡ Full Access</span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">🔒 Own Projects</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">
                       {u.last_login ? new Date(u.last_login).toLocaleString('en-IN') : 'Never'}
@@ -8228,19 +8239,21 @@ export default function ManagerDashboard() {
 
   // In this system: role='manager' = Head user, role='head' = Manager user
   const isHead = user.role === 'manager'
-  // For Lead (non-Head) users, filter projects and animators to only their assigned ones
+  // access_level='full' means manually created user who should see ALL data (like Head)
+  const hasFullAccess = isHead || user.access_level === 'full'
+  // For Lead (non-Head, non-full-access) users, filter projects and animators to only their assigned ones
   const leadName = user.full_name || ''
   // Leads are also animators — show projects they lead AND their own animation work
   const leadAnimator = animators.find(a => a.Name.toLowerCase() === leadName.toLowerCase())
   const leadEid = leadAnimator?.Employee_ID || ''
-  const filteredProjects = isHead ? projects : projects.filter(p =>
+  const filteredProjects = hasFullAccess ? projects : projects.filter(p =>
     (p.Lead || '').toLowerCase() === leadName.toLowerCase() ||
     p.Employee_ID === leadEid ||
     (leadName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(leadName.toLowerCase()))
   )
   const leadAnimatorEids = new Set(filteredProjects.map(p => p.Employee_ID).filter(Boolean))
   if (leadEid) leadAnimatorEids.add(leadEid) // always include themselves
-  const filteredAnimators = isHead ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
+  const filteredAnimators = hasFullAccess ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
   // managerOnly:true = show ONLY to Head (manager role)
   // leadOnly:true = show ONLY to Lead (head role)
   const TABS = ALL_TABS.filter(t => {

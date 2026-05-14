@@ -60,6 +60,7 @@ export async function POST(request: Request) {
                 role: user.role,
                 full_name: user.full_name,
                 employee_id: user.employee_id,
+                access_level: user.access_level || null,
             }
         });
 

@@ -36,7 +36,7 @@ export async function POST(request: Request) {
         if (action === 'list') {
             const { data, error } = await supabase
                 .from('dashboard_users')
-                .select('id, email, role, full_name, employee_id, last_login')
+                .select('id, email, role, full_name, employee_id, last_login, access_level')
                 .order('full_name');
 
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -45,7 +45,7 @@ export async function POST(request: Request) {
 
         // CREATE user
         if (action === 'create') {
-            const { email, password, role, full_name, employee_id } = body;
+            const { email, password, role, full_name, employee_id, access_level } = body;
 
             if (!email || !password || !role || !full_name) {
                 return NextResponse.json({ error: 'Email, password, role, and full_name are required' }, { status: 400 });
@@ -72,8 +72,9 @@ export async function POST(request: Request) {
                     role,
                     full_name,
                     employee_id: employee_id || null,
+                    access_level: access_level || 'lead',
                 })
-                .select('id, email, role, full_name, employee_id')
+                .select('id, email, role, full_name, employee_id, access_level')
                 .single();
 
             if (insertError) {
