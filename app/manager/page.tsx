@@ -2816,6 +2816,91 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
     </div>
   )
 }
+// ─── Paid Projects Modal ──────────────────────────────────────────────────────
+
+function PaidProjectsModal({ animator, projects, totalEarned, onClose }: {
+  animator: Animator; projects: Project[]; totalEarned: number; onClose: () => void
+}) {
+  const paidProjects = projects
+    .filter(p =>
+      (p.Employee_ID === animator.Employee_ID || (p.Animator || '').toLowerCase().includes(animator.Name.toLowerCase())) &&
+      ['Approved', 'Paid', 'Closed'].includes(p.Status)
+    )
+    .sort((a, b) => {
+      const da = a.Approved_Date || a['Date Approved'] || a['Date Assigned'] || ''
+      const db = b.Approved_Date || b['Date Approved'] || b['Date Assigned'] || ''
+      if (!da) return 1; if (!db) return -1
+      try { return parseDate(db).getTime() - parseDate(da).getTime() } catch { return 0 }
+    })
+
+  const paidCount = paidProjects.filter(p => p.Payment_Status === 'Paid').length
+  const pendingCount = paidProjects.length - paidCount
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="font-bold text-gray-800 text-lg">💰 {animator.Name} — Payment Details</h3>
+            <p className="text-xs text-gray-400 mt-0.5">{paidProjects.length} completed projects · {paidCount} paid · {pendingCount} pending</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-3 gap-3 p-4 border-b border-gray-100 flex-shrink-0">
+          <div className="bg-emerald-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Earned</p>
+            <p className="text-xl font-black text-emerald-700 mt-1">₹{totalEarned.toLocaleString('en-IN')}</p>
+          </div>
+          <div className="bg-indigo-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Projects Done</p>
+            <p className="text-xl font-black text-indigo-700 mt-1">{paidProjects.length}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Payment Pending</p>
+            <p className="text-xl font-black text-amber-700 mt-1">{pendingCount}</p>
+          </div>
+        </div>
+
+        {/* Projects List */}
+        <div className="flex-1 overflow-y-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="sticky top-0">
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase">Project</th>
+                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase">Duration</th>
+                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase text-center">Payment</th>
+                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase text-right">Date</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {paidProjects.length === 0 ? (
+                <tr><td colSpan={4} className="p-8 text-center text-gray-400">No completed projects found.</td></tr>
+              ) : paidProjects.map((p, i) => (
+                <tr key={i} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <p className="font-bold text-gray-800 text-xs">{p.Project_ID}</p>
+                    <p className="text-[10px] text-gray-500 truncate max-w-[200px]">{p.Project_title || '—'}</p>
+                  </td>
+                  <td className="px-4 py-3 text-xs font-medium text-gray-600">{formatDurationDisplay(p.Duration || '', p.Project_ID)}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.Payment_Status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {p.Payment_Status === 'Paid' ? '✅ Paid' : '⏳ Pending'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-400 text-right">{p.Approved_Date || p['Date Approved'] || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function TeamTab({ animators, projects, user, onRefresh }: {
   animators: Animator[]; projects: Project[]; user: DashboardUser; onRefresh: () => void
@@ -2831,6 +2916,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
 
   const [earnedData, setEarnedData] = useState<Record<string, number>>({})
+  const [paidModalAnimator, setPaidModalAnimator] = useState<Animator | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -2906,6 +2992,14 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           onShowProjects={(title, propsProjects) => setListModalProps({ title, sortedProjects: propsProjects })} />
       )}
       {showAddModal && <AddAnimatorModal onClose={() => setShowAddModal(false)} onRefresh={onRefresh} />}
+      {paidModalAnimator && (
+        <PaidProjectsModal
+          animator={paidModalAnimator}
+          projects={projects}
+          totalEarned={earnedData[paidModalAnimator.Employee_ID] || 0}
+          onClose={() => setPaidModalAnimator(null)}
+        />
+      )}
 
       {/* Search + Sort + Add */}
       <div className="flex gap-3 items-center flex-wrap">
@@ -3011,100 +3105,92 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           return (
             <div key={a.Employee_ID} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col">
-              <div className="flex items-start justify-between mb-4">
+              <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
                     style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
                     {(a.Name || '?')[0]}
                   </div>
                   <div>
-                    <p className="font-semibold text-gray-800">{a.Name}</p>
+                    <p className="font-semibold text-gray-800 text-sm">{a.Name}</p>
                     <p className="text-[10px] text-gray-400 font-medium tracking-wide">{a.Employee_ID}</p>
-                    {joinedMs ? (
-                      <p className="text-[10px] text-gray-500 mt-0.5">Joined: {new Date(joinedMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</p>
-                    ) : null}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1">
-                  <span className="text-xs px-2 py-1 rounded-full bg-purple-50 text-purple-600 font-medium flex-shrink-0">{a.Role || 'Animator'}</span>
-                  {(a['Phone Number'] || a.phone) && (
-                    <div className="flex items-center gap-1 mt-1">
-                      <span className="text-[10px] text-gray-400">📱 {a['Phone Number'] || a.phone}</span>
-                      <CopyButton value={a['Phone Number'] || a.phone || ''} />
-                    </div>
-                  )}
-                  {(a['E-mail'] || a.email) && (
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-gray-400" title={a['E-mail'] || a.email}>✉️ {(a['E-mail'] || a.email || '').slice(0, 15)}{(a['E-mail'] || a.email || '').length > 15 ? '...' : ''}</span>
-                      <CopyButton value={a['E-mail'] || a.email || ''} />
-                    </div>
-                  )}
+                  {/* Tier Badge */}
+                  {(() => {
+                    const tier = a.Role || 'Normal Workspace'
+                    const tierStyles: Record<string, { bg: string; text: string; emoji: string }> = {
+                      'Tier 1': { bg: '#dcfce7', text: '#15803d', emoji: '🥇' },
+                      'Tier 2': { bg: '#dbeafe', text: '#1d4ed8', emoji: '🥈' },
+                      'Tier 3': { bg: '#fef9c3', text: '#854d0e', emoji: '🥉' },
+                      'Concerning': { bg: '#fee2e2', text: '#b91c1c', emoji: '⚠️' },
+                      'Watchlist': { bg: '#ffedd5', text: '#c2410c', emoji: '👀' },
+                      'Animator': { bg: '#f3e8ff', text: '#7e22ce', emoji: '🎨' },
+                      'Lighting': { bg: '#cffafe', text: '#0e7490', emoji: '💡' },
+                      'Normal Workspace': { bg: '#f1f5f9', text: '#64748b', emoji: '📁' },
+                    }
+                    const s = tierStyles[tier] || tierStyles['Normal Workspace']
+                    return (
+                      <span className="text-[10px] px-2 py-1 rounded-full font-bold flex-shrink-0 whitespace-nowrap"
+                        style={{ backgroundColor: s.bg, color: s.text }}>
+                        {s.emoji} {tier}
+                      </span>
+                    )
+                  })()}
+                  {joinedMs ? (
+                    <p className="text-[9px] text-gray-400 mt-0.5">Joined {new Date(joinedMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</p>
+                  ) : null}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
-                <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Active Projects`, sortedProjects: projects.filter(isActive) })}
-                  className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
-                  <p className="text-xl font-bold" style={{ color: loadColor }}>{load}</p>
-                  <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Active</p>
-                  {(() => {
-                    const durationSec = projects
-                      .filter(p => isActive(p))
-                      .reduce((sum, p) => {
-                        if (p.output_history && p.output_history.length > 0) {
-                          const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
-                          if (myOut > 0) return sum + myOut
-                        }
-                        const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-                        const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
-                        if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
-                        return sum + baseSec
-                      }, 0)
-                    return <p className={`text-[10px] font-semibold mt-1 ${durationSec > 0 ? 'text-indigo-600' : 'text-gray-400'}`}>{durationSec > 0 ? formatSec(durationSec) : '0s'}</p>
-                  })()}
-                </button>
+              {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
-                  className="bg-gray-50 rounded-xl p-2 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
+                  className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
-                  <p className={`text-[10px] font-semibold mt-1 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                  <p className={`text-[10px] font-semibold mt-0.5 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
                     {historicalApprovedSec > 0 ? formatSec(historicalApprovedSec) : '0s'}
                   </p>
                 </button>
                 <button
                   onClick={() => setOutputHistoryProps({ animator: a, avgInfo })}
-                  className="bg-orange-50 rounded-xl p-2 text-center flex flex-col items-center justify-center hover:bg-orange-100 transition-colors hover:shadow-inner">
+                  className="bg-orange-50 rounded-xl p-2.5 text-center flex flex-col items-center justify-center hover:bg-orange-100 transition-colors">
                   {(() => {
-                    const avg = Math.round(historicalApprovedSec / daysSinceJoined)
+                    const avgDay = Math.round(historicalApprovedSec / daysSinceJoined)
                     return (
                       <>
-                        <p className="text-xl font-bold text-orange-600">{historicalApprovedSec > 0 ? formatSec(avg) : '0s'}</p>
+                        <p className="text-xl font-bold text-orange-600">{historicalApprovedSec > 0 ? formatSec(avgDay) : '0s'}</p>
                         <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
-                        <p className="text-[10px] font-semibold mt-1 text-orange-600">{daysSinceJoined} days</p>
+                        <p className="text-[10px] font-semibold mt-0.5 text-orange-600">{daysSinceJoined} days</p>
                       </>
                     )
                   })()}
                 </button>
                 <button
-                  onClick={() => setSelectedAnimator(a)}
-                  className="bg-indigo-50 rounded-xl p-2 text-center flex flex-col items-center justify-center hover:bg-indigo-100 transition-colors hover:shadow-inner">
+                  onClick={() => setPaidModalAnimator(a)}
+                  className="bg-emerald-50 rounded-xl p-2.5 text-center flex flex-col items-center justify-center hover:bg-emerald-100 transition-colors hover:shadow-inner relative group">
                   {(() => {
                     const totalEarnedNet = earnedData[a.Employee_ID] || 0
                     return (
                       <>
-                        <p className="text-[13px] font-bold text-indigo-700">₹{totalEarnedNet.toLocaleString('en-IN')}</p>
-                        <p className="text-[9px] text-indigo-500 mt-1 uppercase tracking-wider font-semibold">Earned</p>
-                        <p className="text-[10px] font-semibold mt-1 text-indigo-600">Net Paid (w/ Bonus)</p>
+                        <p className="text-[14px] font-black text-emerald-700">₹{totalEarnedNet.toLocaleString('en-IN')}</p>
+                        <p className="text-[9px] text-emerald-600 mt-1 uppercase tracking-wider font-semibold">Payment</p>
+                        <p className="text-[10px] font-semibold mt-0.5 text-emerald-500 group-hover:underline">Click to view →</p>
                       </>
                     )
                   })()}
                 </button>
               </div>
 
-              <div className="flex items-center justify-between text-xs text-gray-400 mb-4">
-                <span>{activeCount} active project{activeCount !== 1 ? 's' : ''}</span>
+              {/* Footer: active count + status */}
+              <div className="flex items-center justify-between text-xs text-gray-400 mb-3">
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: loadColor }}></span>
+                  {load} active · {activeCount} project{activeCount !== 1 ? 's' : ''}
+                </span>
                 <div className="flex items-center gap-2">
                   {avg !== null
                     ? <span className="font-semibold" style={{ color: avg >= 7 ? '#10b981' : avg >= 5 ? '#f59e0b' : '#ef4444' }}>
@@ -3112,11 +3198,6 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     </span>
                     : <span style={{ color: loadColor }}>{load === 0 ? 'Available' : 'Working'}</span>
                   }
-                  {entries.length > 0 && (
-                    <div className="text-gray-400 hover:text-indigo-500 transition-colors cursor-help flex items-center" title={entries.map(n => `${n.author || 'System'}: ${n.note}`).join('\n')}>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -8202,6 +8283,22 @@ export default function ManagerDashboard() {
   const [animators, setAnimators] = useState<Animator[]>([])
   const [loading, setLoading] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [darkMode, setDarkMode] = useState(false)
+
+  // Dark mode init
+  useEffect(() => {
+    const saved = localStorage.getItem('tfa_theme')
+    const isDark = saved === 'dark'
+    setDarkMode(isDark)
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
+  }, [])
+
+  const toggleDarkMode = () => {
+    const next = !darkMode
+    setDarkMode(next)
+    localStorage.setItem('tfa_theme', next ? 'dark' : 'light')
+    document.documentElement.setAttribute('data-theme', next ? 'dark' : 'light')
+  }
 
   useEffect(() => {
     const stored = localStorage.getItem('tfa_user')
@@ -8286,7 +8383,7 @@ export default function ManagerDashboard() {
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSidebarOpen(false) }}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-            style={{ backgroundColor: activeTab === tab.id ? '#f0f0ff' : 'transparent', color: activeTab === tab.id ? '#667eea' : '#64748b' }}>
+            style={{ backgroundColor: activeTab === tab.id ? (darkMode ? '#312e81' : '#f0f0ff') : 'transparent', color: activeTab === tab.id ? (darkMode ? '#a5b4fc' : '#667eea') : (darkMode ? '#94a3b8' : '#64748b') }}>
             <span>{tab.icon}</span>
             {tab.label}
           </button>
@@ -8304,13 +8401,23 @@ export default function ManagerDashboard() {
             <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
           </div>
         </div>
+        {/* Dark Mode Toggle */}
+        <button onClick={toggleDarkMode}
+          className="w-full py-2 mb-2 rounded-lg text-xs font-medium flex items-center justify-center gap-2 transition-all border"
+          style={{
+            backgroundColor: darkMode ? '#1e1b4b' : '#f8fafc',
+            color: darkMode ? '#a5b4fc' : '#64748b',
+            borderColor: darkMode ? '#4338ca' : '#e2e8f0',
+          }}>
+          {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
+        </button>
         <button onClick={handleLogout} className="w-full py-2 rounded-lg text-xs font-medium text-red-500 border border-red-200 hover:bg-red-50">Sign out</button>
       </div>
     </>
   )
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen flex" style={{ backgroundColor: darkMode ? '#0f172a' : '#f8fafc' }}>
       {/* Desktop Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-40 w-64 flex-col bg-white border-r border-gray-100 shadow-sm hidden lg:flex">
         <SidebarContent />
