@@ -2306,7 +2306,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
                             style={{ backgroundColor: entry.role === 'head' ? '#fdf4ff' : '#eff6ff', color: entry.role === 'head' ? '#7e22ce' : '#1d4ed8' }}>
-                            {entry.role === 'head' ? '👑 Head' : '🧑‍💼 Manager'}
+                            {entry.role === 'head' ? 'Head' : 'Manager'}
                           </span>
                           <span className="text-xs font-medium text-gray-700">{entry.author}</span>
                           {entry.date && <span className="text-xs text-gray-400">{entry.date}</span>}
@@ -3297,14 +3297,14 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     {(() => {
                       const tier = a.Role || 'Normal Workspace'
                       const tierStyles: Record<string, { bg: string; text: string; emoji: string }> = {
-                        'Tier 1': { bg: '#dcfce7', text: '#15803d', emoji: '🥇' },
-                        'Tier 2': { bg: '#dbeafe', text: '#1d4ed8', emoji: '🥈' },
-                        'Tier 3': { bg: '#fef9c3', text: '#854d0e', emoji: '🥉' },
-                        'Concerning': { bg: '#fee2e2', text: '#b91c1c', emoji: '⚠️' },
-                        'Watchlist': { bg: '#ffedd5', text: '#c2410c', emoji: '👀' },
-                        'Animator': { bg: '#f3e8ff', text: '#7e22ce', emoji: '🎨' },
-                        'Lighting': { bg: '#cffafe', text: '#0e7490', emoji: '💡' },
-                        'Normal Workspace': { bg: '#f1f5f9', text: '#64748b', emoji: '📁' },
+                        'Tier 1': { bg: '#dcfce7', text: '#15803d', emoji: 'Top' },
+                        'Tier 2': { bg: '#dbeafe', text: '#1d4ed8', emoji: 'Mid' },
+                        'Tier 3': { bg: '#fef9c3', text: '#854d0e', emoji: 'Low' },
+                        'Concerning': { bg: '#fee2e2', text: '#b91c1c', emoji: 'Warn' },
+                        'Watchlist': { bg: '#ffedd5', text: '#c2410c', emoji: 'Look' },
+                        'Animator': { bg: '#f3e8ff', text: '#7e22ce', emoji: 'Anim' },
+                        'Lighting': { bg: '#cffafe', text: '#0e7490', emoji: 'Light' },
+                        'Normal Workspace': { bg: '#f1f5f9', text: '#64748b', emoji: 'Base' },
                       }
                       const s = tierStyles[tier] || tierStyles['Normal Workspace']
                       return (
@@ -8079,7 +8079,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                                 (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || 
                                 (String(p.Animator || '')).toLowerCase().includes((a.Employee_ID || '').toLowerCase());
               
-              if (isMatched && ['Paid', 'Closed'].includes(p.Status)) {
+              if (isMatched && ['Approved', 'Paid', 'Closed'].includes(p.Status)) {
                 const secs = parseDurationSec(p.Duration || '', p.Project_ID)
                 allTimePaidClosedSeconds += secs
                 
@@ -8677,16 +8677,6 @@ export default function ManagerDashboard() {
             <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
           </div>
         </div>
-        {/* Dark Mode Toggle */}
-        <button onClick={toggleDarkMode}
-          className="w-full py-2 mb-2 rounded-lg text-xs font-medium flex items-center justify-center gap-2 transition-all border"
-          style={{
-            backgroundColor: darkMode ? '#1e1b4b' : '#f8fafc',
-            color: darkMode ? '#a5b4fc' : '#64748b',
-            borderColor: darkMode ? '#4338ca' : '#e2e8f0',
-          }}>
-          {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
-        </button>
         <button onClick={handleLogout} className="w-full py-2 rounded-lg text-xs font-medium text-red-500 border border-red-200 hover:bg-red-50">Sign out</button>
       </div>
     </>
@@ -8727,11 +8717,22 @@ export default function ManagerDashboard() {
               <p className="text-xs text-gray-400">{formatDate()}</p>
             </div>
           </div>
-          <button onClick={fetchData} className="p-2 rounded-lg hover:bg-gray-100 transition-colors" title="Refresh">
+          <div className="flex items-center gap-2">
+            <button onClick={toggleDarkMode}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-2 transition-all border shadow-sm"
+              style={{
+                backgroundColor: darkMode ? '#1e1b4b' : '#f8fafc',
+                color: darkMode ? '#a5b4fc' : '#64748b',
+                borderColor: darkMode ? '#4338ca' : '#e2e8f0',
+              }}>
+              {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
+            </button>
+          <button onClick={fetchData} className="p-2 rounded-lg hover:bg-gray-100 transition-colors shadow-sm border border-gray-200" title="Refresh">
             <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
           </button>
+          </div>
         </header>
 
         {/* Content */}
