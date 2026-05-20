@@ -6766,17 +6766,43 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           tds_percent: tds,
           tds_amount: Math.round((gross || 0) * (tds / 100)),
           net_payable: Math.round(net),
-          status: 'Draft',
+          status: 'Paid',
           thread_id: threadId,
-          sent_at: null,
+          sent_at: new Date().toISOString(),
         }
 
-        const { error: invErr } = await apiClient.from('invoices').insert(insertPayload)
+        const { data: invData, error: invErr } = await apiClient.from('invoices').insert(insertPayload).select().single()
         if (invErr) {
           console.error('[Mark Paid] invoice insert failed:', invErr)
-          addToast(`⚠️ Invoice draft creation failed: ${invErr.message}`, 'error')
+          addToast(`⚠️ Invoice creation failed: ${invErr.message}`, 'error')
         } else {
-          addToast(`✅ Invoice generated and queued for Discord!`, 'success')
+          try {
+             const res = await fetch('/api/discord/send-invoice', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({
+                     channelId: threadId,
+                     invoiceNumber: invoiceNumber,
+                     monthLabel: targetMonth,
+                     totalAmount: insertPayload.total_amount,
+                     tdsAmount: insertPayload.tds_amount,
+                     netPayable: insertPayload.net_payable,
+                     legalName: insertPayload.legal_name
+                 })
+             });
+             if (res.ok) {
+                 const dRes = await res.json();
+                 if (dRes.success) {
+                     await apiClient.from('invoices').update({
+                         thread_id: dRes.threadId,
+                         discord_msg_id: dRes.messageId
+                     }).eq('id', invData.id);
+                 }
+             }
+          } catch (discordErr) {
+             console.error("Failed to send invoice to Discord:", discordErr);
+          }
+          addToast(`✅ Invoice generated and sent to Discord!`, 'success')
         }
       } catch (e) {
         console.error('Invoice generation error:', e)
