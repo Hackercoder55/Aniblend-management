@@ -2818,8 +2818,8 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
 }
 // ─── Paid Projects Modal ──────────────────────────────────────────────────────
 
-function PaidProjectsModal({ animator, projects, totalEarned, onClose }: {
-  animator: Animator; projects: Project[]; totalEarned: number; onClose: () => void
+function PaidProjectsModal({ animator, projects, grossPay, bonus, tds, netPay, onClose }: {
+  animator: Animator; projects: Project[]; grossPay: number; bonus: number; tds: number; netPay: number; onClose: () => void
 }) {
   const paidProjects = projects
     .filter(p =>
@@ -2850,18 +2850,22 @@ function PaidProjectsModal({ animator, projects, totalEarned, onClose }: {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-3 gap-3 p-4 border-b border-gray-100 flex-shrink-0">
-          <div className="bg-emerald-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Earned</p>
-            <p className="text-xl font-black text-emerald-700 mt-1">₹{totalEarned.toLocaleString('en-IN')}</p>
+        <div className="grid grid-cols-4 gap-3 p-4 border-b border-gray-100 flex-shrink-0">
+          <div className="bg-gray-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">Base Pay</p>
+            <p className="text-lg font-black text-gray-700 mt-1">₹{grossPay.toLocaleString('en-IN')}</p>
           </div>
           <div className="bg-indigo-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Projects Done</p>
-            <p className="text-xl font-black text-indigo-700 mt-1">{paidProjects.length}</p>
+            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Bonus/Other</p>
+            <p className="text-lg font-black text-indigo-700 mt-1">{bonus >= 0 ? '+' : '-'}₹{Math.abs(bonus).toLocaleString('en-IN')}</p>
           </div>
-          <div className="bg-amber-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Payment Pending</p>
-            <p className="text-xl font-black text-amber-700 mt-1">{pendingCount}</p>
+          <div className="bg-red-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider">TDS (10%)</p>
+            <p className="text-lg font-black text-red-700 mt-1">-₹{tds.toLocaleString('en-IN')}</p>
+          </div>
+          <div className="bg-emerald-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Net Payable</p>
+            <p className="text-lg font-black text-emerald-700 mt-1">₹{netPay.toLocaleString('en-IN')}</p>
           </div>
         </div>
 
@@ -2909,26 +2913,13 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showReportModal, setShowReportModal] = useState(false)
   const [search, setSearch] = useState('')
-  const [sortOrder, setSortOrder] = useState<'none' | 'az' | 'za' | 'leastActive' | 'mostActive' | 'available' | 'mostAvgDay' | 'leastAvgDay'>('none')
+  const [sortOrder, setSortOrder] = useState<'tier' | 'none' | 'az' | 'za' | 'leastActive' | 'mostActive' | 'available' | 'mostAvgDay' | 'leastAvgDay'>('tier')
   const isHead = user.role === 'head'
 
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
   const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
 
-  const [earnedData, setEarnedData] = useState<Record<string, number>>({})
-  const [paidModalAnimator, setPaidModalAnimator] = useState<Animator | null>(null)
-
-  useEffect(() => {
-    let mounted = true
-    apiClient.from('invoices').select('employee_id, net_payable').eq('status', 'Paid')
-      .then((res: any) => {
-        if (!mounted || !res.data) return
-        const acc: Record<string, number> = {}
-        res.data.forEach((inv: any) => acc[inv.employee_id] = (acc[inv.employee_id] || 0) + (inv.net_payable || 0))
-        setEarnedData(acc)
-      })
-    return () => { mounted = false }
-  }, [])
+  const [paidModalData, setPaidModalData] = useState<{animator: Animator, grossPay: number, bonus: number, tds: number, netPay: number} | null>(null)
 
   const getAvgDay = useCallback((a: Animator) => {
     const joinedMs = projects
@@ -2961,6 +2952,18 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       const bDep = (b.Role || '').toLowerCase().includes('depart')
       if (aDep && !bDep) return 1
       if (!aDep && bDep) return -1
+      
+      if (sortOrder === 'tier') {
+        const tierRank: Record<string, number> = {
+          'Tier 1': 1, 'Tier 2': 2, 'Tier 3': 3, 'Animator': 4, 'Lighting': 5,
+          'Normal Workspace': 6, 'Watchlist': 7, 'Concerning': 8
+        }
+        const rankA = tierRank[a.Role || 'Normal Workspace'] || 99
+        const rankB = tierRank[b.Role || 'Normal Workspace'] || 99
+        if (rankA !== rankB) return rankA - rankB
+        return (b['Current video'] || 0) - (a['Current video'] || 0) // Secondary sort by active
+      }
+      
       if (sortOrder === 'leastActive') return (a['Current video'] || 0) - (b['Current video'] || 0)
       if (sortOrder === 'mostActive') return (b['Current video'] || 0) - (a['Current video'] || 0)
       if (sortOrder === 'mostAvgDay') return getAvgDay(b) - getAvgDay(a)
@@ -2992,12 +2995,15 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           onShowProjects={(title, propsProjects) => setListModalProps({ title, sortedProjects: propsProjects })} />
       )}
       {showAddModal && <AddAnimatorModal onClose={() => setShowAddModal(false)} onRefresh={onRefresh} />}
-      {paidModalAnimator && (
+      {paidModalData && (
         <PaidProjectsModal
-          animator={paidModalAnimator}
+          animator={paidModalData.animator}
           projects={projects}
-          totalEarned={earnedData[paidModalAnimator.Employee_ID] || 0}
-          onClose={() => setPaidModalAnimator(null)}
+          grossPay={paidModalData.grossPay}
+          bonus={paidModalData.bonus}
+          tds={paidModalData.tds}
+          netPay={paidModalData.netPay}
+          onClose={() => setPaidModalData(null)}
         />
       )}
 
@@ -3012,7 +3018,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         </div>
         {/* Sort buttons */}
         <div className="flex gap-2 flex-wrap">
-          {([{ key: 'none', label: 'Default' }, { key: 'mostAvgDay', label: 'Most Avg/Day' }, { key: 'leastAvgDay', label: 'Least Avg/Day' }, { key: 'az', label: 'A→Z' }, { key: 'za', label: 'Z→A' }, { key: 'leastActive', label: 'Least Active' }, { key: 'mostActive', label: 'Most Active' }, { key: 'available', label: 'Available (0 active)' }] as const).map(s => (
+          {([{ key: 'tier', label: 'Tier' }, { key: 'none', label: 'Default' }, { key: 'mostAvgDay', label: 'Most Avg/Day' }, { key: 'leastAvgDay', label: 'Least Avg/Day' }, { key: 'az', label: 'A→Z' }, { key: 'za', label: 'Z→A' }, { key: 'leastActive', label: 'Least Active' }, { key: 'mostActive', label: 'Most Active' }, { key: 'available', label: 'Available (0 active)' }] as const).map(s => (
             <button key={s.key} onClick={() => setSortOrder(s.key as any)}
               className="px-3 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap"
               style={{ backgroundColor: sortOrder === s.key ? '#667eea' : '#f1f5f9', color: sortOrder === s.key ? 'white' : '#64748b' }}>
@@ -3103,6 +3109,49 @@ function TeamTab({ animators, projects, user, onRefresh }: {
             entries: historyEntries
           }
 
+          // Payment Calculation
+          const grossPay = (historicalApprovedSec / 60) * 5000
+          const bonus = Number(a.others_amount) || 0
+          const totalGross = grossPay + bonus
+          const tds = totalGross * 0.10
+          const netPay = totalGross - tds
+
+          // Growth Calculation
+          const now = new Date()
+          const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+          const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).getTime()
+          const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()
+          const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59).getTime()
+
+          let currentMonthSec = 0
+          let prevMonthSec = 0
+          projects
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .forEach(p => {
+               const dateStr = p.Approved_Date || p['Date Approved'] || p['Date Assigned']
+               if (!dateStr) return
+               try {
+                 const t = parseDate(dateStr).getTime()
+                 const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                 if (t >= currentMonthStart && t <= currentMonthEnd) currentMonthSec += sec
+                 else if (t >= prevMonthStart && t <= prevMonthEnd) prevMonthSec += sec
+               } catch (e) {}
+            })
+
+          let growthDisplay = null
+          if (prevMonthSec > 0 || currentMonthSec > 0) {
+            if (prevMonthSec === 0) {
+              growthDisplay = <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded ml-1">New!</span>
+            } else {
+              const pct = Math.round(((currentMonthSec - prevMonthSec) / prevMonthSec) * 100)
+              if (pct >= 0) {
+                 growthDisplay = <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded ml-1" title={`${formatSec(currentMonthSec)} vs ${formatSec(prevMonthSec)} last month`}>↑ {pct}%</span>
+              } else {
+                 growthDisplay = <span className="text-[9px] text-red-600 font-bold bg-red-50 px-1.5 py-0.5 rounded ml-1" title={`${formatSec(currentMonthSec)} vs ${formatSec(prevMonthSec)} last month`}>↓ {Math.abs(pct)}%</span>
+              }
+            }
+          }
+
           return (
             <div key={a.Employee_ID} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col">
               <div className="flex items-start justify-between mb-3">
@@ -3148,9 +3197,12 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
-                  className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center">
+                  className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
-                  <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
+                  <div className="flex items-center justify-center mt-1">
+                    <p className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">Total</p>
+                    {growthDisplay}
+                  </div>
                   <p className={`text-[10px] font-semibold mt-0.5 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
                     {historicalApprovedSec > 0 ? formatSec(historicalApprovedSec) : '0s'}
                   </p>
@@ -3170,18 +3222,11 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                   })()}
                 </button>
                 <button
-                  onClick={() => setPaidModalAnimator(a)}
+                  onClick={() => setPaidModalData({ animator: a, grossPay, bonus, tds, netPay })}
                   className="bg-emerald-50 rounded-xl p-2.5 text-center flex flex-col items-center justify-center hover:bg-emerald-100 transition-colors hover:shadow-inner relative group">
-                  {(() => {
-                    const totalEarnedNet = earnedData[a.Employee_ID] || 0
-                    return (
-                      <>
-                        <p className="text-[14px] font-black text-emerald-700">₹{totalEarnedNet.toLocaleString('en-IN')}</p>
-                        <p className="text-[9px] text-emerald-600 mt-1 uppercase tracking-wider font-semibold">Payment</p>
-                        <p className="text-[10px] font-semibold mt-0.5 text-emerald-500 group-hover:underline">Click to view →</p>
-                      </>
-                    )
-                  })()}
+                  <p className="text-[14px] font-black text-emerald-700">₹{netPay.toLocaleString('en-IN')}</p>
+                  <p className="text-[9px] text-emerald-600 mt-1 uppercase tracking-wider font-semibold">Payment</p>
+                  <p className="text-[10px] font-semibold mt-0.5 text-emerald-500 group-hover:underline">Click to view →</p>
                 </button>
               </div>
 
