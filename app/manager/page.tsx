@@ -23,6 +23,9 @@ interface Project {
   'Date Approved': string
   Approved_Date: string
   Duration: string
+  Bonus?: number
+  Other_Payment?: number
+  Tag?: string
   Payment_Status: string
   Approved_Video: string
   Thread_ID: string
@@ -62,6 +65,7 @@ interface Animator {
   'E-mail': string
   phone?: string
   email?: string
+  legal_name?: string
   'Contract Type': string
   Compensation: string
   Render: string
@@ -1736,7 +1740,7 @@ We will notify you here once the payment has been sent. Thank you for your excel
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Manager', 'Progress', 'Emp Type', 'Warning', 'Date Approved', 'Priority', 'Comment', 'Status', 'Date Assigned', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Manager', 'Progress', 'Emp Type', 'Warning', 'Date Approved', 'Priority', 'Comment', 'Status', 'Bonus', 'Other', 'Tag', 'Date Assigned', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -1868,6 +1872,51 @@ We will notify you here once the payment has been sent. Thank you for your excel
                       <StatusBadge status={p.Status} />
                     )}
                   </td>
+                  <td className="px-4 py-3">
+                    {editingRows.has(p.Project_ID) ? (
+                      <input
+                        type="number"
+                        value={pendingProjectEdits[p.Project_ID]?.Bonus || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'Bonus', e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[80px]"
+                        placeholder="Bonus..."
+                      />
+                    ) : (
+                      <span className="text-xs font-mono text-green-600">
+                        {(p as any).Bonus ? `₹${(p as any).Bonus}` : '—'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingRows.has(p.Project_ID) ? (
+                      <input
+                        type="number"
+                        value={pendingProjectEdits[p.Project_ID]?.Other_Payment || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'Other_Payment', e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[80px]"
+                        placeholder="Other..."
+                      />
+                    ) : (
+                      <span className="text-xs font-mono text-blue-600">
+                        {(p as any).Other_Payment ? `₹${(p as any).Other_Payment}` : '—'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {editingRows.has(p.Project_ID) ? (
+                      <input
+                        type="text"
+                        value={pendingProjectEdits[p.Project_ID]?.Tag || ''}
+                        onChange={e => updateEdit(p.Project_ID, 'Tag', e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px]"
+                        placeholder="Tag..."
+                      />
+                    ) : (
+                      <span className="text-xs text-gray-500">
+                        {(p as any).Tag || '—'}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{p['Date Assigned'] || '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2 items-center flex-wrap">
@@ -1944,11 +1993,33 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
   const [invoices, setInvoices] = useState<any[]>([])
   const [loadingInvoices, setLoadingInvoices] = useState(false)
 
+  const handleDownloadInvoice = (inv: any) => {
+    let csv = `Invoice Number,${inv.invoice_number || 'N/A'}\nMonth,${inv.month_label || 'N/A'}\nStatus,${inv.status}\n\n`;
+    csv += `Project ID,Title,Seconds,Amount (₹)\n`;
+    if (inv.line_items && Array.isArray(inv.line_items)) {
+      inv.line_items.forEach((li: any) => {
+        csv += `"${li.project_id || ''}","${(li.title || '').replace(/"/g, '""')}","${li.seconds || 0}","${li.amount || 0}"\n`;
+      });
+    }
+    csv += `\nGross Total,,,${inv.total_amount || 0}\n`;
+    csv += `Bonus,,,${inv.bonus_amount || 0}\n`;
+    csv += `TDS (-),,,${inv.tds_amount || 0}\n`;
+    csv += `Net Payable,,,${inv.net_payable || 0}\n`;
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Invoice_${inv.invoice_number || 'Receipt'}_${inv.month_label || 'Month'}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   useEffect(() => {
     if (activeSection === 'earnings' && invoices.length === 0) {
       setLoadingInvoices(true)
       apiClient.from('invoices')
-        .select('month_label, invoice_date, total_amount, tds_amount, bonus_amount, net_payable, status')
+        .select('month_label, invoice_date, total_amount, tds_amount, bonus_amount, net_payable, status, invoice_number, line_items')
         .eq('employee_id', animator.Employee_ID)
         .order('id', { ascending: false })
         .then((res: any) => {
@@ -2279,9 +2350,14 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
                         <span className="font-bold text-gray-800 text-sm">
                           📅 {inv.month_label || 'Unknown Month'}
                         </span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${inv.status === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {inv.status}
-                        </span>
+                        <div className="flex gap-2 items-center">
+                          <button onClick={() => handleDownloadInvoice(inv)} className="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-1 rounded font-semibold transition-colors">
+                            Download Receipt
+                          </button>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${inv.status === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {inv.status}
+                          </span>
+                        </div>
                       </div>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-1">
                         <div>
@@ -6625,6 +6701,86 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .eq('Employee_ID', eid)
       } catch (earnErr) {
         console.error('Failed to update total_earnings:', earnErr)
+      }
+
+      // 4. Auto-Generate Invoice as Draft for Discord Bot
+      try {
+        // Generate Invoice sequence
+        const { data: pastInvs } = await apiClient.from('invoices').select('invoice_number').eq('employee_id', eid)
+        let currentSeq = 0
+        if (pastInvs && pastInvs.length > 0) {
+           const highest = pastInvs.map((i: any) => {
+              const str = (i.invoice_number || '').toString().replace(eid, '')
+              return parseInt(str || '0', 10)
+           }).filter((n: number) => !isNaN(n)).sort((a: number, b: number) => b - a)[0]
+           
+           if (highest !== undefined) currentSeq = highest
+        }
+        const invoiceNumber = `${eid}${String(currentSeq + 1).padStart(2, '0')}`
+
+        // Create Line Items
+        const lineItems = [...approvedProjects, ...ongoingProjects].map(p => {
+          const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+          let rate = 5000 / 60
+          if (p.emp_type === 'Lead') rate = 0 
+          else if (p.emp_type === 'Lighting') rate = 2000 / 60
+          else if (p.emp_type === 'Animator+Lighting') rate = 3000 / 60
+          
+          const baseAmt = p.emp_type === 'Lead' ? 1000 : Math.round(rawSec * rate)
+          
+          // Note: Add p.Bonus and p.Other_Payment if they exist
+          const pBonus = Number((p as any).Bonus) || 0
+          const pOther = Number((p as any).Other_Payment) || 0
+          
+          return {
+            project_id: p.Project_ID,
+            title: p.Project_title,
+            seconds: rawSec,
+            amount: baseAmt + pBonus + pOther,
+            assigned_date: p['Date Assigned'] || 'Unknown',
+            approved_date: p.Approved_Date || p['Date Approved'] || 'Pending'
+          }
+        })
+
+        if (bonus > 0) {
+           lineItems.push({
+              project_id: 'BONUS',
+              title: `Performance/Monthly Bonus: ${bonusNote}`,
+              seconds: 0,
+              amount: bonus,
+              assigned_date: formatDate(),
+              approved_date: formatDate()
+           })
+        }
+
+        const animRow = animators.find(a => a.Employee_ID === eid)
+        const threadId = animRow?.Channel_ID || 'Unknown'
+        
+        const insertPayload = {
+          invoice_number: invoiceNumber,
+          employee_id: eid,
+          legal_name: (animRow?.legal_name || animatorName).trim(),
+          month_label: targetMonth,
+          invoice_date: new Date().toISOString(),
+          line_items: lineItems,
+          total_amount: Math.round(gross || 0),
+          tds_percent: tds,
+          tds_amount: Math.round((gross || 0) * (tds / 100)),
+          net_payable: Math.round(net),
+          status: 'Draft',
+          thread_id: threadId,
+          sent_at: null,
+        }
+
+        const { error: invErr } = await apiClient.from('invoices').insert(insertPayload)
+        if (invErr) {
+          console.error('[Mark Paid] invoice insert failed:', invErr)
+          addToast(`⚠️ Invoice draft creation failed: ${invErr.message}`, 'error')
+        } else {
+          addToast(`✅ Invoice generated and queued for Discord!`, 'success')
+        }
+      } catch (e) {
+        console.error('Invoice generation error:', e)
       }
 
       // 4. Mark the animator's open invoice as Paid
