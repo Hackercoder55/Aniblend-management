@@ -557,7 +557,7 @@ function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
     p.Project_ID.toLowerCase().includes(projSearch.toLowerCase()) ||
     (p.Project_title || '').toLowerCase().includes(projSearch.toLowerCase())
   const displayedProjects = projSearch ? projects.filter(matchProj) : projects.slice(0, 80)
-  const filteredAnims = animators.filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
+  const filteredAnims = animators.filter(a => !animSearch || (a.Name || '').toLowerCase().includes(animSearch.toLowerCase()))
 
   const toggleAnimator = (a: Animator) => {
     setSelectedAnimators(prev =>
@@ -738,7 +738,7 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
     ? allAssigned.filter(matchProj)
     : allAssigned.slice(0, 60)
 
-  const filteredAnims = animators.filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
+  const filteredAnims = animators.filter(a => !animSearch || (a.Name || '').toLowerCase().includes(animSearch.toLowerCase()))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -962,11 +962,11 @@ function AssignTab({ projects, animators, onRefresh }: {
     : unassignedProjects
 
   const sortedAnimators = [...animators]
-    .filter(a => !animSearch || a.Name.toLowerCase().includes(animSearch.toLowerCase()))
+    .filter(a => !animSearch || (a.Name || '').toLowerCase().includes(animSearch.toLowerCase()))
     .sort((a, b) => {
       if (sortBy === 'mostActive') return (b['Current video'] || 0) - (a['Current video'] || 0)
       if (sortBy === 'leastActive') return (a['Current video'] || 0) - (b['Current video'] || 0)
-      return a.Name.localeCompare(b.Name)
+      return (a.Name || '').localeCompare(b.Name || '')
     })
 
   const handleOpenModal = (animator: Animator) => {
@@ -2032,7 +2032,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
   // Match by Employee_ID (solo) OR Animator name containing this animator (group workspace)
   const matchesAnim = (p: Project) =>
     p.Employee_ID === animator.Employee_ID ||
-    (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes(animator.Name.toLowerCase())
+    (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes((animator.Name || '').toLowerCase())
   const activeProjects = projects.filter(p => matchesAnim(p) && ['Pending', 'Active', 'Review'].includes(p.Status))
   const allProjects = projects.filter(p => matchesAnim(p))
 
@@ -2717,7 +2717,7 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
   const reportData = animators.map(a => {
     const aProjects = projects.filter(p => {
       // Must belong to animator
-      const belongs = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes(a.Name.toLowerCase())
+      const belongs = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes((a.Name || '').toLowerCase())
       if (!belongs) return false
 
       // Must be approved/completed
@@ -2899,7 +2899,7 @@ function PaidProjectsModal({ animator, projects, grossPay, bonus, tds, netPay, o
 }) {
   const paidProjects = projects
     .filter(p =>
-      (p.Employee_ID === animator.Employee_ID || (p.Animator || '').toLowerCase().includes(animator.Name.toLowerCase())) &&
+      (p.Employee_ID === animator.Employee_ID || (p.Animator || '').toLowerCase().includes((animator.Name || '').toLowerCase())) &&
       ['Approved', 'Paid', 'Closed'].includes(p.Status)
     )
     .sort((a, b) => {
@@ -3015,12 +3015,12 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
   const getAvgDay = useCallback((a: Animator) => {
     const joinedMs = projects
-      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && p['Date Assigned'])
+      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
       .map(p => new Date(p['Date Assigned']).getTime())
       .sort((x, y) => x - y)[0]
     const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
     const historicalApprovedSec = projects
-      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
       .reduce((sum, p) => {
         if (p.output_history && p.output_history.length > 0) {
           const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
@@ -3037,7 +3037,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const filtered = animators
     .filter(a => {
       if (sortOrder === 'available' && (a['Current video'] || 0) > 0) return false
-      return !search || a.Name.toLowerCase().includes(search.toLowerCase()) || a.Employee_ID.toLowerCase().includes(search.toLowerCase())
+      return !search || (a.Name || '').toLowerCase().includes(search.toLowerCase()) || (a.Employee_ID || '').toLowerCase().includes(search.toLowerCase())
     })
     .sort((a, b) => {
       const aDep = (a.Role || '').toLowerCase().includes('depart')
@@ -3055,13 +3055,12 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         if (rankA !== rankB) return rankA - rankB
         return (b['Current video'] || 0) - (a['Current video'] || 0) // Secondary sort by active
       }
-      
       if (sortOrder === 'leastActive') return (a['Current video'] || 0) - (b['Current video'] || 0)
       if (sortOrder === 'mostActive') return (b['Current video'] || 0) - (a['Current video'] || 0)
       if (sortOrder === 'mostAvgDay') return getAvgDay(b) - getAvgDay(a)
       if (sortOrder === 'leastAvgDay') return getAvgDay(a) - getAvgDay(b)
-      if (sortOrder === 'az') return a.Name.localeCompare(b.Name)
-      if (sortOrder === 'za') return b.Name.localeCompare(a.Name)
+      if (sortOrder === 'az') return (a.Name || '').localeCompare(b.Name || '')
+      if (sortOrder === 'za') return (b.Name || '').localeCompare(a.Name || '')
       return 0
     })
 
@@ -3141,7 +3140,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           <p className="text-gray-400 col-span-3 text-center py-12">No animators found</p>
         ) : filtered.map(a => {
           const DONE = ['Approved', 'Paid', 'Closed']
-          const isActive = (p: Project) => !DONE.includes(p.Status) && (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase()))
+          const isActive = (p: Project) => !DONE.includes(p.Status) && (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
           const activeCount = projects.filter(isActive).length
           const load = a['Current video'] || 0
           const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
@@ -3150,7 +3149,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Check Date Joined
           const joinedMs = projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase())) && p['Date Assigned'])
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
             .map(p => new Date(p['Date Assigned']).getTime())
             .sort((x, y) => x - y)[0]
 
@@ -3158,7 +3157,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Calculate Historical Approved Duration (for Total box & Average box)
           const historicalApprovedSec = projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .reduce((sum, p) => {
               if (p.output_history && p.output_history.length > 0) {
                 const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
@@ -3171,7 +3170,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
             }, 0)
 
           // Calculate Explicit Logged Output Data
-          const animProjects = projects.filter(p => p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase()))
+          const animProjects = projects.filter(p => p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
           let totalSec = 0
           const activeDays = new Set<string>()
           const historyEntries: { date: string, seconds: number, projectId: string, title: string }[] = []
@@ -3204,11 +3203,11 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           // Payment Calculation
           let grossPay = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .forEach(p => {
-               const isLead = (p.Lead || '').toLowerCase() === a.Name.toLowerCase()
-               const isLighting = (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()
-               const isAnim = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())
+               const isLead = (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase()
+               const isLighting = (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()
+               const isAnim = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase())
                
                if (isLead) grossPay += 1000
                if (isLighting || isAnim) {
@@ -3238,7 +3237,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           let currentMonthSec = 0
           let prevMonthSec = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .forEach(p => {
                const dateStr = p.Approved_Date || p['Date Approved'] || p['Date Assigned']
                if (!dateStr) return
@@ -3325,7 +3324,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
+                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
@@ -5722,7 +5721,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           const empSet = new Set<string>()
           if (p.Employee_ID) empSet.add(p.Employee_ID)
             ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-              const found = animators.find(a => a.Name.toLowerCase() === name.toLowerCase())
+              const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
               if (found) empSet.add(found.Employee_ID)
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
@@ -5830,7 +5829,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const empSet = new Set<string>()
       if (p.Employee_ID) empSet.add(p.Employee_ID)
         ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-          const found = animators.find(a => a.Name.toLowerCase() === name.toLowerCase())
+          const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
           if (found) empSet.add(found.Employee_ID)
         })
       const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
@@ -6972,7 +6971,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       // Match animator names back to Employee_IDs if needed
       anims.forEach(animName => {
-        const found = animators.find(a => a.Name.toLowerCase() === animName.toLowerCase())
+        const found = animators.find(a => (a.Name || '').toLowerCase() === animName.toLowerCase())
         if (found) empIds.add(found.Employee_ID)
       })
 
@@ -7029,7 +7028,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const empSet = new Set<string>()
       if (proj.Employee_ID) empSet.add(proj.Employee_ID)
         ; (proj.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-          const found = animators.find(a => a.Name.toLowerCase() === name.toLowerCase())
+          const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
           if (found) empSet.add(found.Employee_ID)
         })
       originalSec = Math.round(rawSec / Math.max(1, empSet.size))
@@ -7054,7 +7053,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     .filter(a => (approvedSecondsByEmpId[a.Employee_ID] > 0 || manuallyAddedAnimators.has(a.Employee_ID)))
     .filter(a => paidStatus[a.Employee_ID] !== 'Paid')
     .filter(a => animatorInMonth(a.Employee_ID, a.Name))
-    .filter(a => !search || a.Name.toLowerCase().includes(search.toLowerCase()) || a.Employee_ID.toLowerCase().includes(search.toLowerCase()))
+    .filter(a => !search || (a.Name || '').toLowerCase().includes(search.toLowerCase()) || (a.Employee_ID || '').toLowerCase().includes(search.toLowerCase()))
     .map(a => {
       const eid = a.Employee_ID
       const autoMins = (approvedSecondsByEmpId[eid] || 0) / 60
@@ -7160,7 +7159,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       p.Payment_Status === 'Paid' &&
       (p.Status === 'Closed' || p.Status === 'Paid') &&
       (p.Employee_ID === a.Employee_ID ||
-        (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase()))
+        (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
     )
 
   return (
@@ -7631,7 +7630,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                   const animProjects = projects.filter(p =>
                                     p.Status === 'Closed' && p.Payment_Status === 'Paid' &&
                                     (p.Employee_ID === a.Employee_ID ||
-                                      (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(a.Name.toLowerCase()))
+                                      (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
                                   )
                                   setPaidProjectsModal({ name: payInfo?.['Account Holder Name'] || a.Name, projects: animProjects })
                                 }}
@@ -7840,8 +7839,8 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     
     projects.forEach(p => {
       const isMatched = p.Employee_ID === a.Employee_ID || 
-                        (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || 
-                        (p.Animator || '').toLowerCase().includes(a.Employee_ID.toLowerCase());
+                        (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || 
+                        (p.Animator || '').toLowerCase().includes((a.Employee_ID || '').toLowerCase());
       
       if (isMatched && ['Approved', 'Paid', 'Closed'].includes(p.Status)) {
         const appDateStr = p['Date Approved'] || p.Approved_Date
@@ -7888,10 +7887,10 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     Object.keys(groups).forEach(k => {
       groups[k] = groups[k].filter(a => {
         if (!searchQuery) return true
-        return a.Name.toLowerCase().includes(searchQuery.toLowerCase()) || a.Employee_ID.toLowerCase().includes(searchQuery.toLowerCase())
+        return (a.Name || '').toLowerCase().includes(searchQuery.toLowerCase()) || (a.Employee_ID || '').toLowerCase().includes(searchQuery.toLowerCase())
       }).sort((a, b) => {
-        if (sortMode === 'Name') return a.Name.localeCompare(b.Name)
-        if (sortMode === 'EmpID') return a.Employee_ID.localeCompare(b.Employee_ID)
+        if (sortMode === 'Name') return (a.Name || '').localeCompare(b.Name || '')
+        if (sortMode === 'EmpID') return (a.Employee_ID || '').localeCompare(b.Employee_ID || '')
         if (sortMode === 'Load') return (b['Current video'] || 0) - (a['Current video'] || 0)
         return 0
       })
@@ -8051,8 +8050,8 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             let allTimePaidClosedSeconds = 0
             projects.forEach(p => {
               const isMatched = p.Employee_ID === a.Employee_ID || 
-                                (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || 
-                                (p.Animator || '').toLowerCase().includes(a.Employee_ID.toLowerCase());
+                                (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || 
+                                (p.Animator || '').toLowerCase().includes((a.Employee_ID || '').toLowerCase());
               
               if (isMatched && ['Paid', 'Closed'].includes(p.Status)) {
                 const secs = parseDurationSec(p.Duration || '', p.Project_ID)
@@ -8592,7 +8591,7 @@ export default function ManagerDashboard() {
   // For Lead (non-Head, non-full-access) users, filter projects and animators to only their assigned ones
   const leadName = user.full_name || ''
   // Leads are also animators — show projects they lead AND their own animation work
-  const leadAnimator = animators.find(a => a.Name.toLowerCase() === leadName.toLowerCase())
+  const leadAnimator = animators.find(a => (a.Name || '').toLowerCase() === leadName.toLowerCase())
   const leadEid = leadAnimator?.Employee_ID || ''
   const filteredProjects = hasFullAccess ? projects : projects.filter(p =>
     (p.Lead || '').toLowerCase() === leadName.toLowerCase() ||
