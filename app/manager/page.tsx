@@ -1348,8 +1348,8 @@ function ProjectsTab({ projects, onRefresh, user }: { projects: Project[]; onRef
       : statusFilter === 'Ongoing'
         ? !['Approved', 'Pending', 'Paid', 'Closed'].includes(p.Status)
         : p.Status === statusFilter
-    const matchAnimator = !animatorFilter || (p.Animator || '').toLowerCase().includes(animatorFilter.toLowerCase())
-    const matchLead = !leadFilter || (p.Lead || '').toLowerCase().includes(leadFilter.toLowerCase())
+    const matchAnimator = !animatorFilter || (String(p.Animator || '')).toLowerCase().includes(animatorFilter.toLowerCase())
+    const matchLead = !leadFilter || (String(p.Lead || '')).toLowerCase().includes(leadFilter.toLowerCase())
     let matchDate = true
     if (dateFrom || dateTo) {
       const d = parseDate(p['Date Assigned'])
@@ -2032,7 +2032,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
   // Match by Employee_ID (solo) OR Animator name containing this animator (group workspace)
   const matchesAnim = (p: Project) =>
     p.Employee_ID === animator.Employee_ID ||
-    (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes((animator.Name || '').toLowerCase())
+    (String(p.Animator || '')).toLowerCase().split(',').map(s => s.trim()).includes((animator.Name || '').toLowerCase())
   const activeProjects = projects.filter(p => matchesAnim(p) && ['Pending', 'Active', 'Review'].includes(p.Status))
   const allProjects = projects.filter(p => matchesAnim(p))
 
@@ -2717,7 +2717,7 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
   const reportData = animators.map(a => {
     const aProjects = projects.filter(p => {
       // Must belong to animator
-      const belongs = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().split(',').map(s => s.trim()).includes((a.Name || '').toLowerCase())
+      const belongs = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().split(',').map(s => s.trim()).includes((a.Name || '').toLowerCase())
       if (!belongs) return false
 
       // Must be approved/completed
@@ -2738,14 +2738,14 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
 
     const totalSecs = aProjects.reduce((sum, p) => {
       // 1. If output_history exists for this animator on this project, sum those seconds
-      if (p.output_history && p.output_history.length > 0) {
-        const myOutput = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
+      if (Array.isArray(p.output_history) && p.output_history.length > 0) {
+        const myOutput = (Array.isArray(p.output_history) ? p.output_history : []).filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
         if (myOutput > 0) return sum + myOutput
       }
 
       // 2. Fallback: If no history exists, use the old calculation
       const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-      const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+      const anims = (String(p.Animator || '')).split(',').map(s => s.trim()).filter(Boolean)
       const isGroup = anims.length > 1
       if (isGroup) {
         return sum + Math.round(baseSec / anims.length)
@@ -2899,7 +2899,7 @@ function PaidProjectsModal({ animator, projects, grossPay, bonus, tds, netPay, o
 }) {
   const paidProjects = projects
     .filter(p =>
-      (p.Employee_ID === animator.Employee_ID || (p.Animator || '').toLowerCase().includes((animator.Name || '').toLowerCase())) &&
+      (p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((animator.Name || '').toLowerCase())) &&
       ['Approved', 'Paid', 'Closed'].includes(p.Status)
     )
     .sort((a, b) => {
@@ -3015,19 +3015,19 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
   const getAvgDay = useCallback((a: Animator) => {
     const joinedMs = projects
-      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
+      .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
       .map(p => new Date(p['Date Assigned']).getTime())
       .sort((x, y) => x - y)[0]
     const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
     const historicalApprovedSec = projects
-      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+      .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
       .reduce((sum, p) => {
-        if (p.output_history && p.output_history.length > 0) {
-          const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
+        if (Array.isArray(p.output_history) && p.output_history.length > 0) {
+          const myOut = (Array.isArray(p.output_history) ? p.output_history : []).filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
           if (myOut > 0) return sum + myOut
         }
         const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-        const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+        const anims = (String(p.Animator || '')).split(',').map(s => s.trim()).filter(Boolean)
         if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
         return sum + baseSec
       }, 0)
@@ -3140,7 +3140,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           <p className="text-gray-400 col-span-3 text-center py-12">No animators found</p>
         ) : filtered.map(a => {
           const DONE = ['Approved', 'Paid', 'Closed']
-          const isActive = (p: Project) => !DONE.includes(p.Status) && (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
+          const isActive = (p: Project) => !DONE.includes(p.Status) && (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
           const activeCount = projects.filter(isActive).length
           const load = a['Current video'] || 0
           const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
@@ -3149,7 +3149,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Check Date Joined
           const joinedMs = projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
             .map(p => new Date(p['Date Assigned']).getTime())
             .sort((x, y) => x - y)[0]
 
@@ -3157,27 +3157,27 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Calculate Historical Approved Duration (for Total box & Average box)
           const historicalApprovedSec = projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .reduce((sum, p) => {
-              if (p.output_history && p.output_history.length > 0) {
-                const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
+              if (Array.isArray(p.output_history) && p.output_history.length > 0) {
+                const myOut = (Array.isArray(p.output_history) ? p.output_history : []).filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
                 if (myOut > 0) return sum + myOut
               }
               const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-              const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+              const anims = (String(p.Animator || '')).split(',').map(s => s.trim()).filter(Boolean)
               if (anims.length > 1) return sum + Math.round(baseSec / anims.length)
               return sum + baseSec
             }, 0)
 
           // Calculate Explicit Logged Output Data
-          const animProjects = projects.filter(p => p.Employee_ID === a.Employee_ID || (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
+          const animProjects = projects.filter(p => p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
           let totalSec = 0
           const activeDays = new Set<string>()
           const historyEntries: { date: string, seconds: number, projectId: string, title: string }[] = []
 
           animProjects.forEach(p => {
-            if (p.output_history && p.output_history.length > 0) {
-              p.output_history.forEach(h => {
+            if (Array.isArray(p.output_history) && p.output_history.length > 0) {
+              (Array.isArray(p.output_history) ? p.output_history : []).forEach(h => {
                 if (h.empId === a.Employee_ID) {
                   totalSec += h.seconds
                   activeDays.add(h.date)
@@ -3203,11 +3203,11 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           // Payment Calculation
           let grossPay = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .forEach(p => {
-               const isLead = (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase()
-               const isLighting = (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()
-               const isAnim = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase())
+               const isLead = (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase()
+               const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()
+               const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase())
                
                if (isLead) grossPay += 1000
                if (isLighting || isAnim) {
@@ -3237,7 +3237,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           let currentMonthSec = 0
           let prevMonthSec = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .forEach(p => {
                const dateStr = p.Approved_Date || p['Date Approved'] || p['Date Assigned']
                if (!dateStr) return
@@ -3324,7 +3324,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || (p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
+                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
@@ -4905,7 +4905,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     channelFilter === 'all' ? list : list.filter(p => getChannel(p.Project_ID) === channelFilter)
 
   const byLead = (list: Project[]) =>
-    leadFilter === 'all' ? list : list.filter(p => (p.Lead || '').toLowerCase() === leadFilter.toLowerCase())
+    leadFilter === 'all' ? list : list.filter(p => (String(p.Lead || '')).toLowerCase() === leadFilter.toLowerCase())
 
   const availableLeads = Array.from(
     new Set(projects.map(p => p.Lead).filter(Boolean))
@@ -5720,7 +5720,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
           const empSet = new Set<string>()
           if (p.Employee_ID) empSet.add(p.Employee_ID)
-            ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
+            ; (String(p.Animator || '')).split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
               const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
               if (found) empSet.add(found.Employee_ID)
             })
@@ -5828,7 +5828,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
       const empSet = new Set<string>()
       if (p.Employee_ID) empSet.add(p.Employee_ID)
-        ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
+        ; (String(p.Animator || '')).split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
           const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
           if (found) empSet.add(found.Employee_ID)
         })
@@ -6956,8 +6956,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
     // Check output_history first
     let mappedFromHistory = false
-    if (p.output_history && p.output_history.length > 0) {
-      p.output_history.forEach(h => {
+    if (Array.isArray(p.output_history) && p.output_history.length > 0) {
+      (Array.isArray(p.output_history) ? p.output_history : []).forEach(h => {
         if (!approvedSecondsByEmpId[h.empId]) approvedSecondsByEmpId[h.empId] = 0
         approvedSecondsByEmpId[h.empId] += h.seconds
       })
@@ -6967,7 +6967,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     if (!mappedFromHistory) {
       // Fallback to splitting base duration equally among group members
       const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-      const anims = (p.Animator || '').split(',').map(s => s.trim()).filter(Boolean)
+      const anims = (String(p.Animator || '')).split(',').map(s => s.trim()).filter(Boolean)
 
       // Match animator names back to Employee_IDs if needed
       anims.forEach(animName => {
@@ -7044,7 +7044,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const animatorInMonth = (eid: string, animName: string) => {
     return projects.some(p =>
       p.Status === 'Approved' &&
-      (p.Employee_ID === eid || (p.Animator || '').toLowerCase().includes(animName.toLowerCase()))
+      (p.Employee_ID === eid || (String(p.Animator || '')).toLowerCase().includes(animName.toLowerCase()))
     )
   }
 
@@ -7070,13 +7070,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const animatorProjectsForCalc = projects.filter(p =>
         p.Status === 'Approved' &&
         (p.Employee_ID === eid ||
-          (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase())) ||
+          (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase())) ||
           (p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()))
       )
       animatorProjectsForCalc.forEach(p => {
         const projSec = parseDurationSec(p.Duration || '', p.Project_ID)
         const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()
-        const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()))
+        const isAnim = p.Employee_ID === eid || (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()))
         const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase()
         
         if (isLead) leadBonus += 1000
@@ -7103,7 +7103,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         ...projects.filter(p =>
           p.Status === 'Approved' &&
           (p.Employee_ID === eid ||
-            (animName && (p.Animator || '').split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
+            (animName && (String(p.Animator || '')).split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
         ),
         ...(manualProjects[eid] || [])
       ]
@@ -7159,7 +7159,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       p.Payment_Status === 'Paid' &&
       (p.Status === 'Closed' || p.Status === 'Paid') &&
       (p.Employee_ID === a.Employee_ID ||
-        (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
+        (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
     )
 
   return (
@@ -7630,7 +7630,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                   const animProjects = projects.filter(p =>
                                     p.Status === 'Closed' && p.Payment_Status === 'Paid' &&
                                     (p.Employee_ID === a.Employee_ID ||
-                                      (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
+                                      (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
                                   )
                                   setPaidProjectsModal({ name: payInfo?.['Account Holder Name'] || a.Name, projects: animProjects })
                                 }}
@@ -7839,8 +7839,8 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
     
     projects.forEach(p => {
       const isMatched = p.Employee_ID === a.Employee_ID || 
-                        (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || 
-                        (p.Animator || '').toLowerCase().includes((a.Employee_ID || '').toLowerCase());
+                        (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || 
+                        (String(p.Animator || '')).toLowerCase().includes((a.Employee_ID || '').toLowerCase());
       
       if (isMatched && ['Approved', 'Paid', 'Closed'].includes(p.Status)) {
         const appDateStr = p['Date Approved'] || p.Approved_Date
@@ -8050,8 +8050,8 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             let allTimePaidClosedSeconds = 0
             projects.forEach(p => {
               const isMatched = p.Employee_ID === a.Employee_ID || 
-                                (p.Animator || '').toLowerCase().includes((a.Name || '').toLowerCase()) || 
-                                (p.Animator || '').toLowerCase().includes((a.Employee_ID || '').toLowerCase());
+                                (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || 
+                                (String(p.Animator || '')).toLowerCase().includes((a.Employee_ID || '').toLowerCase());
               
               if (isMatched && ['Paid', 'Closed'].includes(p.Status)) {
                 const secs = parseDurationSec(p.Duration || '', p.Project_ID)
@@ -8223,7 +8223,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
             </div>
             <div className="p-5 overflow-y-auto flex-1 bg-gray-50/30">
             {(() => {
-              const animProjects = projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()));
+              const animProjects = projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()));
               let allTimeEarned = 0;
               let allTimePaid = 0;
               let pendingPayout = 0;
@@ -8242,7 +8242,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                   const animName = selectedAnimatorForModal.Name;
                   const eid = selectedAnimatorForModal.Employee_ID;
                   const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
-                  const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
+                  const isAnim = p.Employee_ID === eid || (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
                   const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
                   
                   if (isLead) projEarn += 1000;
@@ -8310,7 +8310,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {projects
-                      .filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()))
+                      .filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase()))
                       .sort((a, b) => {
                         const da = a.Approved_Date || a['Date Approved'] || a['Date Assigned'];
                         const db = b.Approved_Date || b['Date Approved'] || b['Date Assigned'];
@@ -8333,7 +8333,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                            const animName = selectedAnimatorForModal.Name;
                            const eid = selectedAnimatorForModal.Employee_ID;
                            const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
-                           const isAnim = p.Employee_ID === eid || (animName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
+                           const isAnim = p.Employee_ID === eid || (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
                            const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
                            
                            if (isLead) projEarn += 1000;
@@ -8363,7 +8363,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                           </tr>
                         )
                     })}
-                    {projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (p.Animator || '').toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase())).length === 0 && (
+                    {projects.filter(p => p.Employee_ID === selectedAnimatorForModal.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(selectedAnimatorForModal.Name.toLowerCase())).length === 0 && (
                       <tr>
                         <td colSpan={4} className="p-8 text-center text-gray-400 text-sm">No projects found for this animator.</td>
                       </tr>
@@ -8387,8 +8387,8 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
   const leadName = user.full_name || '';
   
   const myProjects = projects.filter(p => {
-    const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
-    const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
+    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
     
     if (filter === 'own') return isOwn;
     if (filter === 'lead') return isLead;
@@ -8399,12 +8399,12 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
   const totalEarned = myProjects.reduce((sum, p) => {
     if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return sum;
     let earn = 0;
-    const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
-    const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
+    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
     
     if (isLead) earn += 1000;
     if (isOwn) {
-      const isLighting = (p.Lighting_Artist || '').toLowerCase() === leadName.toLowerCase();
+      const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
       const rate = isLighting ? 2000 : (p.Lighting_Artist ? 3000 : 5000);
       const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
       earn += projSec * (rate / 60);
@@ -8415,11 +8415,11 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
   const totalPaid = myProjects.reduce((sum, p) => {
     if (p.Payment_Status !== 'Paid') return sum;
     let earn = 0;
-    const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
-    const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
+    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
     if (isLead) earn += 1000;
     if (isOwn) {
-      const isLighting = (p.Lighting_Artist || '').toLowerCase() === leadName.toLowerCase();
+      const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
       const rate = isLighting ? 2000 : (p.Lighting_Artist ? 3000 : 5000);
       const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
       earn += projSec * (rate / 60);
@@ -8477,15 +8477,15 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
                 if (!da) return 1; if (!db) return -1;
                 try { return parseDate(db).getTime() - parseDate(da).getTime() } catch(e) { return 0 }
               }).map((p, i) => {
-                const isOwn = (p.Animator || '').toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
-                const isLead = (p.Lead || '').toLowerCase() === leadName.toLowerCase();
+                const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
+                const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
                 const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status);
                 
                 let earn = 0;
                 if (isApproved) {
                   if (isLead) earn += 1000;
                   if (isOwn) {
-                    const isLighting = (p.Lighting_Artist || '').toLowerCase() === leadName.toLowerCase();
+                    const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
                     const rate = isLighting ? 2000 : (p.Lighting_Artist ? 3000 : 5000);
                     const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
                     earn += projSec * (rate / 60);
@@ -8594,9 +8594,9 @@ export default function ManagerDashboard() {
   const leadAnimator = animators.find(a => (a.Name || '').toLowerCase() === leadName.toLowerCase())
   const leadEid = leadAnimator?.Employee_ID || ''
   const filteredProjects = hasFullAccess ? projects : projects.filter(p =>
-    (p.Lead || '').toLowerCase() === leadName.toLowerCase() ||
+    (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase() ||
     p.Employee_ID === leadEid ||
-    (leadName && (p.Animator || '').split(',').map(s => s.trim().toLowerCase()).includes(leadName.toLowerCase()))
+    (leadName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(leadName.toLowerCase()))
   )
   const leadAnimatorEids = new Set(filteredProjects.map(p => p.Employee_ID).filter(Boolean))
   if (leadEid) leadAnimatorEids.add(leadEid) // always include themselves
