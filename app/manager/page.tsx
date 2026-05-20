@@ -401,11 +401,11 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
   const approvedList = projects.filter(p => p.Status === 'Approved')
   const uniqueProjectCount = new Set(projects.map(p => p.Project_ID)).size
   const stats = [
-    { label: 'Total Projects', value: uniqueProjectCount, icon: '🗂️', color: '#374151', bg: '#f9fafb' },
-    { label: 'Active Projects', value: activeProjectsList.length, icon: '🎬', color: '#667eea', bg: '#f0f0ff' },
-    { label: 'Approved Today', value: approvedTodayList.length, icon: '✅', color: '#10b981', bg: '#ecfdf5' },
-    { label: 'Working Animators', value: workingAnimatorsList.length, icon: '👥', color: '#f59e0b', bg: '#fffbeb' },
-    { label: 'Pending Projects', value: pendingProjectsList.length, icon: '⏳', color: '#ef4444', bg: '#fef2f2' },
+    { label: 'Total Projects', value: uniqueProjectCount, icon: '🗂️', color: 'text-gray-700', bg: 'bg-gray-50', borderActive: 'border-gray-500' },
+    { label: 'Active Projects', value: activeProjectsList.length, icon: '🎬', color: 'text-indigo-500', bg: 'bg-indigo-50', borderActive: 'border-indigo-400' },
+    { label: 'Approved Today', value: approvedTodayList.length, icon: '✅', color: 'text-emerald-500', bg: 'bg-emerald-50', borderActive: 'border-emerald-400' },
+    { label: 'Working Animators', value: workingAnimatorsList.length, icon: '👥', color: 'text-amber-500', bg: 'bg-amber-50', borderActive: 'border-amber-400' },
+    { label: 'Pending Projects', value: pendingProjectsList.length, icon: '⏳', color: 'text-red-500', bg: 'bg-red-50', borderActive: 'border-red-400' },
   ]
 
   const panelData: Record<string, React.ReactNode> = {
@@ -470,12 +470,11 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map(s => (
           <button key={s.label} onClick={() => setActivePanel(activePanel === s.label ? null : s.label)}
-            className="bg-white rounded-2xl p-5 shadow-sm border-2 text-left transition-all hover:shadow-md"
-            style={{ borderColor: activePanel === s.label ? s.color : '#f1f5f9' }}>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl mb-3" style={{ background: s.bg }}>{s.icon}</div>
-            <p className="text-3xl font-bold" style={{ color: s.color }}>{s.value}</p>
+            className={`bg-white rounded-2xl p-5 shadow-sm border-2 text-left transition-all hover:shadow-md ${activePanel === s.label ? s.borderActive : 'border-gray-100'}`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl mb-3 ${s.bg}`}>{s.icon}</div>
+            <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
             <p className="text-sm text-gray-500 mt-1">{s.label}</p>
-            <p className="text-xs mt-2" style={{ color: s.color }}>Click to view list →</p>
+            <p className={`text-xs mt-2 ${s.color}`}>Click to view list &rarr;</p>
           </button>
         ))}
       </div>
@@ -2038,7 +2037,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
 
   const joinedDate = allProjects
     .map(p => p['Date Assigned'] ? new Date(p['Date Assigned']).getTime() : Infinity)
-    .filter(d => d !== Infinity)
+    .filter(d => d !== Infinity && !isNaN(d))
     .sort((a, b) => a - b)[0]
   const joinedDateStr = joinedDate ? new Date(joinedDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : null
 
@@ -3017,6 +3016,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
     const joinedMs = projects
       .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
       .map(p => new Date(p['Date Assigned']).getTime())
+      .filter(t => !isNaN(t))
       .sort((x, y) => x - y)[0]
     const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
     const historicalApprovedSec = projects
@@ -3151,6 +3151,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           const joinedMs = projects
             .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && p['Date Assigned'])
             .map(p => new Date(p['Date Assigned']).getTime())
+            .filter(t => !isNaN(t))
             .sort((x, y) => x - y)[0]
 
           const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
