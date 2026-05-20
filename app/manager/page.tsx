@@ -2921,6 +2921,22 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
   const [paidModalData, setPaidModalData] = useState<{animator: Animator, grossPay: number, bonus: number, tds: number, netPay: number} | null>(null)
 
+  const [paymentsData, setPaymentsData] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    let mounted = true
+    apiClient.from('payments').select('"Employee ID", bonus').not('bonus', 'is', null)
+      .then((res: any) => {
+        if (!mounted || !res.data) return
+        const acc: Record<string, number> = {}
+        res.data.forEach((p: any) => {
+          if (p['Employee ID']) acc[p['Employee ID']] = (acc[p['Employee ID']] || 0) + (Number(p.bonus) || 0)
+        })
+        setPaymentsData(acc)
+      })
+    return () => { mounted = false }
+  }, [])
+
   const getAvgDay = useCallback((a: Animator) => {
     const joinedMs = projects
       .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && p['Date Assigned'])
@@ -2928,7 +2944,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       .sort((x, y) => x - y)[0]
     const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
     const historicalApprovedSec = projects
-      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+      .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
       .reduce((sum, p) => {
         if (p.output_history && p.output_history.length > 0) {
           const myOut = p.output_history.filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
@@ -3110,8 +3126,28 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           }
 
           // Payment Calculation
-          const grossPay = (historicalApprovedSec / 60) * 5000
-          const bonus = Number(a.others_amount) || 0
+          let grossPay = 0
+          projects
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .forEach(p => {
+               const isLead = (p.Lead || '').toLowerCase() === a.Name.toLowerCase()
+               const isLighting = (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()
+               const isAnim = p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())
+               
+               if (isLead) grossPay += 1000
+               if (isLighting || isAnim) {
+                  const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                  if (isLighting) {
+                     grossPay += (sec / 60) * 2000
+                  } else {
+                     const rate = p.Lighting_Artist ? 3000 : 5000
+                     grossPay += (sec / 60) * rate
+                  }
+               }
+            })
+          grossPay = Math.round(grossPay / 100) * 100
+          
+          const bonus = paymentsData[a.Employee_ID] || 0
           const totalGross = grossPay + bonus
           const tds = totalGross * 0.10
           const netPay = totalGross - tds
@@ -3126,7 +3162,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           let currentMonthSec = 0
           let prevMonthSec = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .forEach(p => {
                const dateStr = p.Approved_Date || p['Date Approved'] || p['Date Assigned']
                if (!dateStr) return
@@ -3141,19 +3177,33 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           let growthDisplay = null
           if (prevMonthSec > 0 || currentMonthSec > 0) {
             if (prevMonthSec === 0) {
-              growthDisplay = <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded ml-1">New!</span>
+              growthDisplay = (
+                <span className="text-[10px] text-emerald-700 font-black bg-emerald-100 border border-emerald-200 shadow-sm px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-emerald-100/50">
+                  ✨ New!
+                </span>
+              )
             } else {
               const pct = Math.round(((currentMonthSec - prevMonthSec) / prevMonthSec) * 100)
               if (pct >= 0) {
-                 growthDisplay = <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded ml-1" title={`${formatSec(currentMonthSec)} vs ${formatSec(prevMonthSec)} last month`}>↑ {pct}%</span>
+                 growthDisplay = (
+                   <span className="text-[10px] text-emerald-700 font-black bg-emerald-100 border border-emerald-200 shadow-sm px-2.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-emerald-100/50" title={`${formatSec(currentMonthSec)} vs ${formatSec(prevMonthSec)} last month`}>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+                      {pct}%
+                   </span>
+                 )
               } else {
-                 growthDisplay = <span className="text-[9px] text-red-600 font-bold bg-red-50 px-1.5 py-0.5 rounded ml-1" title={`${formatSec(currentMonthSec)} vs ${formatSec(prevMonthSec)} last month`}>↓ {Math.abs(pct)}%</span>
+                 growthDisplay = (
+                   <span className="text-[10px] text-rose-700 font-black bg-rose-100 border border-rose-200 shadow-sm px-2.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-rose-100/50" title={`${formatSec(currentMonthSec)} vs ${formatSec(prevMonthSec)} last month`}>
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" /></svg>
+                      {Math.abs(pct)}%
+                   </span>
+                 )
               }
             }
           }
 
           return (
-            <div key={a.Employee_ID} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col">
+            <div key={a.Employee_ID} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col hover:border-indigo-100 transition-colors">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg font-bold text-white flex-shrink-0"
@@ -3165,28 +3215,31 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                     <p className="text-[10px] text-gray-400 font-medium tracking-wide">{a.Employee_ID}</p>
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                  {/* Tier Badge */}
-                  {(() => {
-                    const tier = a.Role || 'Normal Workspace'
-                    const tierStyles: Record<string, { bg: string; text: string; emoji: string }> = {
-                      'Tier 1': { bg: '#dcfce7', text: '#15803d', emoji: '🥇' },
-                      'Tier 2': { bg: '#dbeafe', text: '#1d4ed8', emoji: '🥈' },
-                      'Tier 3': { bg: '#fef9c3', text: '#854d0e', emoji: '🥉' },
-                      'Concerning': { bg: '#fee2e2', text: '#b91c1c', emoji: '⚠️' },
-                      'Watchlist': { bg: '#ffedd5', text: '#c2410c', emoji: '👀' },
-                      'Animator': { bg: '#f3e8ff', text: '#7e22ce', emoji: '🎨' },
-                      'Lighting': { bg: '#cffafe', text: '#0e7490', emoji: '💡' },
-                      'Normal Workspace': { bg: '#f1f5f9', text: '#64748b', emoji: '📁' },
-                    }
-                    const s = tierStyles[tier] || tierStyles['Normal Workspace']
-                    return (
-                      <span className="text-[10px] px-2 py-1 rounded-full font-bold flex-shrink-0 whitespace-nowrap"
-                        style={{ backgroundColor: s.bg, color: s.text }}>
-                        {s.emoji} {tier}
-                      </span>
-                    )
-                  })()}
+                <div className="flex flex-col items-end gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    {growthDisplay}
+                    {/* Tier Badge */}
+                    {(() => {
+                      const tier = a.Role || 'Normal Workspace'
+                      const tierStyles: Record<string, { bg: string; text: string; emoji: string }> = {
+                        'Tier 1': { bg: '#dcfce7', text: '#15803d', emoji: '🥇' },
+                        'Tier 2': { bg: '#dbeafe', text: '#1d4ed8', emoji: '🥈' },
+                        'Tier 3': { bg: '#fef9c3', text: '#854d0e', emoji: '🥉' },
+                        'Concerning': { bg: '#fee2e2', text: '#b91c1c', emoji: '⚠️' },
+                        'Watchlist': { bg: '#ffedd5', text: '#c2410c', emoji: '👀' },
+                        'Animator': { bg: '#f3e8ff', text: '#7e22ce', emoji: '🎨' },
+                        'Lighting': { bg: '#cffafe', text: '#0e7490', emoji: '💡' },
+                        'Normal Workspace': { bg: '#f1f5f9', text: '#64748b', emoji: '📁' },
+                      }
+                      const s = tierStyles[tier] || tierStyles['Normal Workspace']
+                      return (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0 whitespace-nowrap"
+                          style={{ backgroundColor: s.bg, color: s.text }}>
+                          {s.emoji} {tier}
+                        </span>
+                      )
+                    })()}
+                  </div>
                   {joinedMs ? (
                     <p className="text-[9px] text-gray-400 mt-0.5">Joined {new Date(joinedMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</p>
                   ) : null}
@@ -3196,13 +3249,10 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
+                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (p.Animator || '').toLowerCase().includes(a.Name.toLowerCase()) || (p.Lead || '').toLowerCase() === a.Name.toLowerCase() || (p.Lighting_Artist || '').toLowerCase() === a.Name.toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
-                  <div className="flex items-center justify-center mt-1">
-                    <p className="text-[9px] text-gray-500 uppercase tracking-wider font-semibold">Total</p>
-                    {growthDisplay}
-                  </div>
+                  <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
                   <p className={`text-[10px] font-semibold mt-0.5 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
                     {historicalApprovedSec > 0 ? formatSec(historicalApprovedSec) : '0s'}
                   </p>
