@@ -8,6 +8,41 @@ import {
   LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer
 } from 'recharts'
 
+// ─── Error Boundary ───────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean; error?: Error }
+> {
+  constructor(props: any) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error: Error, info: any) {
+    console.error('[ErrorBoundary]', error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="p-8 text-center">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h2 className="text-xl font-bold text-red-600 mb-2">Something went wrong</h2>
+          <p className="text-gray-500 text-sm mb-4">{this.state.error?.message}</p>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+          >
+            Try Again
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Project {
@@ -3023,7 +3058,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
       .reduce((sum, p) => {
         if (Array.isArray(p.output_history) && p.output_history.length > 0) {
-          const myOut = (Array.isArray(p.output_history) ? p.output_history : []).filter(h => h.empId === a.Employee_ID).reduce((acc, h) => acc + h.seconds, 0)
+          const myOut = (p.output_history as any[]).filter(h => h && h.empId === a.Employee_ID).reduce((acc: number, h: any) => acc + (Number(h.seconds) || 0), 0)
           if (myOut > 0) return sum + myOut
         }
         const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
@@ -3161,7 +3196,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
             .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
             .reduce((sum, p) => {
               if (Array.isArray(p.output_history) && p.output_history.length > 0) {
-                const myOut = (Array.isArray(p.output_history) ? p.output_history : []).filter(h => h.empId === a.Employee_ID).reduce((a, h) => a + h.seconds, 0)
+                const myOut = (p.output_history as any[]).filter(h => h && h.empId === a.Employee_ID).reduce((acc: number, h: any) => acc + (Number(h.seconds) || 0), 0)
                 if (myOut > 0) return sum + myOut
               }
               const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
@@ -3178,9 +3213,9 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           animProjects.forEach(p => {
             if (Array.isArray(p.output_history) && p.output_history.length > 0) {
-              (Array.isArray(p.output_history) ? p.output_history : []).forEach(h => {
-                if (h.empId === a.Employee_ID) {
-                  totalSec += h.seconds
+              (p.output_history as any[]).forEach((h: any) => {
+                if (h && h.empId === a.Employee_ID) {
+                  totalSec += (Number(h.seconds) || 0)
                   activeDays.add(h.date)
                   historyEntries.push({
                     date: h.date,
@@ -8755,7 +8790,7 @@ export default function ManagerDashboard() {
               {activeTab === 'assign' && <AssignTab projects={projects} animators={animators} onRefresh={fetchData} />}
               {activeTab === 'duplicates' && <DuplicatesTab projects={projects} />}
               {activeTab === 'bank' && <ProjectsTab projects={filteredProjects} onRefresh={fetchData} user={user} />}
-              {activeTab === 'team' && <TeamTab animators={filteredAnimators} projects={filteredProjects} user={user} onRefresh={fetchData} />}
+              {activeTab === 'team' && <ErrorBoundary><TeamTab animators={filteredAnimators} projects={filteredProjects} user={user} onRefresh={fetchData} /></ErrorBoundary>}
               {activeTab === 'create' && <CreateProjectTab onRefresh={fetchData} projects={projects} />}
               {activeTab === 'submissions' && <FormSubmissionsTab animators={animators} userRole={user.role} userLead={user.full_name} />}
               {activeTab === 'analytics' && <AnalyticsTab projects={filteredProjects} animators={filteredAnimators} />}
