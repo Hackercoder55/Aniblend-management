@@ -5570,6 +5570,7 @@ const apiClient = {
     let _match: any = null;
     let _isMatch: any = null;
     let _inMatch: any = null;
+    let _notMatch: any = null;
     let _order: any = null;
     let _single = false;
     let _options: any = null;
@@ -5584,6 +5585,7 @@ const apiClient = {
       eq(col: string, val: any) { _match = _match || {}; _match[col] = val; return builder; },
       match(obj: any) { _match = { ...(_match || {}), ...obj }; return builder; },
       is(col: string, val: any) { _isMatch = _isMatch || {}; _isMatch[col] = val; return builder; },
+      not(col: string, op: string, val: any) { _notMatch = { column: col, op, val }; return builder; },
       in(col: string, vals: any[]) { _inMatch = { column: col, values: vals }; return builder; },
       order(col: string, opts?: any) { _order = { column: col, options: opts }; return builder; },
       limit(n: number) { _order = { ...(_order || {}), limit: n }; return builder; },
@@ -5593,7 +5595,7 @@ const apiClient = {
         fetch(`/api/${table}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, order: _order, single: _single, options: _options, range: _range })
+          body: JSON.stringify({ action: _action, payload: _payload, match: _match, isMatch: _isMatch, inMatch: _inMatch, notMatch: _notMatch, order: _order, single: _single, options: _options, range: _range })
         })
           .then(res => res.json().then(data => res.ok ? data : Promise.reject(data.error)))
           .then(data => resolve({ data: data.data, error: null }))

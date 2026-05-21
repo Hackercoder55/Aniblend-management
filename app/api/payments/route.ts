@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     });
 
         const body = await request.json();
-        const { action, payload, match, inMatch, order, single, isMatch, options } = body;
+        const { action, payload, match, inMatch, notMatch, order, single, isMatch, options } = body;
 
         let query: any = supabaseAdmin.from('payments');
 
@@ -41,6 +41,9 @@ export async function POST(request: Request) {
     }
     if (inMatch) {
       query = query.in(inMatch.column, inMatch.values);
+    }
+    if (notMatch) {
+      query = query.not(notMatch.column, notMatch.op, notMatch.val);
     }
     if (order) {
       query = query.order(order.column, order.options);
