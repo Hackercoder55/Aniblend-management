@@ -2928,88 +2928,204 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
 }
 // ─── Paid Projects Modal ──────────────────────────────────────────────────────
 
-function PaidProjectsModal({ animator, projects, grossPay, bonus, tds, netPay, onClose }: {
-  animator: Animator; projects: Project[]; grossPay: number; bonus: number; tds: number; netPay: number; onClose: () => void
+function PaidProjectsModal({ animator, projects, onClose }: {
+  animator: Animator; projects: Project[]; onClose: () => void
 }) {
-  const paidProjects = projects
-    .filter(p =>
-      (p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((animator.Name || '').toLowerCase())) &&
-      ['Approved', 'Paid', 'Closed'].includes(p.Status)
-    )
-    .sort((a, b) => {
-      const da = a.Approved_Date || a['Date Approved'] || a['Date Assigned'] || ''
-      const db = b.Approved_Date || b['Date Approved'] || b['Date Assigned'] || ''
-      if (!da) return 1; if (!db) return -1
-      try { return parseDate(db).getTime() - parseDate(da).getTime() } catch { return 0 }
-    })
+  const [paymentsRaw, setPaymentsRaw] = useState<any[]>([])
+  const [loadingPay, setLoadingPay] = useState(true)
 
-  const paidCount = paidProjects.filter(p => p.Payment_Status === 'Paid').length
-  const pendingCount = paidProjects.length - paidCount
+  useEffect(() => {
+    let mounted = true
+    apiClient.from('payments')
+      .select('*')
+      .eq('Employee ID', animator.Employee_ID)
+      .then(({ data }: any) => {
+        if (mounted) {
+          setPaymentsRaw(data || [])
+          setLoadingPay(false)
+        }
+      })
+    return () => { mounted = false }
+  }, [animator.Employee_ID])
+
+  // Only PAID payment records (not pending)
+  const paidPayments = paymentsRaw.filter(p => p.Payment_Status === 'Paid')
+
+  // Group by month (using paid_date or Timestamp)
+  const byMonth: Record<string, { payments: any[]; totalGross: number; totalBonus: number; totalNet: number; projects: string[] }> = {}
+
+  paidPayments.forEach(pay => {
+    const rawDate = pay.paid_date || pay.Timestamp
+    let monthKey = 'Unknown'
+    if (rawDate) {
+      try {
+        const d = new Date(rawDate)
+        if (!isNaN(d.getTime())) {
+          monthKey = d.toLocaleString('default', { month: 'long', year: 'numeric' })
+        }
+      } catch {}
+    }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { payments: [], totalGross: 0, totalBonus: 0, totalNet: 0, projects: [] }
+    byMonth[monthKey].payments.push(pay)
+    byMonth[monthKey].totalGross += Number(pay.gross) || 0
+    byMonth[monthKey].totalBonus += Number(pay.bonus) || 0
+    byMonth[monthKey].totalNet += Number(pay.net_paid) || 0
+    const pid = pay['Project ID']
+    if (pid && !byMonth[monthKey].projects.includes(pid)) byMonth[monthKey].projects.push(pid)
+  })
+
+  // Sort months newest first
+  const sortedMonths = Object.entries(byMonth).sort((a, b) => {
+    if (a[0] === 'Unknown') return 1
+    if (b[0] === 'Unknown') return -1
+    try {
+      return new Date(b[0]).getTime() - new Date(a[0]).getTime()
+    } catch { return 0 }
+  })
+
+  const totalPaidEver = paidPayments.reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
+  const totalBonusEver = paidPayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
+
+  const handleDownloadCSV = () => {
+    const rows: string[][] = [
+      ['TFA — Paid Payment History'],
+      ['Animator:', animator.Name, 'Employee ID:', animator.Employee_ID],
+      [],
+      ['Month', 'Project ID', 'Paid Date', 'Gross (₹)', 'Bonus/Other (₹)', 'Net Paid (₹)', 'Bonus Note'],
+    ]
+    sortedMonths.forEach(([month, grp]) => {
+      grp.payments.forEach(pay => {
+        const d = pay.paid_date || pay.Timestamp || ''
+        let dispDate = d
+        try { if (d) dispDate = new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) } catch {}
+        rows.push([
+          `"${month}"`,
+          `"${pay['Project ID'] || ''}"`,
+          `"${dispDate}"`,
+          (Number(pay.gross) || 0).toString(),
+          (Number(pay.bonus) || 0).toString(),
+          (Number(pay.net_paid) || 0).toString(),
+          `"${pay.bonus_note || ''}"`,
+        ])
+      })
+      rows.push([`"${month} TOTAL"`, '', '', grp.totalGross.toString(), grp.totalBonus.toString(), grp.totalNet.toString(), ''])
+      rows.push([])
+    })
+    const csv = rows.map(r => r.join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Payment_History_${animator.Name.replace(/\s+/g, '_')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden">
+        {/* Header */}
         <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <div>
-            <h3 className="font-bold text-gray-800 text-lg">💰 {animator.Name} — Payment Details</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{paidProjects.length} completed projects · {paidCount} paid · {pendingCount} pending</p>
+            <h3 className="font-bold text-gray-800 text-lg">💳 {animator.Name} — Payment History</h3>
+            <p className="text-xs text-gray-400 mt-0.5">{paidPayments.length} paid payment records · {sortedMonths.length} month(s)</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-4 gap-3 p-4 border-b border-gray-100 flex-shrink-0">
-          <div className="bg-gray-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">Base Pay</p>
-            <p className="text-lg font-black text-gray-700 mt-1">₹{grossPay.toLocaleString('en-IN')}</p>
-          </div>
-          <div className="bg-indigo-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Bonus/Other</p>
-            <p className="text-lg font-black text-indigo-700 mt-1">{bonus >= 0 ? '+' : '-'}₹{Math.abs(bonus).toLocaleString('en-IN')}</p>
-          </div>
-          <div className="bg-red-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-red-600 uppercase tracking-wider">TDS (10%)</p>
-            <p className="text-lg font-black text-red-700 mt-1">-₹{tds.toLocaleString('en-IN')}</p>
-          </div>
-          <div className="bg-emerald-50 rounded-xl p-3 text-center">
-            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Net Payable</p>
-            <p className="text-lg font-black text-emerald-700 mt-1">₹{netPay.toLocaleString('en-IN')}</p>
+          <div className="flex gap-2">
+            <button onClick={handleDownloadCSV} disabled={paidPayments.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white transition-all disabled:opacity-40"
+              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              CSV
+            </button>
+            <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
           </div>
         </div>
 
-        {/* Projects List */}
-        <div className="flex-1 overflow-y-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0">
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase">Project</th>
-                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase">Duration</th>
-                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase text-center">Payment</th>
-                <th className="px-4 py-2.5 text-[10px] font-bold text-gray-500 uppercase text-right">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {paidProjects.length === 0 ? (
-                <tr><td colSpan={4} className="p-8 text-center text-gray-400">No completed projects found.</td></tr>
-              ) : paidProjects.map((p, i) => (
-                <tr key={i} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="font-bold text-gray-800 text-xs">{p.Project_ID}</p>
-                    <p className="text-[10px] text-gray-500 truncate max-w-[200px]">{p.Project_title || '—'}</p>
-                  </td>
-                  <td className="px-4 py-3 text-xs font-medium text-gray-600">{formatDurationDisplay(p.Duration || '', p.Project_ID)}</td>
-                  <td className="px-4 py-3 text-center">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.Payment_Status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {p.Payment_Status === 'Paid' ? '✅ Paid' : '⏳ Pending'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-400 text-right">{p.Approved_Date || p['Date Approved'] || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* All-time summary */}
+        <div className="grid grid-cols-2 gap-3 p-4 border-b border-gray-100 bg-gray-50 flex-shrink-0">
+          <div className="bg-white rounded-xl p-3 text-center shadow-sm border border-gray-100">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Paid (Net)</p>
+            <p className="text-xl font-black text-emerald-700 mt-1">₹{Math.round(totalPaidEver).toLocaleString('en-IN')}</p>
+          </div>
+          <div className="bg-white rounded-xl p-3 text-center shadow-sm border border-gray-100">
+            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Total Bonus/Other</p>
+            <p className="text-xl font-black text-indigo-700 mt-1">{totalBonusEver >= 0 ? '+' : ''}₹{Math.round(Math.abs(totalBonusEver)).toLocaleString('en-IN')}</p>
+          </div>
+        </div>
+
+        {/* Month-wise content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+          {loadingPay ? (
+            <div className="text-center py-12 text-gray-400 text-sm">Loading payment history...</div>
+          ) : sortedMonths.length === 0 ? (
+            <div className="text-center py-12 text-gray-400">
+              <p className="text-4xl mb-3">💳</p>
+              <p className="font-semibold">No paid payments yet.</p>
+              <p className="text-xs mt-1 text-gray-300">Payments will appear here once marked as Paid.</p>
+            </div>
+          ) : sortedMonths.map(([month, grp]) => (
+            <div key={month} className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+              {/* Month header */}
+              <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
+                <div>
+                  <p className="text-sm font-bold text-indigo-800">{month}</p>
+                  <p className="text-[10px] text-indigo-500 font-medium">{grp.payments.length} payment(s)</p>
+                </div>
+                <div className="flex gap-4 text-right">
+                  {grp.totalBonus !== 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-indigo-500 uppercase">Bonus</p>
+                      <p className="text-sm font-black text-indigo-700">{grp.totalBonus >= 0 ? '+' : ''}₹{Math.round(grp.totalBonus).toLocaleString('en-IN')}</p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase">Net Paid</p>
+                    <p className="text-sm font-black text-emerald-700">₹{Math.round(grp.totalNet).toLocaleString('en-IN')}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment rows */}
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Project</th>
+                    <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Paid Date</th>
+                    <th className="px-4 py-2 text-[10px] font-bold text-indigo-500 uppercase text-right">Bonus</th>
+                    <th className="px-4 py-2 text-[10px] font-bold text-emerald-600 uppercase text-right">Net Paid</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {grp.payments.map((pay, i) => {
+                    const rawDate = pay.paid_date || pay.Timestamp
+                    let dispDate = '—'
+                    try {
+                      if (rawDate) dispDate = new Date(rawDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                    } catch {}
+                    const bonusAmt = Number(pay.bonus) || 0
+                    const netAmt = Number(pay.net_paid) || 0
+                    return (
+                      <tr key={i} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-2.5">
+                          <p className="font-bold text-gray-800">{pay['Project ID'] || '—'}</p>
+                          {pay.bonus_note && <p className="text-[10px] text-indigo-500 mt-0.5 italic">{pay.bonus_note}</p>}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500">{dispDate}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          {bonusAmt !== 0 ? (
+                            <span className="font-semibold text-indigo-600">{bonusAmt >= 0 ? '+' : ''}₹{Math.round(Math.abs(bonusAmt)).toLocaleString('en-IN')}</span>
+                          ) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-bold text-emerald-700">₹{Math.round(netAmt).toLocaleString('en-IN')}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -3029,7 +3145,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [listModalProps, setListModalProps] = useState<{ title: string; sortedProjects: Project[] } | null>(null)
   const [outputHistoryProps, setOutputHistoryProps] = useState<{ animator: Animator; avgInfo: { historicalApprovedSec: number, daysSinceJoined: number, totalSec: number, days: number, entries: { date: string, seconds: number, projectId: string, title: string }[] } } | null>(null)
 
-  const [paidModalData, setPaidModalData] = useState<{animator: Animator, grossPay: number, bonus: number, tds: number, netPay: number} | null>(null)
+  const [paidModalData, setPaidModalData] = useState<{ animator: Animator } | null>(null)
 
   const [paymentsData, setPaymentsData] = useState<Record<string, number>>({})
 
@@ -3125,10 +3241,6 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         <PaidProjectsModal
           animator={paidModalData.animator}
           projects={projects}
-          grossPay={paidModalData.grossPay}
-          bonus={paidModalData.bonus}
-          tds={paidModalData.tds}
-          netPay={paidModalData.netPay}
           onClose={() => setPaidModalData(null)}
         />
       )}
@@ -3383,7 +3495,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                   })()}
                 </button>
                 <button
-                  onClick={() => setPaidModalData({ animator: a, grossPay, bonus, tds, netPay })}
+                  onClick={() => setPaidModalData({ animator: a })}
                   className="bg-emerald-50 rounded-xl p-2.5 text-center flex flex-col items-center justify-center hover:bg-emerald-100 transition-colors hover:shadow-inner relative group">
                   <p className="text-[14px] font-black text-emerald-700">₹{netPay.toLocaleString('en-IN')}</p>
                   <p className="text-[9px] text-emerald-600 mt-1 uppercase tracking-wider font-semibold">Payment</p>
