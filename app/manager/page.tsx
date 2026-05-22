@@ -2948,67 +2948,116 @@ function PaidProjectsModal({ animator, projects, onClose }: {
     return () => { mounted = false }
   }, [animator.Employee_ID])
 
-  // Only PAID payment records (not pending)
-  const paidPayments = paymentsRaw.filter(p => p.Payment_Status === 'Paid')
+  // Get individual Paid projects for this animator
+  const paidProjects = projects.filter(p => {
+    const animName = animator.Name.toLowerCase()
+    const isAnim = p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+    const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+    const isLead = p.Lead && p.Lead.toLowerCase() === animName
+    return (isAnim || isLighting || isLead) && p.Payment_Status === 'Paid'
+  })
 
-  // Group by month (using paid_date or Timestamp)
-  const byMonth: Record<string, { payments: any[]; totalGross: number; totalBonus: number; totalNet: number; projects: string[] }> = {}
+  // Group by month
+  const byMonth: Record<string, {
+    projects: { proj: Project; amount: number; dateStr: string }[];
+    totalGrossFromProjects: number;
+    totalBonus: number;
+    totalNetTable: number;
+    bonusNote: string;
+  }> = {}
 
-  paidPayments.forEach(pay => {
-    const rawDate = pay.paid_date || pay.Timestamp
+  paidProjects.forEach(p => {
+    // 1. Determine Paid Date
+    const dateStr = p.client_paid_date || p.paid_date || p.Approved_Date || p['Date Approved'] || (p as any).Timestamp || ''
     let monthKey = 'Unknown'
-    if (rawDate) {
+    if (dateStr) {
       try {
-        const d = new Date(rawDate)
+        const d = parseDate(dateStr)
         if (!isNaN(d.getTime())) {
           monthKey = d.toLocaleString('default', { month: 'long', year: 'numeric' })
         }
       } catch {}
     }
-    if (!byMonth[monthKey]) byMonth[monthKey] = { payments: [], totalGross: 0, totalBonus: 0, totalNet: 0, projects: [] }
-    byMonth[monthKey].payments.push(pay)
-    byMonth[monthKey].totalGross += Number(pay.gross) || 0
-    byMonth[monthKey].totalBonus += Number(pay.bonus) || 0
-    byMonth[monthKey].totalNet += Number(pay.net_paid) || 0
-    const pid = pay['Project ID']
-    if (pid && !byMonth[monthKey].projects.includes(pid)) byMonth[monthKey].projects.push(pid)
+
+    // 2. Calculate Amount
+    let projEarn = 0
+    const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+    const animName = animator.Name.toLowerCase()
+    const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+    const isLead = p.Lead && p.Lead.toLowerCase() === animName
+    const isAnim = p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+
+    if (isLead) projEarn += 1000;
+    if (isLighting) {
+      projEarn += rawSec * (2000 / 60);
+    } else if (isAnim) {
+      const rate = p.Lighting_Artist ? 3000 : 5000;
+      projEarn += rawSec * (rate / 60);
+    }
+
+    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '' }
+    byMonth[monthKey].projects.push({ proj: p, amount: projEarn, dateStr })
+    byMonth[monthKey].totalGrossFromProjects += projEarn
+  })
+
+  // Attach monthly payment table data (bonus, net paid)
+  paymentsRaw.forEach(pay => {
+    // Attempt to match month
+    let monthKey = 'Unknown'
+    if (pay['Project ID'] && pay['Project ID'].startsWith('Month: ')) {
+      monthKey = pay['Project ID'].replace('Month: ', '').trim()
+    } else {
+      const rawDate = pay.paid_date || pay.Timestamp
+      if (rawDate) {
+        try {
+          const d = new Date(rawDate)
+          if (!isNaN(d.getTime())) monthKey = d.toLocaleString('default', { month: 'long', year: 'numeric' })
+        } catch {}
+      }
+    }
+    
+    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '' }
+    
+    // Use the maximum bonus or net found for this month (avoiding duplicates if any)
+    byMonth[monthKey].totalBonus = Math.max(byMonth[monthKey].totalBonus, Number(pay.bonus) || 0)
+    byMonth[monthKey].totalNetTable = Math.max(byMonth[monthKey].totalNetTable, Number(pay.net_paid) || 0)
+    if (pay.bonus_note) byMonth[monthKey].bonusNote = pay.bonus_note
   })
 
   // Sort months newest first
   const sortedMonths = Object.entries(byMonth).sort((a, b) => {
     if (a[0] === 'Unknown') return 1
     if (b[0] === 'Unknown') return -1
-    try {
-      return new Date(b[0]).getTime() - new Date(a[0]).getTime()
-    } catch { return 0 }
+    try { return new Date(b[0]).getTime() - new Date(a[0]).getTime() } catch { return 0 }
   })
 
-  const totalPaidEver = paidPayments.reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
-  const totalBonusEver = paidPayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
+  const totalPaidEver = sortedMonths.reduce((sum, [, grp]) => sum + (grp.totalNetTable || grp.totalGrossFromProjects + grp.totalBonus), 0)
+  const totalBonusEver = sortedMonths.reduce((sum, [, grp]) => sum + grp.totalBonus, 0)
 
   const handleDownloadCSV = () => {
     const rows: string[][] = [
       ['TFA — Paid Payment History'],
       ['Animator:', animator.Name, 'Employee ID:', animator.Employee_ID],
       [],
-      ['Month', 'Project ID', 'Paid Date', 'Gross (₹)', 'Bonus/Other (₹)', 'Net Paid (₹)', 'Bonus Note'],
+      ['Month', 'Project ID', 'Project Title', 'Paid Date', 'Duration', 'Project Amount (₹)'],
     ]
     sortedMonths.forEach(([month, grp]) => {
-      grp.payments.forEach(pay => {
-        const d = pay.paid_date || pay.Timestamp || ''
-        let dispDate = d
-        try { if (d) dispDate = new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) } catch {}
+      grp.projects.forEach(({ proj, amount, dateStr }) => {
+        let dispDate = dateStr
+        try { if (dateStr) dispDate = parseDate(dateStr).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) } catch {}
         rows.push([
           `"${month}"`,
-          `"${pay['Project ID'] || ''}"`,
+          `"${proj.Project_ID || ''}"`,
+          `"${proj.Project_title || ''}"`,
           `"${dispDate}"`,
-          (Number(pay.gross) || 0).toString(),
-          (Number(pay.bonus) || 0).toString(),
-          (Number(pay.net_paid) || 0).toString(),
-          `"${pay.bonus_note || ''}"`,
+          `"${proj.Duration || extractDuration(proj.Project_ID) || ''}"`,
+          Math.round(amount).toString(),
         ])
       })
-      rows.push([`"${month} TOTAL"`, '', '', grp.totalGross.toString(), grp.totalBonus.toString(), grp.totalNet.toString(), ''])
+      rows.push([`"${month} TOTAL"`, '', '', '', 'Gross:', Math.round(grp.totalGrossFromProjects).toString()])
+      rows.push(['', '', '', '', 'Bonus/Other:', Math.round(grp.totalBonus).toString()])
+      rows.push(['', '', '', '', 'Total Net Paid:', Math.round(grp.totalNetTable || (grp.totalGrossFromProjects + grp.totalBonus)).toString()])
+      if (grp.bonusNote) rows.push(['', '', '', '', 'Bonus Note:', `"${grp.bonusNote}"`])
       rows.push([])
     })
     const csv = rows.map(r => r.join(',')).join('\n')
@@ -3023,15 +3072,15 @@ function PaidProjectsModal({ animator, projects, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="font-bold text-gray-800 text-lg">💳 {animator.Name} — Payment History</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{paidPayments.length} paid payment records · {sortedMonths.length} month(s)</p>
+            <p className="text-xs text-gray-400 mt-0.5">{paidProjects.length} paid projects · {sortedMonths.length} month(s)</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleDownloadCSV} disabled={paidPayments.length === 0}
+            <button onClick={handleDownloadCSV} disabled={paidProjects.length === 0}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white transition-all disabled:opacity-40"
               style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
@@ -3062,70 +3111,80 @@ function PaidProjectsModal({ animator, projects, onClose }: {
           ) : sortedMonths.length === 0 ? (
             <div className="text-center py-12 text-gray-400">
               <p className="text-4xl mb-3">💳</p>
-              <p className="font-semibold">No paid payments yet.</p>
-              <p className="text-xs mt-1 text-gray-300">Payments will appear here once marked as Paid.</p>
+              <p className="font-semibold">No paid projects yet.</p>
+              <p className="text-xs mt-1 text-gray-300">Projects will appear here once marked as Client Paid.</p>
             </div>
-          ) : sortedMonths.map(([month, grp]) => (
-            <div key={month} className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
-              {/* Month header */}
-              <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
-                <div>
-                  <p className="text-sm font-bold text-indigo-800">{month}</p>
-                  <p className="text-[10px] text-indigo-500 font-medium">{grp.payments.length} payment(s)</p>
-                </div>
-                <div className="flex gap-4 text-right">
-                  {grp.totalBonus !== 0 && (
-                    <div>
-                      <p className="text-[10px] font-bold text-indigo-500 uppercase">Bonus</p>
-                      <p className="text-sm font-black text-indigo-700">{grp.totalBonus >= 0 ? '+' : ''}₹{Math.round(grp.totalBonus).toLocaleString('en-IN')}</p>
-                    </div>
-                  )}
+          ) : sortedMonths.map(([month, grp]) => {
+            const netAmountToDisplay = grp.totalNetTable || (grp.totalGrossFromProjects + grp.totalBonus);
+            
+            return (
+              <div key={month} className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                {/* Month header */}
+                <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
                   <div>
-                    <p className="text-[10px] font-bold text-emerald-600 uppercase">Net Paid</p>
-                    <p className="text-sm font-black text-emerald-700">₹{Math.round(grp.totalNet).toLocaleString('en-IN')}</p>
+                    <p className="text-sm font-bold text-indigo-800">{month}</p>
+                    <p className="text-[10px] text-indigo-500 font-medium">{grp.projects.length} project(s)</p>
+                  </div>
+                  <div className="flex gap-4 text-right items-center">
+                    <div>
+                      <p className="text-[10px] font-bold text-gray-500 uppercase">Gross</p>
+                      <p className="text-xs font-bold text-gray-700">₹{Math.round(grp.totalGrossFromProjects).toLocaleString('en-IN')}</p>
+                    </div>
+                    {grp.totalBonus !== 0 && (
+                      <div className="border-l border-indigo-200 pl-3">
+                        <p className="text-[10px] font-bold text-indigo-500 uppercase">Bonus</p>
+                        <p className="text-xs font-black text-indigo-700">{grp.totalBonus >= 0 ? '+' : ''}₹{Math.round(grp.totalBonus).toLocaleString('en-IN')}</p>
+                      </div>
+                    )}
+                    <div className="border-l border-indigo-200 pl-3">
+                      <p className="text-[10px] font-bold text-emerald-600 uppercase">Net Paid</p>
+                      <p className="text-sm font-black text-emerald-700">₹{Math.round(netAmountToDisplay).toLocaleString('en-IN')}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Payment rows */}
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Project</th>
-                    <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Paid Date</th>
-                    <th className="px-4 py-2 text-[10px] font-bold text-indigo-500 uppercase text-right">Bonus</th>
-                    <th className="px-4 py-2 text-[10px] font-bold text-emerald-600 uppercase text-right">Net Paid</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {grp.payments.map((pay, i) => {
-                    const rawDate = pay.paid_date || pay.Timestamp
-                    let dispDate = '—'
-                    try {
-                      if (rawDate) dispDate = new Date(rawDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-                    } catch {}
-                    const bonusAmt = Number(pay.bonus) || 0
-                    const netAmt = Number(pay.net_paid) || 0
-                    return (
-                      <tr key={i} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5">
-                          <p className="font-bold text-gray-800">{pay['Project ID'] || '—'}</p>
-                          {pay.bonus_note && <p className="text-[10px] text-indigo-500 mt-0.5 italic">{pay.bonus_note}</p>}
-                        </td>
-                        <td className="px-4 py-2.5 text-gray-500">{dispDate}</td>
-                        <td className="px-4 py-2.5 text-right">
-                          {bonusAmt !== 0 ? (
-                            <span className="font-semibold text-indigo-600">{bonusAmt >= 0 ? '+' : ''}₹{Math.round(Math.abs(bonusAmt)).toLocaleString('en-IN')}</span>
-                          ) : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-bold text-emerald-700">₹{Math.round(netAmt).toLocaleString('en-IN')}</td>
+                {/* Project rows */}
+                {grp.projects.length > 0 && (
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Project</th>
+                        <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Duration</th>
+                        <th className="px-4 py-2 text-[10px] font-bold text-gray-500 uppercase">Paid Date</th>
+                        <th className="px-4 py-2 text-[10px] font-bold text-gray-600 uppercase text-right">Amount</th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ))}
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {grp.projects.map((item, i) => {
+                        let dispDate = '—'
+                        try {
+                          if (item.dateStr) dispDate = parseDate(item.dateStr).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                        } catch {}
+                        return (
+                          <tr key={i} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-2.5">
+                              <p className="font-bold text-gray-800">{item.proj.Project_ID}</p>
+                              <p className="text-[10px] text-gray-500 truncate max-w-[200px]">{item.proj.Project_title || '—'}</p>
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-600">{formatDurationDisplay(item.proj.Duration || extractDuration(item.proj.Project_ID) || '', item.proj.Project_ID)}</td>
+                            <td className="px-4 py-2.5 text-gray-500">{dispDate}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-gray-700">₹{Math.round(item.amount).toLocaleString('en-IN')}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* Bonus Note */}
+                {grp.bonusNote && (
+                  <div className="px-4 py-2 bg-indigo-50/50 border-t border-indigo-50 text-[10px] text-indigo-600 italic">
+                    <span className="font-bold mr-1">Bonus Note:</span> {grp.bonusNote}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
