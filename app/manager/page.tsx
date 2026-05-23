@@ -2541,6 +2541,8 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
 // ─── Animators Tab ───────────────────────────────────────────────────────────
 
 function ProjectListModal({ title, projects, onClose }: { title: string; projects: Project[]; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'Active' | 'Approved' | 'Paid'>('Active')
+
   // Categorize projects
   const activeProjects = projects.filter(p => !['Approved', 'Paid', 'Closed'].includes(p.Status) && p.Payment_Status !== 'Paid')
   const approvedProjects = projects.filter(p => p.Status === 'Approved' && p.Payment_Status !== 'Paid')
@@ -2552,11 +2554,13 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
     return Math.round(totalSecs / 60)
   }
 
-  const sections = [
-    { label: 'Active (Render / QA / In Progress)', projects: activeProjects, color: 'text-amber-600', bg: 'bg-amber-50' },
-    { label: 'Approved', projects: approvedProjects, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Paid & Closed', projects: closedPaidProjects, color: 'text-indigo-600', bg: 'bg-indigo-50' }
-  ]
+  const sections = {
+    'Active': { label: 'Active', projects: activeProjects, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200' },
+    'Approved': { label: 'Approved', projects: approvedProjects, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+    'Paid': { label: 'Paid & Closed', projects: closedPaidProjects, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200' }
+  }
+
+  const currentSection = sections[activeTab]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
@@ -2567,44 +2571,55 @@ function ProjectListModal({ title, projects, onClose }: { title: string; project
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
-        <div className="flex-1 overflow-auto p-5 space-y-8">
-          {projects.length === 0 ? (
-            <div className="text-center py-10 text-gray-500">No projects found.</div>
+        
+        {/* Tabs */}
+        <div className="flex px-5 pt-3 border-b border-gray-100 gap-6">
+          {(['Active', 'Approved', 'Paid'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`pb-3 px-1 border-b-2 font-semibold text-sm transition-colors ${activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              {sections[tab].label} ({sections[tab].projects.length})
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-auto p-5 bg-gray-50/50">
+          <div className={`flex items-center justify-between px-4 py-3 rounded-xl mb-4 border ${currentSection.bg} ${currentSection.border}`}>
+            <h4 className={`font-bold ${currentSection.color}`}>{currentSection.label} Projects</h4>
+            <span className={`text-sm font-semibold ${currentSection.color}`}>
+              {currentSection.projects.length} Projects · {calcTotalMins(currentSection.projects)} Mins
+            </span>
+          </div>
+
+          {currentSection.projects.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-xl border border-gray-100 text-gray-400">
+              No {currentSection.label.toLowerCase()} projects found.
+            </div>
           ) : (
-            sections.map(section => {
-              if (section.projects.length === 0) return null
-              const totalMins = calcTotalMins(section.projects)
-              return (
-                <div key={section.label} className="space-y-3">
-                  <div className={`flex items-center justify-between px-4 py-2 rounded-lg \${section.bg}`}>\n                    <h4 className={`font-bold \${section.color}`}>{section.label}</h4>
-                    <span className={`text-sm font-semibold \${section.color}`}>
-                      {section.projects.length} Projects · {totalMins} Mins
-                    </span>
+            <div className="grid gap-3">
+              {currentSection.projects.map(p => (
+                <div key={p.Project_ID} className="bg-white border border-gray-100 shadow-sm p-4 rounded-xl flex flex-col gap-2 hover:border-indigo-100 transition-colors">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="font-mono text-xs text-indigo-500 font-semibold">{p.Project_ID}</span>
+                      <p className="font-bold text-gray-800 text-sm mt-0.5">{p.Project_title || 'Untitled'}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <StatusBadge status={p.Status} />
+                      {p.Payment_Status === 'Paid' && <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-700">Paid</span>}
+                    </div>
                   </div>
-                  <div className="grid gap-3">
-                    {section.projects.map(p => (
-                      <div key={p.Project_ID} className="bg-white border border-gray-100 shadow-sm p-4 rounded-xl flex flex-col gap-2">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="font-mono text-xs text-indigo-500">{p.Project_ID}</span>
-                            <p className="font-semibold text-gray-800 text-sm">{p.Project_title || 'Untitled'}</p>
-                          </div>
-                          <div className="flex flex-col items-end gap-1">
-                            <StatusBadge status={p.Status} />
-                            {p.Payment_Status === 'Paid' && <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-700">Paid</span>}
-                          </div>
-                        </div>
-                        <div className="text-[11px] text-gray-500 flex gap-4 mt-1">
-                          {p.Animator && <span><strong className="text-gray-400">Anim:</strong> {p.Animator}</span>}
-                          {p.Lead && <span><strong className="text-gray-400">Lead:</strong> {p.Lead}</span>}
-                          {p.Duration && <span><strong className="text-gray-400">Duration:</strong> {p.Duration}</span>}
-                        </div>
-                      </div>
-                    ))}
+                  <div className="text-xs text-gray-500 flex gap-4 mt-1.5 pt-2 border-t border-gray-50">
+                    {p.Animator && <span><strong className="text-gray-400 font-medium">Anim:</strong> {p.Animator}</span>}
+                    {p.Lead && <span><strong className="text-gray-400 font-medium">Lead:</strong> {p.Lead}</span>}
+                    {p.Duration && <span><strong className="text-gray-400 font-medium">Duration:</strong> {p.Duration}</span>}
+                    {p['Date Assigned'] && <span><strong className="text-gray-400 font-medium">Assigned:</strong> {p['Date Assigned']}</span>}
                   </div>
                 </div>
-              )
-            })
+              ))}
+            </div>
           )}
         </div>
       </div>
