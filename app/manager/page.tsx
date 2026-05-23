@@ -2220,7 +2220,7 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
                   <button key={s.label} className="bg-gray-50 rounded-xl p-3 text-center transition-colors hover:bg-gray-100"
                     onClick={() => {
                       if (s.id === 'curr') onShowProjects(`${animator.Name} - Active Projects`, activeProjects)
-                      else if (s.id === 'tot') onShowProjects(`${animator.Name} - Total Projects`, allProjects.filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status)))
+                      else if (s.id === 'tot') onShowProjects(`${animator.Name} - Total Projects`, allProjects.filter(p => p.Payment_Status === 'Paid'))
                     }}>
                     {content}
                   </button>
@@ -2755,13 +2755,13 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
       if (!belongs) return false
 
       // Must be approved/completed
-      if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return false
+      if (p.Payment_Status !== 'Paid') return false
 
       // If 'all-time' is selected, include all approved projects regardless of whether a date is cleanly parsable
       if (reportType === 'all-time') return true;
 
       // Check date (only heavily enforced for monthly views)
-      const dateStr = p['Date Approved'] || p.Approved_Date || p.paid_date || p.client_paid_date
+      const dateStr = p.client_paid_date || p.paid_date || p.Approved_Date || p['Date Approved'] || (p as any).Timestamp || ''
       if (!dateStr) return false
 
       const d = parseDate(dateStr)
@@ -3230,7 +3230,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
       .sort((x, y) => x - y)[0]
     const daysSinceJoined = joinedMs ? Math.max(1, Math.floor((Date.now() - joinedMs) / (1000 * 60 * 60 * 24))) : 1
     const historicalApprovedSec = projects
-      .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+      .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid')
       .reduce((sum, p) => {
         if (Array.isArray(p.output_history) && p.output_history.length > 0) {
           const myOut = (p.output_history as any[]).filter(h => h && h.empId === a.Employee_ID).reduce((acc: number, h: any) => acc + (Number(h.seconds) || 0), 0)
@@ -3364,7 +3364,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Calculate Historical Approved Duration (for Total box & Average box)
           const historicalApprovedSec = projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && p.Payment_Status === 'Paid')
             .reduce((sum, p) => {
               if (Array.isArray(p.output_history) && p.output_history.length > 0) {
                 const myOut = (p.output_history as any[]).filter(h => h && h.empId === a.Employee_ID).reduce((acc: number, h: any) => acc + (Number(h.seconds) || 0), 0)
@@ -3410,7 +3410,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           // Payment Calculation
           let grossPay = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid')
             .forEach(p => {
                const isLead = (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase()
                const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()
@@ -3444,9 +3444,9 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           let currentMonthSec = 0
           let prevMonthSec = 0
           projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status))
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid')
             .forEach(p => {
-               const dateStr = p.Approved_Date || p['Date Approved'] || p['Date Assigned']
+               const dateStr = p.client_paid_date || p.paid_date || p.Approved_Date || p['Date Approved'] || p['Date Assigned']
                if (!dateStr) return
                try {
                  const t = parseDate(dateStr).getTime()
@@ -3531,7 +3531,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && ['Approved', 'Paid', 'Closed'].includes(p.Status)) })}
+                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid') })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
