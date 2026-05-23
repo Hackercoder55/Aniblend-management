@@ -3559,7 +3559,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
               {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
-                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid') })}
+                  onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase())) })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
