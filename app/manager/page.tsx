@@ -259,6 +259,77 @@ function formatSec(sec: number): string {
   if (s === 0) return `${m} min`
   return `${m} min ${s} sec`
 }
+function getNormalizedMonthStr(dateStr: string) {
+  if (!dateStr) return 'Unknown'
+  try {
+    let d: Date
+    if (dateStr.startsWith('Month: ')) {
+      d = new Date(dateStr.replace('Month: ', '').trim())
+    } else {
+      d = new Date(dateStr)
+    }
+    if (!isNaN(d.getTime())) return d.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+  } catch {}
+  return 'Unknown'
+}
+
+function calculateAnimatorNetPay(animator: Animator, projects: Project[], paymentsRaw: any[]) {
+  const byMonth: Record<string, { totalGrossFromProjects: number; totalBonus: number; totalNetTable: number }> = {}
+
+  // 1. Projects
+  projects.forEach(p => {
+    const isAnim = p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((animator.Name || '').toLowerCase())
+    const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === (animator.Name || '').toLowerCase()
+    const isLead = p.Lead && p.Lead.toLowerCase() === (animator.Name || '').toLowerCase()
+    if (!(isAnim || isLighting || isLead) || (p.Payment_Status !== 'Paid' && p.Status !== 'Closed')) return
+
+    let amount = 0
+    const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+    
+    if (isLead && p.Payment_Status === 'Paid') amount += 1000
+    if (isLighting || isAnim) {
+       if (isLighting && p.Payment_Status === 'Paid') {
+          amount += (sec / 60) * 2000
+       } else if (isAnim && p.Payment_Status === 'Paid') {
+          const rate = p.Lighting_Artist ? 3000 : 5000
+          amount += (sec / 60) * rate
+       }
+    }
+
+    const dateStr = p.client_paid_date || p.paid_date || p.Approved_Date || p['Date Approved'] || (p as any).Timestamp || ''
+    const monthKey = getNormalizedMonthStr(dateStr)
+
+    if (!byMonth[monthKey]) byMonth[monthKey] = { totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0 }
+    byMonth[monthKey].totalGrossFromProjects += amount
+  })
+
+  // 2. Payments
+  paymentsRaw.forEach(pay => {
+    let monthKey = 'Unknown'
+    if (pay['Project ID'] && pay['Project ID'].startsWith('Month: ')) {
+      monthKey = getNormalizedMonthStr(pay['Project ID'])
+    } else {
+      monthKey = getNormalizedMonthStr(pay.paid_date || pay.Timestamp)
+    }
+    
+    if (!byMonth[monthKey]) byMonth[monthKey] = { totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0 }
+    byMonth[monthKey].totalBonus = Math.max(byMonth[monthKey].totalBonus, Number(pay.bonus) || 0)
+    byMonth[monthKey].totalNetTable = Math.max(byMonth[monthKey].totalNetTable, Number(pay.net_paid) || 0)
+  })
+
+  // Sum
+  let totalNet = 0
+  Object.values(byMonth).forEach(grp => {
+    if (grp.totalNetTable > 0) {
+      totalNet += grp.totalNetTable
+    } else {
+      const g = Math.round(grp.totalGrossFromProjects / 100) * 100
+      totalNet += Math.round(g - (g * 0.10) + grp.totalBonus)
+    }
+  })
+  
+  return totalNet
+}
 
 /** Display a Duration field: if purely numeric append " sec", else return as-is */
 function formatDurationDisplay(duration: string, projectId?: string): string {
@@ -2470,37 +2541,70 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
 // ─── Animators Tab ───────────────────────────────────────────────────────────
 
 function ProjectListModal({ title, projects, onClose }: { title: string; projects: Project[]; onClose: () => void }) {
+  // Categorize projects
+  const activeProjects = projects.filter(p => !['Approved', 'Paid', 'Closed'].includes(p.Status) && p.Payment_Status !== 'Paid')
+  const approvedProjects = projects.filter(p => p.Status === 'Approved' && p.Payment_Status !== 'Paid')
+  const closedPaidProjects = projects.filter(p => p.Payment_Status === 'Paid' || p.Status === 'Closed')
+
+  // Helper to calculate total duration in minutes
+  const calcTotalMins = (projs: Project[]) => {
+    const totalSecs = projs.reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
+    return Math.round(totalSecs / 60)
+  }
+
+  const sections = [
+    { label: 'Active (Render / QA / In Progress)', projects: activeProjects, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { label: 'Approved', projects: approvedProjects, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+    { label: 'Paid & Closed', projects: closedPaidProjects, color: 'text-indigo-600', bg: 'bg-indigo-50' }
+  ]
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flexitems-center justify-between flex-shrink-0">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <h3 className="font-bold text-gray-800 text-lg">{title} ({projects.length})</h3>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 transition-colors text-gray-400 flex-shrink-0">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
-        <div className="flex-1 overflow-auto p-5">
+        <div className="flex-1 overflow-auto p-5 space-y-8">
           {projects.length === 0 ? (
             <div className="text-center py-10 text-gray-500">No projects found.</div>
           ) : (
-            <div className="grid gap-3">
-              {projects.map(p => (
-                <div key={p.Project_ID} className="bg-gray-50 border border-gray-100 p-4 rounded-xl flex flex-col gap-2">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="font-mono text-xs text-indigo-500">{p.Project_ID}</span>
-                      <p className="font-semibold text-gray-800 text-sm">{p.Project_title || 'Untitled'}</p>
-                    </div>
-                    <StatusBadge status={p.Status} />
+            sections.map(section => {
+              if (section.projects.length === 0) return null
+              const totalMins = calcTotalMins(section.projects)
+              return (
+                <div key={section.label} className="space-y-3">
+                  <div className={`flex items-center justify-between px-4 py-2 rounded-lg \${section.bg}`}>\n                    <h4 className={`font-bold \${section.color}`}>{section.label}</h4>
+                    <span className={`text-sm font-semibold \${section.color}`}>
+                      {section.projects.length} Projects · {totalMins} Mins
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-500 flex gap-4">
-                    {p.Animator && <span>Animator: {p.Animator}</span>}
-                    {p.assigned_head && <span>Lead: {p.assigned_head}</span>}
-                    {p['Date Assigned'] && <span>Assigned: {p['Date Assigned']}</span>}
+                  <div className="grid gap-3">
+                    {section.projects.map(p => (
+                      <div key={p.Project_ID} className="bg-white border border-gray-100 shadow-sm p-4 rounded-xl flex flex-col gap-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-mono text-xs text-indigo-500">{p.Project_ID}</span>
+                            <p className="font-semibold text-gray-800 text-sm">{p.Project_title || 'Untitled'}</p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <StatusBadge status={p.Status} />
+                            {p.Payment_Status === 'Paid' && <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-100 text-emerald-700">Paid</span>}
+                          </div>
+                        </div>
+                        <div className="text-[11px] text-gray-500 flex gap-4 mt-1">
+                          {p.Animator && <span><strong className="text-gray-400">Anim:</strong> {p.Animator}</span>}
+                          {p.Lead && <span><strong className="text-gray-400">Lead:</strong> {p.Lead}</span>}
+                          {p.Duration && <span><strong className="text-gray-400">Duration:</strong> {p.Duration}</span>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
+              )
+            })
           )}
         </div>
       </div>
@@ -2952,15 +3056,9 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
     // Attempt to match month
     let monthKey = 'Unknown'
     if (pay['Project ID'] && pay['Project ID'].startsWith('Month: ')) {
-      monthKey = pay['Project ID'].replace('Month: ', '').trim()
+      monthKey = getNormalizedMonthStr(pay['Project ID'])
     } else {
-      const rawDate = pay.paid_date || pay.Timestamp
-      if (rawDate) {
-        try {
-          const d = new Date(rawDate)
-          if (!isNaN(d.getTime())) monthKey = d.toLocaleString('default', { month: 'long', year: 'numeric' })
-        } catch {}
-      }
+      monthKey = getNormalizedMonthStr(pay.paid_date || pay.Timestamp)
     }
     
     if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '' }
@@ -3163,18 +3261,14 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
   const [paidModalData, setPaidModalData] = useState<{ animator: Animator } | null>(null)
 
-  const [paymentsData, setPaymentsData] = useState<Record<string, number>>({})
+  const [paymentsRaw, setPaymentsRaw] = useState<any[]>([])
 
   useEffect(() => {
     let mounted = true
-    apiClient.from('payments').select('"Employee ID", bonus').not('bonus', 'is', null)
+    apiClient.from('payments').select('*')
       .then((res: any) => {
         if (!mounted || !res.data) return
-        const acc: Record<string, number> = {}
-        res.data.forEach((p: any) => {
-          if (p['Employee ID']) acc[p['Employee ID']] = (acc[p['Employee ID']] || 0) + (Number(p.bonus) || 0)
-        })
-        setPaymentsData(acc)
+        setPaymentsRaw(res.data)
       })
     return () => { mounted = false }
   }, [])
@@ -3365,31 +3459,8 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           }
 
           // Payment Calculation
-          let grossPay = 0
-          projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid')
-            .forEach(p => {
-               const isLead = (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase()
-               const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()
-               const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase())
-               
-               if (isLead) grossPay += 1000
-               if (isLighting || isAnim) {
-                  const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-                  if (isLighting) {
-                     grossPay += (sec / 60) * 2000
-                  } else {
-                     const rate = p.Lighting_Artist ? 3000 : 5000
-                     grossPay += (sec / 60) * rate
-                  }
-               }
-            })
-          grossPay = Math.round(grossPay / 100) * 100
-          
-          const bonus = paymentsData[a.Employee_ID] || 0
-          const totalGross = grossPay + bonus
-          const tds = totalGross * 0.10
-          const netPay = totalGross - tds
+          const animPayments = paymentsRaw.filter(p => p['Employee ID'] === a.Employee_ID)
+          const netPay = calculateAnimatorNetPay(a, projects, animPayments)
 
           // Growth Calculation
           const now = new Date()
