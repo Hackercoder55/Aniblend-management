@@ -2066,8 +2066,10 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
   // Match by Employee_ID (solo) OR Animator name containing this animator (group workspace)
   const matchesAnim = (p: Project) =>
     p.Employee_ID === animator.Employee_ID ||
-    (String(p.Animator || '')).toLowerCase().split(',').map(s => s.trim()).includes((animator.Name || '').toLowerCase())
-  const activeProjects = projects.filter(p => matchesAnim(p) && ['Pending', 'Active', 'Review'].includes(p.Status))
+    (String(p.Animator || '')).toLowerCase().split(',').map(s => s.trim()).includes((animator.Name || '').toLowerCase()) ||
+    (String(p.Lead || '')).toLowerCase() === (animator.Name || '').toLowerCase() ||
+    (String(p.Lighting_Artist || '')).toLowerCase() === (animator.Name || '').toLowerCase()
+  const activeProjects = projects.filter(p => matchesAnim(p) && !['Approved', 'Paid', 'Closed'].includes(p.Status))
   const allProjects = projects.filter(p => matchesAnim(p))
 
   const joinedDate = allProjects
@@ -2366,64 +2368,9 @@ function AnimatorModal({ animator, projects, user, onClose, onRefresh, onShowPro
           )}
 
           {activeSection === 'earnings' && (
-            <div className="space-y-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Month-wise Earnings</p>
-              {loadingInvoices ? (
-                <div className="flex justify-center py-10">
-                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              ) : invoices.length === 0 ? (
-                <div className="bg-gray-50 rounded-xl p-6 text-center text-sm text-gray-400 border border-gray-100">
-                  No payout/invoice records found for {animator.Name}.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {invoices.map((inv, idx) => (
-                    <div key={idx} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex flex-col gap-2">
-                      <div className="flex items-center justify-between border-b border-gray-50 pb-2">
-                        <span className="font-bold text-gray-800 text-sm">
-                          📅 {inv.month_label || 'Unknown Month'}
-                        </span>
-                        <div className="flex gap-2 items-center">
-                          <button onClick={() => handleDownloadInvoice(inv)} className="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-1 rounded font-semibold transition-colors">
-                            Download Receipt
-                          </button>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${inv.status === 'Paid' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                            {inv.status}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-1">
-                        <div>
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Gross</p>
-                          <p className="text-xs font-mono text-gray-700">₹{(inv.total_amount || 0).toLocaleString()}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Bonus</p>
-                          <p className="text-xs font-mono text-green-600" title={inv.bonus_note || 'No note'}>
-                            ₹{(inv.bonus_amount || 0).toLocaleString()}
-                            {inv.bonus_note && (
-                              <span className="ml-1 text-[9px] bg-amber-100 text-amber-800 px-1 py-[2px] rounded uppercase tracking-wider block mt-1 overflow-hidden text-ellipsis whitespace-nowrap max-w-full">
-                                {inv.bonus_note}
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">TDS (-)</p>
-                          <p className="text-xs font-mono text-red-500">₹{(inv.tds_amount || 0).toLocaleString()}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-gray-400 uppercase font-semibold">Net Earned</p>
-                          <p className="text-sm font-bold text-indigo-600">₹{(inv.net_payable || 0).toLocaleString()}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <PaidProjectsModal animator={animator} projects={projects} onClose={() => {}} inline={true} />
           )}
+
         </div>
 
         {/* Footer — Deboard (manager only) */}
@@ -2928,8 +2875,8 @@ function GlobalAnimatorReportModal({ animators, projects, onClose }: { animators
 }
 // ─── Paid Projects Modal ──────────────────────────────────────────────────────
 
-function PaidProjectsModal({ animator, projects, onClose }: {
-  animator: Animator; projects: Project[]; onClose: () => void
+function PaidProjectsModal({ animator, projects, onClose, inline }: {
+  animator: Animator; projects: Project[]; onClose: () => void; inline?: boolean
 }) {
   const [paymentsRaw, setPaymentsRaw] = useState<any[]>([])
   const [loadingPay, setLoadingPay] = useState(true)
@@ -2954,7 +2901,7 @@ function PaidProjectsModal({ animator, projects, onClose }: {
     const isAnim = p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
     const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
     const isLead = p.Lead && p.Lead.toLowerCase() === animName
-    return (isAnim || isLighting || isLead) && p.Payment_Status === 'Paid'
+    return (isAnim || isLighting || isLead) && (p.Payment_Status === 'Paid' || p.Status === 'Closed')
   })
 
   // Group by month
@@ -3070,11 +3017,10 @@ function PaidProjectsModal({ animator, projects, onClose }: {
     URL.revokeObjectURL(url)
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+  const content = (
+    <>
+      {/* Header */}
+      <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="font-bold text-gray-800 text-lg">💳 {animator.Name} — Payment History</h3>
             <p className="text-xs text-gray-400 mt-0.5">{paidProjects.length} paid projects · {sortedMonths.length} month(s)</p>
@@ -3186,6 +3132,17 @@ function PaidProjectsModal({ animator, projects, onClose }: {
             )
           })}
         </div>
+    </>
+  )
+
+  if (inline) {
+    return <div className="flex flex-col h-[500px] bg-white rounded-xl shadow-sm border border-gray-100">{content}</div>
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden">
+        {content}
       </div>
     </div>
   )
@@ -3364,7 +3321,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Calculate Historical Approved Duration (for Total box & Average box)
           const historicalApprovedSec = projects
-            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) && p.Payment_Status === 'Paid')
+            .filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) && p.Payment_Status === 'Paid')
             .reduce((sum, p) => {
               if (Array.isArray(p.output_history) && p.output_history.length > 0) {
                 const myOut = (p.output_history as any[]).filter(h => h && h.empId === a.Employee_ID).reduce((acc: number, h: any) => acc + (Number(h.seconds) || 0), 0)
