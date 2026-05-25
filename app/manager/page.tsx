@@ -313,7 +313,7 @@ function calculateAnimatorNetPay(animator: Animator, projects: Project[], paymen
     }
     
     if (!byMonth[monthKey]) byMonth[monthKey] = { totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0 }
-    byMonth[monthKey].totalBonus = Math.max(byMonth[monthKey].totalBonus, Number(pay.bonus) || 0)
+    byMonth[monthKey].totalBonus += Number(pay.bonus) || 0
     byMonth[monthKey].totalNetTable = Math.max(byMonth[monthKey].totalNetTable, Number(pay.net_paid) || 0)
   })
 
@@ -3030,6 +3030,9 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
     totalBonus: number;
     totalNetTable: number;
     bonusNote: string;
+    basePay: number;
+    lightingPay: number;
+    leadPay: number;
   }> = {}
 
   paidProjects.forEach(p => {
@@ -3045,6 +3048,8 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
       } catch {}
     }
 
+    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '', basePay: 0, lightingPay: 0, leadPay: 0 }
+
     // 2. Calculate Amount
     let projEarn = 0
     const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
@@ -3053,15 +3058,21 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
     const isLead = p.Lead && p.Lead.toLowerCase() === animName
     const isAnim = p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
 
-    if (isLead) projEarn += 1000;
+    if (isLead) {
+      projEarn += 1000;
+      byMonth[monthKey].leadPay += 1000;
+    }
     if (isLighting) {
-      projEarn += rawSec * (2000 / 60);
+      const earn = rawSec * (2000 / 60);
+      projEarn += earn;
+      byMonth[monthKey].lightingPay += earn;
     } else if (isAnim) {
       const rate = p.Lighting_Artist ? 3000 : 5000;
-      projEarn += rawSec * (rate / 60);
+      const earn = rawSec * (rate / 60);
+      projEarn += earn;
+      byMonth[monthKey].basePay += earn;
     }
 
-    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '' }
     byMonth[monthKey].projects.push({ proj: p, amount: projEarn, dateStr })
     byMonth[monthKey].totalGrossFromProjects += projEarn
   })
@@ -3076,10 +3087,10 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
       monthKey = getNormalizedMonthStr(pay.paid_date || pay.Timestamp)
     }
     
-    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '' }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '', basePay: 0, lightingPay: 0, leadPay: 0 }
     
     // Use the maximum bonus or net found for this month (avoiding duplicates if any)
-    byMonth[monthKey].totalBonus = Math.max(byMonth[monthKey].totalBonus, Number(pay.bonus) || 0)
+    byMonth[monthKey].totalBonus += Number(pay.bonus) || 0
     byMonth[monthKey].totalNetTable = Math.max(byMonth[monthKey].totalNetTable, Number(pay.net_paid) || 0)
     if (pay.bonus_note) byMonth[monthKey].bonusNote = pay.bonus_note
   })
@@ -3187,7 +3198,26 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
                   <div className="flex gap-4 text-right items-center">
                     <div>
                       <p className="text-[10px] font-bold text-gray-500 uppercase">Gross</p>
-                      <p className="text-xs font-bold text-gray-700">₹{Math.round(grp.totalGrossFromProjects).toLocaleString('en-IN')}</p>
+                      <div className="flex items-center gap-1 group relative cursor-help">
+                        <p className="text-xs font-bold text-gray-700">₹{Math.round(grp.totalGrossFromProjects).toLocaleString('en-IN')}</p>
+                        <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        
+                        <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 shadow-xl rounded-lg p-3 w-48 z-10 hidden group-hover:block pointer-events-none">
+                          <p className="text-[10px] uppercase font-bold text-gray-400 border-b border-gray-100 pb-1 mb-1">Gross Breakdown</p>
+                          <div className="flex justify-between text-xs my-1">
+                            <span className="text-gray-500">Base Anim:</span>
+                            <span className="font-semibold text-gray-700">₹{Math.round(grp.basePay || 0).toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="flex justify-between text-xs my-1">
+                            <span className="text-gray-500">Lighting:</span>
+                            <span className="font-semibold text-gray-700">₹{Math.round(grp.lightingPay || 0).toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="flex justify-between text-xs my-1">
+                            <span className="text-gray-500">Lead Pay:</span>
+                            <span className="font-semibold text-gray-700">₹{Math.round(grp.leadPay || 0).toLocaleString('en-IN')}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     {grp.totalBonus !== 0 && (
                       <div className="border-l border-indigo-200 pl-3">
@@ -3277,6 +3307,70 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [paidModalData, setPaidModalData] = useState<{ animator: Animator } | null>(null)
 
   const [paymentsRaw, setPaymentsRaw] = useState<any[]>([])
+  const [sendingInvoices, setSendingInvoices] = useState(false)
+
+  const handleSendInvoices = async () => {
+    if (!confirm('Are you sure you want to send invoices to all animators for unpaid approved projects?')) return
+    setSendingInvoices(true)
+    let count = 0
+    
+    // We only process animators with a valid Discord_ID
+    for (const a of animators) {
+      if (!a.Discord_ID) continue
+      
+      const unpaidApproved = projects.filter(p => {
+        const animName = (a.Name || '').toLowerCase()
+        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+        const isLead = p.Lead && p.Lead.toLowerCase() === animName
+        return (isAnim || isLighting || isLead) && p.Status === 'Approved' && p.Payment_Status !== 'Paid'
+      })
+
+      if (unpaidApproved.length === 0) continue
+
+      let totalGross = 0
+      unpaidApproved.forEach(p => {
+        const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+        const animName = (a.Name || '').toLowerCase()
+        const isLead = p.Lead && p.Lead.toLowerCase() === animName
+        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+        
+        if (isLead) totalGross += 1000
+        if (isLighting) totalGross += (sec / 60) * 2000
+        else if (isAnim) totalGross += (sec / 60) * (p.Lighting_Artist ? 3000 : 5000)
+      })
+
+      if (totalGross > 0) {
+        // Find TDS percent from animator or use 0
+        const tdsPct = (a as any).TDS || 0
+        const tdsAmount = Math.round(totalGross * (tdsPct / 100))
+        const netPayable = Math.round(totalGross - tdsAmount)
+        const currentMonthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' })
+        
+        try {
+          await fetch('/api/discord/send-invoice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channelId: a.Discord_ID,
+              invoiceNumber: Math.floor(Math.random() * 100000).toString(),
+              monthLabel: currentMonthLabel,
+              totalAmount: Math.round(totalGross),
+              tdsAmount,
+              netPayable,
+              legalName: (a as any)['Full Name'] || a.Name
+            })
+          })
+          count++
+        } catch (e) {
+          console.error('Failed to send invoice for', a.Name, e)
+        }
+      }
+    }
+    setSendingInvoices(false)
+    alert(`Successfully sent ${count} invoices!`)
+  }
 
   useEffect(() => {
     let mounted = true
@@ -3391,9 +3485,13 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         </div>
         {!isHead && (
           <div className="flex gap-2">
+            <button onClick={handleSendInvoices} disabled={sendingInvoices}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 border-green-100 text-green-600 hover:bg-green-50 flex-shrink-0 transition-colors disabled:opacity-50">
+              {sendingInvoices ? 'Sending...' : '?? Send Invoices'}
+            </button>
             <button onClick={() => setShowReportModal(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 border-indigo-100 text-indigo-600 hover:bg-indigo-50 flex-shrink-0 transition-colors">
-              📊 Monthly Report
+              ?? Monthly Report
             </button>
             <button onClick={() => setShowAddModal(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white flex-shrink-0 transition-colors hover:shadow-md"
