@@ -7046,7 +7046,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .limit(1)
         const existing = Number((animData && animData[0]?.total_earnings) || 0)
         await apiClient.from('animators')
-          .update({ total_earnings: existing + totalPaid })
+          .update({ total_earnings: existing + totalPaid, others_amount: 0 })
           .eq('Employee_ID', eid)
       } catch (earnErr) {
         console.error('Failed to update total_earnings:', earnErr)
