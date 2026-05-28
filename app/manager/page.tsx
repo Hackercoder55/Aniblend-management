@@ -3513,6 +3513,13 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           const isActive = (p: Project) => !DONE.includes(p.Status) && (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
           const activeCount = projects.filter(isActive).length
           const load = a['Current video'] || 0
+          // Real total count from projects DB (matches modal count)
+          const realTotalCount = projects.filter(p =>
+            p.Employee_ID === a.Employee_ID ||
+            (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) ||
+            String(p.Lead || '').toLowerCase() === (a.Name || '').toLowerCase() ||
+            String(p.Lighting_Artist || '').toLowerCase() === (a.Name || '').toLowerCase()
+          ).length
           const loadColor = load === 0 ? '#10b981' : load === 1 ? '#f59e0b' : '#ef4444'
           const entries = parseNotes(a['Interview notes'])
           const avg = avgRating(entries)
@@ -3674,7 +3681,7 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase())) })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
-                  <p className="text-xl font-bold text-gray-700">{a['Total video'] || 0}</p>
+                  <p className="text-xl font-bold text-gray-700">{realTotalCount}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
                   <p className={`text-[10px] font-semibold mt-0.5 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
                     {historicalApprovedSec > 0 ? formatSec(historicalApprovedSec) : '0s'}
@@ -7231,7 +7238,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         Object.keys(latestPaymentByEmpId).forEach(eid => {
            const monthPay = paymentForMonthByEmpId[eid];
            const globalPay = latestPaymentByEmpId[eid];
-           const val = monthPay?.tds_percent ?? globalPay?.tds_percent ?? 0;
+           const val = monthPay?.tds_percent ?? globalPay?.tds_percent ?? 10;
            if (next[eid] !== val.toString()) {
               next[eid] = val.toString();
               changed = true;
@@ -7527,7 +7534,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       .filter(p => p.Payment_Status === 'Paid' && (p.Status === 'Closed' || p.Status === 'Paid') && p.Employee_ID)
       .map(p => p.Employee_ID)
   )
-  const paidRows = animators.filter(a => paidEmpIds.has(a.Employee_ID) || paidStatus[a.Employee_ID] === 'Paid')
+  const paidRows = animators
+    .filter(a => paidEmpIds.has(a.Employee_ID) || paidStatus[a.Employee_ID] === 'Paid')
+    .sort((a, b) => {
+      // Sort by latest paid_date descending (most recently paid first)
+      const getLatestPaidDate = (animator: Animator) => {
+        const pay = payments
+          .filter(p => p['Employee ID'] === animator.Employee_ID && p.paid_date)
+          .sort((x, y) => new Date(y.paid_date!).getTime() - new Date(x.paid_date!).getTime())[0]
+        return pay?.paid_date ? new Date(pay.paid_date).getTime() : 0
+      }
+      return getLatestPaidDate(b) - getLatestPaidDate(a)
+    })
 
   // For each paid animator, get their paid projects
   const getPaidProjects = (a: Animator) =>
