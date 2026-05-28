@@ -3643,6 +3643,8 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                   <div>
                     <p className="font-semibold text-gray-800 text-sm">{a.Name}</p>
                     <p className="text-[10px] text-gray-400 font-medium tracking-wide">{a.Employee_ID}</p>
+                    {(a['Phone Number'] || a.phone) && <p className="text-[9px] text-gray-500 font-mono mt-0.5">📞 {a['Phone Number'] || a.phone}</p>}
+                    {(a['E-mail'] || a.email) && <p className="text-[9px] text-gray-500 mt-0.5">✉️ {a['E-mail'] || a.email}</p>}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1.5">
