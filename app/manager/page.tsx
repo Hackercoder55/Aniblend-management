@@ -3580,7 +3580,10 @@ function TeamTab({ animators, projects, user, onRefresh }: {
 
           // Payment Calculation
           const animPayments = paymentsRaw.filter(p => p['Employee ID'] === a.Employee_ID)
-          const netPay = calculateAnimatorNetPay(a, projects, animPayments)
+          const lastValidPayment = animPayments
+            .filter(p => p.paid_date && (Number(p.net_paid) || 0) > 0)
+            .sort((x, y) => new Date(y.paid_date).getTime() - new Date(x.paid_date).getTime())[0]
+          const netPay = lastValidPayment ? Number(lastValidPayment.net_paid) : 0
 
           // Growth Calculation
           const now = new Date()
