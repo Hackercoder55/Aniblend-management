@@ -281,12 +281,11 @@ function calculateAnimatorNetPay(animator: Animator, projects: Project[], paymen
     const isAnim = p.Employee_ID === animator.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((animator.Name || '').toLowerCase())
     const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === (animator.Name || '').toLowerCase()
     const isLead = p.Lead && p.Lead.toLowerCase() === (animator.Name || '').toLowerCase()
-    if (!(isAnim || isLighting || isLead) || (p.Payment_Status !== 'Paid' && p.Status !== 'Closed')) return
+    if (!(isAnim || isLighting || isLead) || (p.Payment_Status !== 'Paid' && p.Status !== 'Closed' && p.Status !== 'Approved')) return
 
     let amount = 0
     const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
     
-    if (isLead && p.Payment_Status === 'Paid') amount += 1000
     if (isLighting || isAnim) {
        if (isLighting && p.Payment_Status === 'Paid') {
           amount += (sec / 60) * 2000
@@ -301,6 +300,10 @@ function calculateAnimatorNetPay(animator: Animator, projects: Project[], paymen
 
     if (!byMonth[monthKey]) byMonth[monthKey] = { totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0 }
     byMonth[monthKey].totalGrossFromProjects += amount
+    
+    if (isLead && (p.Payment_Status === 'Paid' || p.Status === 'Closed' || p.Status === 'Approved')) {
+       byMonth[monthKey].totalBonus += 1000
+    }
   })
 
   // 2. Payments
