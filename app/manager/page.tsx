@@ -6886,6 +6886,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [savingId, setSavingId] = useState<string | null>(null)
 
   const [sendingInvoices, setSendingInvoices] = useState(false)
+  const [excludeNotify, setExcludeNotify] = useState<Set<string>>(new Set())
 
   const handleSendInvoices = async () => {
     if (!confirm('Are you sure you want to send invoices to all animators for unpaid approved projects?')) return
@@ -6895,6 +6896,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     // We only process animators with a valid Discord_ID
     for (const a of animators) {
       if (!a.Discord_ID) continue
+      if (excludeNotify.has(a.Employee_ID)) continue
       
       const unpaidApproved = projects.filter(p => {
         const animName = (a.Name || '').toLowerCase()
@@ -6988,7 +6990,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
   const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
 
-  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0, bonusNote: string = "") => {
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0, bonusNote: string = "", notify: boolean = true) => {
     const targetMonth = window.prompt("Which month should this payment be recorded under?", selectedMonth || monthOptions[1])
     if (!targetMonth) return // User cancelled
     
@@ -7006,7 +7008,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       // 1a. Approved projects → Status=Closed + Payment_Status=Paid
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Closed' })
+          .update(notify ? { Payment_Status: 'Paid', Status: 'Closed' } : { Payment_Status: 'Paid', Status: 'Closed', Thread_Archived: true, paid_at: new Date().toISOString() })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
@@ -7621,6 +7623,22 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           <div>
                             <p className="font-semibold text-gray-800">{r.animator.Name}</p>
                             <p className="text-[10px] text-gray-500">{r.animator.Employee_ID}</p>
+                            <label className="flex items-center gap-1 mt-1 cursor-pointer select-none">
+                              <input 
+                                type="checkbox" 
+                                className="w-3 h-3 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                                checked={!excludeNotify.has(r.animator.Employee_ID)}
+                                onChange={(e) => {
+                                  setExcludeNotify(prev => {
+                                    const next = new Set(prev)
+                                    if (e.target.checked) next.delete(r.animator.Employee_ID)
+                                    else next.add(r.animator.Employee_ID)
+                                    return next
+                                  })
+                                }}
+                              />
+                              <span className="text-[9px] text-gray-500 uppercase font-semibold">Notify Bot</span>
+                            </label>
                           </div>
                         </div>
                       </td>
@@ -7695,7 +7713,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                             </span>
                           ) : (
                             <button
-                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct, r.gross, bonusNotes[r.animator.Employee_ID] || '')}
+                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct, r.gross, bonusNotes[r.animator.Employee_ID] || '', !excludeNotify.has(r.animator.Employee_ID))}
                               disabled={payingId === r.animator.Employee_ID}
                               className="w-full px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
                               style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
