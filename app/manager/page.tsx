@@ -96,6 +96,8 @@ interface Animator {
   Discord_Username: string
   Channel_ID: string
   'Interview notes': string
+  Tier?: string
+  others_amount?: number
   'Phone Number': string
   'E-mail': string
   phone?: string
