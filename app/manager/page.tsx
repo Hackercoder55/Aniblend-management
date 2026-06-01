@@ -6566,15 +6566,17 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         />
       </div>
 
-      {/* Month selector */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-gray-600">Month:</label>
-        <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-          className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-800 focus:outline-none">
-          {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <button onClick={fetchInvoices} className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">🔄 Refresh</button>
-      </div>
+      {/* Month selector — only for Pending/Acknowledged/Paid tabs */}
+      {section !== 'send' && (
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-gray-600">Month:</label>
+          <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+            className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white text-gray-800 focus:outline-none">
+            {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <button onClick={fetchInvoices} className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">🔄 Refresh</button>
+        </div>
+      )}
 
       {/* SECTION: Send Invoices */}
       {section === 'send' && (() => {
