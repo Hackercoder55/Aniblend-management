@@ -7685,8 +7685,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           <input
                             type="number"
                             min="0"
-                            placeholder="0"
-                            value={tdsPercents[r.animator.Employee_ID] ?? ''}
+                            placeholder="10"
+                            value={tdsPercents[r.animator.Employee_ID] ?? '10'}
                             onChange={e => setTdsPercents(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
                             className="w-14 px-1 py-1 border border-red-300 rounded text-sm focus:outline-none font-mono focus:border-red-500 transition-colors text-right bg-red-50"
                           />
