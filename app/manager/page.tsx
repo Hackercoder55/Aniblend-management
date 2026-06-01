@@ -3424,10 +3424,6 @@ function TeamTab({ animators, projects, user, onRefresh }: {
         </div>
         {!isHead && (
           <div className="flex gap-2">
-            <button onClick={handleSendInvoices} disabled={sendingInvoices}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 border-green-100 text-green-600 hover:bg-green-50 flex-shrink-0 transition-colors disabled:opacity-50">
-              {sendingInvoices ? 'Sending...' : '?? Send Invoices'}
-            </button>
             <button onClick={() => setShowReportModal(true)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 border-indigo-100 text-indigo-600 hover:bg-indigo-50 flex-shrink-0 transition-colors">
               ?? Monthly Report
