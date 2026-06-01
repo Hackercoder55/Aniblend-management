@@ -181,7 +181,7 @@ export async function POST(request: Request) {
       embeds: [embed],
     };
 
-    // Add components (buttons) only if we have an invoiceId for the bot to handle
+    // Add components (buttons) - dynamic custom_ids with invoiceId embedded
     if (invoiceId) {
       msgBody.components = [
         {
@@ -190,14 +190,14 @@ export async function POST(request: Request) {
             {
               type: 2,
               style: 3, // green
-              label: '✅ Acknowledge',
-              custom_id: `invoice_ack_${invoiceId}`,
+              label: '✅ Confirm Invoice',
+              custom_id: `inv_ack_${invoiceId}`,
             },
             {
               type: 2,
-              style: 4, // red
+              style: 2, // grey
               label: '✏️ Request Edit',
-              custom_id: `invoice_edit_${invoiceId}`,
+              custom_id: `inv_edit_${invoiceId}`,
             },
           ],
         },
