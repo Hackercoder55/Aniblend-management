@@ -5903,6 +5903,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
   const [sending, setSending] = useState(false)
   const [section, setSection] = useState<'send' | 'pending' | 'acknowledged' | 'paid'>('pending')
   const [selectedEids, setSelectedEids] = useState<Set<string>>(new Set())
+  const [selectedInvIds, setSelectedInvIds] = useState<Set<string>>(new Set())
   const [printInvoice, setPrintInvoice] = useState<Invoice | null>(null)
   const [bulkPrintInvoices, setBulkPrintInvoices] = useState<Invoice[]>([])
 
@@ -6651,15 +6652,61 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       })()}
 
       {/* SECTION: Pending Acknowledgement */}
-      {section === 'pending' && (
+      {section === 'pending' && (() => {
+        const filteredPending = pendingInvoices.filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
+        const allPendingSelected = filteredPending.length > 0 && filteredPending.every(inv => selectedInvIds.has(String(inv.id)))
+
+        const deleteInvoiceWithDiscord = async (inv: Invoice) => {
+          // Delete Discord message if exists
+          const msgId = (inv as any).discord_message_id || (inv as any).discord_msg_id
+          const threadId = inv.thread_id
+          if (msgId && threadId) {
+            try {
+              await fetch(`/api/discord/send-invoice?messageId=${msgId}&channelId=${threadId}`, { method: 'DELETE' })
+            } catch { }
+          }
+          await apiClient.from('invoices').delete().eq('id', inv.id)
+        }
+
+        return (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-bold text-gray-800">⚠️ Pending Acknowledgement — {selectedMonth}</h3>
-            {notSentEids.length > 0 && (
-              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg font-medium">{notSentEids.length} animator(s) not yet sent invoice</span>
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              <h3 className="font-bold text-gray-800">⚠️ Pending Acknowledgement — {selectedMonth}</h3>
+              {notSentEids.length > 0 && (
+                <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg font-medium">{notSentEids.length} animator(s) not yet sent invoice</span>
+              )}
+            </div>
+            {filteredPending.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedInvIds(allPendingSelected ? new Set() : new Set(filteredPending.map(i => String(i.id))))}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg border"
+                  style={{ background: allPendingSelected ? '#fee2e2' : '#eff6ff', color: allPendingSelected ? '#dc2626' : '#2563eb', borderColor: allPendingSelected ? '#fca5a5' : '#bfdbfe' }}
+                >
+                  {allPendingSelected ? '☑️ Deselect All' : '☑️ Select All'}
+                </button>
+                {selectedInvIds.size > 0 && (
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm(`Delete ${selectedInvIds.size} invoice(s)? This will also delete their Discord messages.`)) return
+                      const toDelete = filteredPending.filter(inv => selectedInvIds.has(String(inv.id)))
+                      for (const inv of toDelete) {
+                        await deleteInvoiceWithDiscord(inv)
+                      }
+                      setSelectedInvIds(new Set())
+                      addToast(`🗑️ Deleted ${toDelete.length} invoice(s)`, 'success')
+                      fetchInvoices()
+                    }}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700"
+                  >
+                    🗑️ Delete Selected ({selectedInvIds.size})
+                  </button>
+                )}
+              </div>
             )}
           </div>
-          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : pendingInvoices.filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id)).length === 0 ? (
+          {loading ? <p className="p-6 text-sm text-gray-400">Loading...</p> : filteredPending.length === 0 ? (
             <p className="p-6 text-sm text-gray-400">
               {monthInvoices.length === 0 ? `No invoices have been sent for ${selectedMonth} yet.` : `🎉 All sent invoices for ${selectedMonth} have been acknowledged.`}
             </p>
@@ -6667,16 +6714,23 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  <th className="px-4 py-3 text-left w-8"></th>
                   {['Animator', 'Invoice #', 'Month', 'Projects', 'Total', 'Status', 'Sent At'].map(h => (
                     <th key={h} className="px-4 py-3 text-left">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {pendingInvoices
-                  .filter(inv => matchesInvoiceSearch(inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id))
-                  .map(inv => (
-                  <tr key={inv.id} className="border-b border-gray-50 hover:bg-amber-50/30">
+                {filteredPending.map(inv => (
+                  <tr key={inv.id} className={`border-b border-gray-50 hover:bg-amber-50/30 ${selectedInvIds.has(String(inv.id)) ? 'bg-red-50' : ''}`}>
+                    <td className="px-4 py-3">
+                      <input type="checkbox" checked={selectedInvIds.has(String(inv.id))}
+                        onChange={e => {
+                          const s = new Set(selectedInvIds)
+                          e.target.checked ? s.add(String(inv.id)) : s.delete(String(inv.id))
+                          setSelectedInvIds(s)
+                        }} className="w-4 h-4 rounded" />
+                    </td>
                     <td className="px-4 py-3 font-medium text-gray-800">{inv.legal_name || animatorByEid[inv.employee_id]?.Name || inv.employee_id}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">#{inv.invoice_number}</td>
                     <td className="px-4 py-3 text-xs text-gray-500">
@@ -6692,18 +6746,15 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                     <td className="px-4 py-3 text-gray-600">{(inv.line_items || []).length} project(s)</td>
                     <td className="px-4 py-3 font-medium">₹{Math.round(inv.net_payable || 0).toLocaleString()}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${inv.status === 'Edit Requested' ? 'bg-orange-100 text-orange-700' :
-                        inv.status === 'Awaiting Details' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-blue-100 text-blue-700'
-                        }`}>{inv.status}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${inv.status === 'Edit Requested' ? 'bg-orange-100 text-orange-700' : inv.status === 'Awaiting Details' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`}>{inv.status}</span>
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">
                       <div className="flex items-center gap-2">
                         {inv.sent_at ? new Date(inv.sent_at).toLocaleString('en-IN') : '—'}
                         <button
                           onClick={async () => {
-                            if (!window.confirm(`Are you sure you want to delete Invoice #${inv.invoice_number}?`)) return
-                            await apiClient.from('invoices').delete().eq('id', inv.id)
+                            if (!window.confirm(`Delete Invoice #${inv.invoice_number}? Discord message will also be deleted.`)) return
+                            await deleteInvoiceWithDiscord(inv)
                             addToast(`Deleted invoice #${inv.invoice_number}`, 'success')
                             fetchInvoices()
                           }}
@@ -6719,7 +6770,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             </table>
           )}
         </div>
-      )}
+        )
+      })()}
 
       {/* SECTION: Acknowledged */}
       {section === 'acknowledged' && (

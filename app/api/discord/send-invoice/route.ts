@@ -1,6 +1,26 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+// DELETE — called when manager deletes an invoice to also remove Discord message
+export async function DELETE(request: Request) {
+  try {
+    const url = new URL(request.url)
+    const messageId = url.searchParams.get('messageId')
+    const channelId = url.searchParams.get('channelId')
+    if (!messageId || !channelId) return NextResponse.json({ error: 'messageId and channelId required' }, { status: 400 })
+    const token = process.env.DISCORD_BOT_TOKEN || process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN
+    if (!token) return NextResponse.json({ error: 'No bot token' }, { status: 500 })
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bot ${token}` }
+    })
+    return NextResponse.json({ success: res.ok, status: res.status })
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
+}
+
+
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
