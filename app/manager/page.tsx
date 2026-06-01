@@ -7702,7 +7702,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                           <div>
                             <p className="font-semibold text-gray-800 flex items-center gap-2">
                               {r.animator.Name}
-                              {r.animator.Tier && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{r.animator.Tier}</span>}
+                              {(r.animator.Tier || r.animator.Role) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{r.animator.Tier || r.animator.Role}</span>}
                               {(() => {
                                 const inv = invoices.find(i => i.employee_id === r.animator.Employee_ID && i.month_label === selectedMonth)
                                 if (!inv) return null
