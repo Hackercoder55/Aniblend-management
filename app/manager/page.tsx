@@ -7573,7 +7573,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹5000/minute.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {/* Month select removed to make the view overall */}
+            <button onClick={handleSendInvoices} disabled={sendingInvoices}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border-2 border-green-100 text-green-600 hover:bg-green-50 flex-shrink-0 transition-colors disabled:opacity-50">
+              {sendingInvoices ? 'Sending...' : '🟢 Send Invoices'}
+            </button>
           </div>
         </div>
         <div className="relative mb-4">
