@@ -41,6 +41,7 @@ export async function POST(request: Request) {
       legalName,
       lineItems,
       bonusAmount,
+      othersAmount,
     } = body;
 
     if (!channelId || !invoiceNumber || !monthLabel) {
@@ -153,9 +154,10 @@ export async function POST(request: Request) {
     // ─── Step 6: Build invoice embed ─────────────────────────────────────────
     const grossAmount = Number(totalAmount || 0);
     const bonus = Number(bonusAmount || 0);
+    const others = Number(othersAmount || 0);
     const tds = Number(tdsAmount || 0);
     const net = Number(netPayable || 0);
-    const totalWithBonus = grossAmount + bonus;
+    const totalWithBonus = grossAmount + bonus + others;
 
     // Build line items description
     let lineDesc = '';
@@ -181,6 +183,9 @@ export async function POST(request: Request) {
     );
     if (bonus > 0) {
       fields.push({ name: '🎁 Bonus', value: `₹${bonus.toLocaleString()}`, inline: true });
+    }
+    if (others !== 0) {
+      fields.push({ name: '🛠️ Others', value: `₹${others.toLocaleString()}`, inline: true });
     }
     fields.push(
       { name: '📊 TDS Deducted', value: `₹${tds.toLocaleString()}`, inline: true },

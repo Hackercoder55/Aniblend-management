@@ -6933,6 +6933,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; projects: Project[] }) {
   const { addToast } = useToast()
   const [payments, setPayments] = useState<Payment[]>([])
+  const [invoices, setInvoices] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [manualMinutes, setManualMinutes] = useState<Record<string, string>>({})
   const [search, setSearch] = useState('')
@@ -6986,10 +6987,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       })
 
       if (totalGross > 0) {
+        const othersAmt = parseFloat(String((a as any).others_amount || '0')) || 0
+        const bonusAmt = parseFloat(bonusAmounts[a.Employee_ID] || '0') || 0
+        
+        const finalGross = totalGross + bonusAmt + othersAmt
         // Find TDS percent from animator or use 0
         const tdsPct = (a as any).TDS || 0
-        const tdsAmount = Math.round(totalGross * (tdsPct / 100))
-        const netPayable = Math.round(totalGross - tdsAmount)
+        const tdsAmount = Math.round(finalGross * (tdsPct / 100))
+        const netPayable = Math.round(finalGross - tdsAmount)
         const currentMonthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' })
         
         try {
@@ -7000,7 +7005,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
               channelId: a.Discord_ID,
               invoiceNumber: Math.floor(Math.random() * 100000).toString(),
               monthLabel: currentMonthLabel,
-              totalAmount: Math.round(totalGross),
+              totalAmount: Math.round(finalGross),
+              bonusAmount: bonusAmt,
+              othersAmount: othersAmt,
               tdsAmount,
               netPayable,
               legalName: (a as any)['Full Name'] || a.Name
@@ -7204,6 +7211,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           addToast(`⚠️ Invoice creation failed: ${invErr.message}`, 'error')
         } else {
           try {
+             const othersAmt = parseFloat(String(animRow?.others_amount || '0')) || 0
              const res = await fetch('/api/discord/send-invoice', {
                  method: 'POST',
                  headers: { 'Content-Type': 'application/json' },
@@ -7212,6 +7220,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                      invoiceNumber: invoiceNumber,
                      monthLabel: targetMonth,
                      totalAmount: insertPayload.total_amount,
+                     bonusAmount: bonus,
+                     othersAmount: othersAmt,
                      tdsAmount: insertPayload.tds_amount,
                      netPayable: insertPayload.net_payable,
                      legalName: insertPayload.legal_name
@@ -7272,14 +7282,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   // paidStatus is now just UI state for the current session's "Mark Paid" clicks.
 
   useEffect(() => {
-    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+    Promise.all([
+      apiClient.from('payments').select('*'),
+      apiClient.from('invoices').select('employee_id, month_label, status, updated_at')
+    ]).then(([{ data: pData }, { data: iData }]) => {
       // Sort to get the latest payment details per animator
-      const sorted = ((data as Payment[]) || []).sort((a, b) => {
+      const sorted = ((pData as Payment[]) || []).sort((a, b) => {
         const ta = a.Timestamp ? new Date(a.Timestamp).getTime() : 0
         const tb = b.Timestamp ? new Date(b.Timestamp).getTime() : 0
         return tb - ta
       })
       setPayments(sorted)
+      setInvoices((iData as any[]) || [])
       setLoading(false)
     })
   }, [])
@@ -7607,12 +7621,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const paidRows = animators
     .filter(a => paidEmpIds.has(a.Employee_ID) || paidStatus[a.Employee_ID] === 'Paid')
     .sort((a, b) => {
-      // Sort by latest paid_date descending (most recently paid first)
+      // Sort by latest Timestamp descending (most recently paid first)
       const getLatestPaidDate = (animator: Animator) => {
         const pay = payments
-          .filter(p => p['Employee ID'] === animator.Employee_ID && p.paid_date)
-          .sort((x, y) => new Date(y.paid_date!).getTime() - new Date(x.paid_date!).getTime())[0]
-        return pay?.paid_date ? new Date(pay.paid_date).getTime() : 0
+          .filter(p => p['Employee ID'] === animator.Employee_ID && (p.Timestamp || p.paid_date))
+          .sort((x, y) => new Date(y.Timestamp || y.paid_date!).getTime() - new Date(x.Timestamp || x.paid_date!).getTime())[0]
+        return pay ? new Date(pay.Timestamp || pay.paid_date!).getTime() : 0
       }
       return getLatestPaidDate(b) - getLatestPaidDate(a)
     })
@@ -7685,8 +7699,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                             {(r.animator.Name || '?')[0]}
                           </div>
                           <div>
-                            <p className="font-semibold text-gray-800">{r.animator.Name}</p>
-                            <p className="text-[10px] text-gray-500">{r.animator.Employee_ID}</p>
+                            <p className="font-semibold text-gray-800 flex items-center gap-2">
+                              {r.animator.Name}
+                              {r.animator.Tier && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{r.animator.Tier}</span>}
+                              {(() => {
+                                const inv = invoices.find(i => i.employee_id === r.animator.Employee_ID && i.month_label === selectedMonth)
+                                if (!inv) return null
+                                const s = inv.status
+                                const color = s === 'Acknowledged' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : s === 'Edit Requested' ? 'bg-amber-50 text-amber-600 border-amber-100' : s === 'Draft' ? 'bg-gray-50 text-gray-600 border-gray-100' : 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                                return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${color}`}>{s}</span>
+                              })()}
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">{r.animator.Employee_ID}</p>
                             <label className="flex items-center gap-1 mt-1 cursor-pointer select-none">
                               <input 
                                 type="checkbox" 
@@ -8120,6 +8144,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                 className="font-semibold text-gray-800 text-xs hover:text-indigo-600 hover:underline transition-colors text-left"
                               >
                                 {payInfo?.['Account Holder Name'] || a.Name}
+                                {a.Tier && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{a.Tier}</span>}
                               </button>
                               <p className="text-[10px] text-gray-400">{a.Employee_ID}</p>
                             </div>
