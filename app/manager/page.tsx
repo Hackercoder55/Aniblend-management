@@ -3310,70 +3310,6 @@ function TeamTab({ animators, projects, user, onRefresh }: {
   const [paidModalData, setPaidModalData] = useState<{ animator: Animator } | null>(null)
 
   const [paymentsRaw, setPaymentsRaw] = useState<any[]>([])
-  const [sendingInvoices, setSendingInvoices] = useState(false)
-
-  const handleSendInvoices = async () => {
-    if (!confirm('Are you sure you want to send invoices to all animators for unpaid approved projects?')) return
-    setSendingInvoices(true)
-    let count = 0
-    
-    // We only process animators with a valid Discord_ID
-    for (const a of animators) {
-      if (!a.Discord_ID) continue
-      
-      const unpaidApproved = projects.filter(p => {
-        const animName = (a.Name || '').toLowerCase()
-        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
-        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
-        const isLead = p.Lead && p.Lead.toLowerCase() === animName
-        return (isAnim || isLighting || isLead) && p.Status === 'Approved' && p.Payment_Status !== 'Paid'
-      })
-
-      if (unpaidApproved.length === 0) continue
-
-      let totalGross = 0
-      unpaidApproved.forEach(p => {
-        const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-        const animName = (a.Name || '').toLowerCase()
-        const isLead = p.Lead && p.Lead.toLowerCase() === animName
-        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
-        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
-        
-        if (isLead) totalGross += 1000
-        if (isLighting) totalGross += (sec / 60) * 2000
-        else if (isAnim) totalGross += (sec / 60) * (p.Lighting_Artist ? 3000 : 5000)
-      })
-
-      if (totalGross > 0) {
-        // Find TDS percent from animator or use 0
-        const tdsPct = (a as any).TDS || 0
-        const tdsAmount = Math.round(totalGross * (tdsPct / 100))
-        const netPayable = Math.round(totalGross - tdsAmount)
-        const currentMonthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' })
-        
-        try {
-          await fetch('/api/discord/send-invoice', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              channelId: a.Discord_ID,
-              invoiceNumber: Math.floor(Math.random() * 100000).toString(),
-              monthLabel: currentMonthLabel,
-              totalAmount: Math.round(totalGross),
-              tdsAmount,
-              netPayable,
-              legalName: (a as any)['Full Name'] || a.Name
-            })
-          })
-          count++
-        } catch (e) {
-          console.error('Failed to send invoice for', a.Name, e)
-        }
-      }
-    }
-    setSendingInvoices(false)
-    alert(`Successfully sent ${count} invoices!`)
-  }
 
   useEffect(() => {
     let mounted = true
@@ -6953,6 +6889,70 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [bonusNotes, setBonusNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
 
+  const [sendingInvoices, setSendingInvoices] = useState(false)
+
+  const handleSendInvoices = async () => {
+    if (!confirm('Are you sure you want to send invoices to all animators for unpaid approved projects?')) return
+    setSendingInvoices(true)
+    let count = 0
+    
+    // We only process animators with a valid Discord_ID
+    for (const a of animators) {
+      if (!a.Discord_ID) continue
+      
+      const unpaidApproved = projects.filter(p => {
+        const animName = (a.Name || '').toLowerCase()
+        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+        const isLead = p.Lead && p.Lead.toLowerCase() === animName
+        return (isAnim || isLighting || isLead) && p.Status === 'Approved' && p.Payment_Status !== 'Paid'
+      })
+
+      if (unpaidApproved.length === 0) continue
+
+      let totalGross = 0
+      unpaidApproved.forEach(p => {
+        const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+        const animName = (a.Name || '').toLowerCase()
+        const isLead = p.Lead && p.Lead.toLowerCase() === animName
+        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+        
+        if (isLead) totalGross += 1000
+        if (isLighting) totalGross += (sec / 60) * 2000
+        else if (isAnim) totalGross += (sec / 60) * (p.Lighting_Artist ? 3000 : 5000)
+      })
+
+      if (totalGross > 0) {
+        // Find TDS percent from animator or use 0
+        const tdsPct = (a as any).TDS || 0
+        const tdsAmount = Math.round(totalGross * (tdsPct / 100))
+        const netPayable = Math.round(totalGross - tdsAmount)
+        const currentMonthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' })
+        
+        try {
+          await fetch('/api/discord/send-invoice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channelId: a.Discord_ID,
+              invoiceNumber: Math.floor(Math.random() * 100000).toString(),
+              monthLabel: currentMonthLabel,
+              totalAmount: Math.round(totalGross),
+              tdsAmount,
+              netPayable,
+              legalName: (a as any)['Full Name'] || a.Name
+            })
+          })
+          count++
+        } catch (e) {
+          console.error('Failed to send invoice for', a.Name, e)
+        }
+      }
+    }
+    setSendingInvoices(false)
+    alert(`Successfully sent ${count} invoices!`)
+  }
   // Month filter
   const monthOptions = (() => {
     const opts: string[] = ['All']
