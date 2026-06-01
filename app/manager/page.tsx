@@ -5951,11 +5951,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     const map: Record<string, Project[]> = {}
     for (const p of projects) {
       if (p.Status === 'Approved' && p.Payment_Status !== 'Paid' && !invoicedProjectIds.has(p.Project_ID)) {
-        // Month filter removed so it shows all unpaid projects overall
-        // const d = new Date(p['Date Approved'] || p['Date Assigned'] || '')
-        // const pMonth = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
-        // if (pMonth !== selectedMonth && pMonth !== '') continue
-
         let eid = p.Employee_ID || ''
         if (!eid && p.Animator) {
           const names = p.Animator.split(',').map((s: string) => s.trim().toLowerCase())
@@ -5995,7 +5990,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         const anim = animatorByEid[eid]
         if (!anim) continue
 
-        // Get past sequence safely by looking at existing invoices
         const { data: pastInvs } = await apiClient.from('invoices').select('invoice_number').eq('employee_id', eid)
         let currentSeq = 0
         if (pastInvs && pastInvs.length > 0) {
@@ -6003,15 +5997,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               const str = (i.invoice_number || '').toString().replace(eid, '')
               return parseInt(str || '0', 10)
            }).filter((n: number) => !isNaN(n)).sort((a: number, b: number) => b - a)[0]
-           
-           if (highest !== undefined) {
-             currentSeq = highest
-           }
+           if (highest !== undefined) currentSeq = highest
         }
         const newSeq = currentSeq + 1
         const invoiceNumber = `${eid}${String(newSeq).padStart(2, '0')}`
 
-        // Generate Line Items
         let totalVal = 0
         const lineItems = projs.map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
@@ -6035,7 +6025,6 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           }
         })
 
-        // Fetch TDS and Bonus from payments DB (latest saved values for this animator)
         let tdsPct = 0
         let bonusAmount = 0
         try {
