@@ -6583,8 +6583,29 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           .filter(([eid]) => matchesInvoiceSearch(animatorByEid[eid]?.Name || eid))
         return (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-4">
-            <h3 className="font-bold text-gray-800">📤 Send Invoice Requests</h3>
-            <p className="text-sm text-gray-500">Select animators with approved unpaid projects for <strong>{selectedMonth}</strong>. Bot will send invoices to their workspace threads within 2 minutes.</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-800">📤 Send Invoice Requests</h3>
+                <p className="text-sm text-gray-500 mt-0.5">Select animators with approved unpaid projects for <strong>{selectedMonth}</strong>. Bot will send invoices to their workspace threads within 2 minutes.</p>
+              </div>
+              {notSentEntries.length > 0 && (
+                <button
+                  onClick={() => {
+                    const allEids = new Set(notSentEntries.map(([eid]) => eid))
+                    const allSelected = notSentEntries.every(([eid]) => selectedEids.has(eid))
+                    setSelectedEids(allSelected ? new Set() : allEids)
+                  }}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg border transition-all"
+                  style={{
+                    background: notSentEntries.every(([eid]) => selectedEids.has(eid)) ? '#fee2e2' : '#eff6ff',
+                    color: notSentEntries.every(([eid]) => selectedEids.has(eid)) ? '#dc2626' : '#2563eb',
+                    borderColor: notSentEntries.every(([eid]) => selectedEids.has(eid)) ? '#fca5a5' : '#bfdbfe',
+                  }}
+                >
+                  {notSentEntries.every(([eid]) => selectedEids.has(eid)) ? '☑️ Deselect All' : '☑️ Select All'}
+                </button>
+              )}
+            </div>
             <div className="space-y-2">
               {notSentEntries.length === 0 ? (
                 <p className="text-sm text-gray-400">No animators with approved unpaid projects found for this month (or invoices already sent).</p>
@@ -6621,7 +6642,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
               style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}
             >
-              {sending ? 'Creating...' : `📤 Send to ${selectedEids.size} Animator(s)`}
+              {sending ? 'Sending...' : `📤 Send to ${selectedEids.size} Animator(s)`}
             </button>
           </div>
         )
