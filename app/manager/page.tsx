@@ -7727,6 +7727,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
     )
 
+  const [payoutSubTab, setPayoutSubTab] = useState<'animators' | 'lighting'>('animators')
+
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
@@ -7742,6 +7744,109 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             </button>
           </div>
         </div>
+
+        {/* Sub-tab switcher */}
+        <div className="flex gap-2 mb-4 border-b border-gray-100 pb-3">
+          <button onClick={() => setPayoutSubTab('animators')}
+            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${payoutSubTab === 'animators' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-indigo-600 hover:bg-indigo-50'}`}>
+            🎬 Animators
+          </button>
+          <button onClick={() => setPayoutSubTab('lighting')}
+            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${payoutSubTab === 'lighting' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>
+            💡 Lighting Artists
+          </button>
+        </div>
+
+        {/* Lighting Artists Tab */}
+        {payoutSubTab === 'lighting' && (() => {
+          // Build lighting artists rows: group approved projects by Lighting_Artist
+          const lightingMap: Record<string, { name: string; eid: string; discordId: string; projects: Project[] }> = {}
+          projects.filter(p => p.Lighting_Artist && p.Lighting_Artist.trim() && p.Status === 'Approved' && p.Payment_Status !== 'Paid')
+            .forEach(p => {
+              const laName = (p.Lighting_Artist || '').trim()
+              const laKey = laName.toLowerCase()
+              if (!lightingMap[laKey]) {
+                // Find animator record for this lighting artist
+                const laAnim = animators.find(a => (a.Name || '').toLowerCase() === laKey)
+                lightingMap[laKey] = {
+                  name: laName,
+                  eid: (p as any).Lighting_Employee_ID || laAnim?.Employee_ID || '—',
+                  discordId: (p as any).Lighting_Discord_ID || laAnim?.Discord_ID || '',
+                  projects: []
+                }
+              }
+              lightingMap[laKey].projects.push(p)
+            })
+
+          const lightingRows = Object.values(lightingMap)
+
+          if (lightingRows.length === 0) return (
+            <div className="text-center py-12">
+              <p className="text-3xl mb-2">💡</p>
+              <p className="text-gray-500 font-medium">No Lighting Artists with pending payout</p>
+              <p className="text-xs text-gray-400 mt-1">Use /lighting in a project thread to assign a Lighting Artist</p>
+            </div>
+          )
+
+          return (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="bg-amber-50 border-y border-amber-100 text-amber-700 text-xs uppercase font-semibold">
+                    <th className="px-4 py-3">Lighting Artist</th>
+                    <th className="px-4 py-3">Project ID</th>
+                    <th className="px-4 py-3">Title</th>
+                    <th className="px-4 py-3">Main Animator</th>
+                    <th className="px-4 py-3 text-right">Duration (min)</th>
+                    <th className="px-4 py-3 text-right">Amount (₹2k/min)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lightingRows.map((la, idx) => (
+                    la.projects.map((p, pi) => {
+                      const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                      const mins = sec / 60
+                      const amount = Math.round(mins * 2000)
+                      return (
+                        <tr key={`${la.eid}-${p.Project_ID}`} className={`border-b border-gray-50 hover:bg-amber-50/40 ${pi === 0 && idx > 0 ? 'border-t-2 border-amber-100' : ''}`}>
+                          <td className="px-4 py-3">
+                            {pi === 0 ? (
+                              <div>
+                                <p className="font-bold text-amber-800">💡 {la.name}</p>
+                                <p className="text-[10px] text-gray-400 font-mono">{la.eid}</p>
+                              </div>
+                            ) : <span className="text-gray-300">↳</span>}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{p.Project_ID}</td>
+                          <td className="px-4 py-3 text-gray-700 max-w-[200px] truncate">{p.Project_title || '—'}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{p.Animator || '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono text-gray-700">{mins.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-right font-bold text-amber-700">₹{amount.toLocaleString('en-IN')}</td>
+                        </tr>
+                      )
+                    })
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-amber-50 font-bold">
+                    <td colSpan={5} className="px-4 py-3 text-amber-800">Total Lighting Payout</td>
+                    <td className="px-4 py-3 text-right text-amber-900 text-base">
+                      ₹{lightingRows.reduce((sum, la) => {
+                        return sum + la.projects.reduce((s, p) => {
+                          const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                          return s + Math.round((sec / 60) * 2000)
+                        }, 0)
+                      }, 0).toLocaleString('en-IN')}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )
+        })()}
+
+        {/* Main Animators Tab */}
+        {payoutSubTab === 'animators' && (<>
         <div className="relative mb-4">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -8099,6 +8204,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             )}
           </div>
         </div>
+        </>)}
       </div>
 
       {/* ── Paid History ─────────────────────────────── */}
