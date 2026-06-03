@@ -158,6 +158,7 @@ interface Payment {
   net_paid?: number       // stored on Mark Paid
   bonus?: number          // stored on Mark Paid
   bonus_note?: string
+  others_amount?: number  // stored on Mark Paid
 }
 
 interface Note {
@@ -490,7 +491,7 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
   const activeProjectsList = projects.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status))
   const approvedTodayList = projects.filter(p => p['Date Approved'] === today)
   const workingAnimatorsList = animators.filter(a => (a['Current video'] || 0) > 0)
-  const pendingProjectsList = projects.filter(p => p.Status === 'Pending')
+  const pendingProjectsList = projects.filter(p => p.Status === 'Pending' && p.Employee_ID)
 
   const days: { label: string; assigned: number; approved: number }[] = []
   for (let i = 13; i >= 0; i--) {
@@ -809,9 +810,6 @@ function GroupAssignModal({ projects, animators, onClose, onSuccess }: {
               </div>
             )}
             <div className="px-4 pb-4 mt-2 space-y-2 flex-shrink-0">
-              <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)}
-                placeholder="Lead name…"
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
               {error && <p className="text-xs text-red-500 bg-red-50 p-2 rounded-lg">{error}</p>}
               <button type="submit" disabled={assigning || !selectedProject || selectedAnimators.length === 0}
                 className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-50"
@@ -1015,13 +1013,6 @@ function QuickAssignModal({ projects, animators, onClose, onSuccess }: {
                     </div>
                   )
                 })()}
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-700 block mb-1">Lead Name</label>
-                <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)}
-                  placeholder="Enter lead name"
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
               </div>
 
               {error && <p className="text-xs text-red-500 bg-red-50 p-2 rounded-lg">{error}</p>}
@@ -1850,7 +1841,7 @@ We will notify you here once the payment has been sent. Thank you for your excel
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
-                {['ID', 'Title', 'Link', 'Animator', 'Log Output', 'Assigned Manager', 'Progress', 'Emp Type', 'Warning', 'Date Approved', 'Priority', 'Comment', 'Status', 'Bonus', 'Other', 'Tag', 'Date Assigned', 'Actions'].map(h => (
+                {['ID', 'Title', 'Link', 'Animator', 'Lead', 'Progress', 'Date Approved', 'Priority', 'Comment', 'Status', 'Bonus', 'Other', 'Tag', 'Date Assigned', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -1867,73 +1858,18 @@ We will notify you here once the payment has been sent. Thank you for your excel
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">{p.Animator || '—'}</td>
 
-                  {/* LOG OUTPUT COLUMN */}
-                  <td className="px-4 py-3">
-                    <button onClick={() => setLoggingOutputProject(p)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors whitespace-nowrap">
-                      Log Output
-                    </button>
-                  </td>
-
+                  {/* LEAD COLUMN - shows Lead name from /lead command */}
                   <td className="px-4 py-3 text-xs">
-                    {editingRows.has(p.Project_ID) && !isHead ? (
-                      <select
-                        value={pendingProjectEdits[p.Project_ID]?.assigned_head || ''}
-                        onChange={e => updateEdit(p.Project_ID, 'assigned_head', e.target.value)}
-                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px]"
-                      >
-                        <option value="">None</option>
-                        {leadsList.map(l => <option key={l} value={l}>{l}</option>)}
-                      </select>
+                    {p.Lead ? (
+                      <span className="text-purple-700 font-semibold bg-purple-50 px-2 py-0.5 rounded-full text-[10px]">
+                        🎭 {p.Lead}
+                      </span>
                     ) : (
-                      <span className="text-gray-600">{p.assigned_head || '—'}</span>
+                      <span className="text-gray-400">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    {editingRows.has(p.Project_ID) ? (
-                      <input
-                        type="text"
-                        value={pendingProjectEdits[p.Project_ID]?.progress || ''}
-                        onChange={e => updateEdit(p.Project_ID, 'progress', e.target.value)}
-                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
-                        placeholder="Progress..."
-                      />
-                    ) : (
-                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.progress || ''}>
-                        {p.progress || '—'}
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {editingRows.has(p.Project_ID) ? (
-                      <input
-                        type="text"
-                        value={pendingProjectEdits[p.Project_ID]?.emp_type || ''}
-                        onChange={e => updateEdit(p.Project_ID, 'emp_type', e.target.value)}
-                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
-                        placeholder="Emp Type..."
-                      />
-                    ) : (
-                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.emp_type || ''}>
-                        {p.emp_type || '—'}
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {editingRows.has(p.Project_ID) ? (
-                      <input
-                        type="text"
-                        value={pendingProjectEdits[p.Project_ID]?.warning || ''}
-                        onChange={e => updateEdit(p.Project_ID, 'warning', e.target.value)}
-                        className="px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none bg-white min-w-[100px] w-full"
-                        placeholder="Warning..."
-                      />
-                    ) : (
-                      <p className="text-xs text-gray-500 max-w-[120px] truncate" title={p.warning || ''}>
-                        {p.warning || '—'}
-                      </p>
-                    )}
-                  </td>
+                  {/* PROGRESS */}
+                  <td className="px-4 py-3 text-xs text-gray-500 max-w-[100px] truncate">{p.progress || '—'}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{p['Date Approved'] || '—'}</td>
                   <td className="px-4 py-3">
                     {editingRows.has(p.Project_ID) ? (
@@ -8209,81 +8145,48 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       {/* ── Paid History ─────────────────────────────── */}
       {paidRows.length > 0 && (() => {
+        const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
         const downloadCsv = () => {
-          const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
-          const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Bonus (₹)', 'Net Payment (₹)']
-          const csvRows = paidRows.map(a => {
+          const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Bonus (₹)', 'Others (₹)', 'Net Payment (₹)']
+          const csvRows: string[] = []
+          paidRows.forEach(a => {
             const payInfo = latestPaymentByEmpId[a.Employee_ID]
             const storedTds = payInfo?.tds_percent || 0
             const bonus = payInfo?.bonus || 0
-            
+            const others = payInfo?.others_amount || 0
             const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
-            const gross = net - bonus > 0 ? (net - bonus) / (1 - storedTds / 100) : 0
-            const tdsAmt = gross - (net - bonus)
-            return [
-              escCsv(selectedMonth),
+            const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+            const tdsAmt = gross - (net - bonus - others)
+            const paidMonth = payInfo?.paid_date ? new Date(payInfo.paid_date).toLocaleString('default', { month: 'long', year: 'numeric' }) : selectedMonth
+            csvRows.push([
+escCsv(paidMonth),
               escCsv(payInfo?.['Account Holder Name'] || a.Name),
               escCsv(a.Employee_ID),
               escCsv(payInfo?.['PAN Number'] || ''),
               escCsv(Math.round(gross)),
               escCsv(storedTds),
-              escCsv(Math.round(tdsAmt)),
               escCsv(bonus),
+              escCsv(others),
               escCsv(Math.round(net)),
-            ].join(',')
+            ].join(','))
           })
           const csv = [headers.map(h => escCsv(h)).join(','), ...csvRows].join('\n')
           const blob = new Blob([csv], { type: 'text/csv' })
           const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `payout_${selectedMonth.replace(/ /g, '_')}.csv`
-          a.click()
+          const el = document.createElement('a')
+          el.href = url
+          el.download = `payout_paid_${selectedMonth.replace(/ /g, '_')}.csv`
+          el.click()
           URL.revokeObjectURL(url)
         }
 
         return (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-            {/* Project List Modal */}
-            {paidProjectsModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
-                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
-                  <div className="p-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-                    <div>
-                      <h3 className="font-bold text-gray-800">Paid Projects — {paidProjectsModal.name}</h3>
-                      <p className="text-xs text-gray-400 mt-0.5">{paidProjectsModal.projects.length} project(s) marked as paid</p>
-                    </div>
-                    <button onClick={() => setPaidProjectsModal(null)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                  </div>
-                  <div className="overflow-y-auto flex-1">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-emerald-50 border-b border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
-                          <th className="px-4 py-2 text-left">Project ID</th>
-                          <th className="px-4 py-2 text-left">Title</th>
-                          <th className="px-4 py-2 text-left">Date Approved</th>
-                          <th className="px-4 py-2 text-right">Duration</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {paidProjectsModal.projects.map((p, i) => (
-                          <tr key={p.Project_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
-                            <td className="px-4 py-2 font-mono text-xs text-gray-500">{p.Project_ID}</td>
-                            <td className="px-4 py-2 text-xs text-gray-800 max-w-[200px] truncate">{p.Project_title || '—'}</td>
-                            <td className="px-4 py-2 text-xs text-gray-500">{p['Date Approved'] || '—'}</td>
-                            <td className="px-4 py-2 text-right text-xs font-mono text-indigo-600">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-base font-bold text-gray-800">🟢 Paid — {selectedMonth}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{paidRows.length} animator(s) paid this month</p>
               </div>
-            )}
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-gray-800">🟢 Paid — {selectedMonth}</h2>
               <button onClick={downloadCsv}
                 className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -8292,100 +8195,144 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                 Download CSV
               </button>
             </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-emerald-50 border-y border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
-                    <th className="px-3 py-2 text-left">Animator</th>
-                    <th className="px-3 py-2 text-left">PAN</th>
-                    <th className="px-3 py-2 text-right">Gross (₹)</th>
-                    <th className="px-3 py-2 text-right">TDS / Bonus</th>
-                    <th className="px-3 py-2 text-right">Net Paid (₹)</th>
+                    <th className="px-4 py-3 text-left">Animator</th>
+                    <th className="px-4 py-3 text-right">Gross (₹)</th>
+                    <th className="px-4 py-3 text-right">TDS / Bonus</th>
+                    <th className="px-4 py-3 text-right">Net Paid (₹)</th>
+                    <th className="px-4 py-3 text-center">Projects</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paidRows.map((a, i) => {
+                {paidRows.map((a, i) => {
                     const payInfo = latestPaymentByEmpId[a.Employee_ID]
-                    // Use stored DB values first (persist across refresh), fall back to session paidNets
-                    const storedNet = payInfo?.net_paid ?? null
-                    const storedGross = payInfo?.gross ?? null
                     const storedTds = payInfo?.tds_percent || 0
-                    const storedBonus = payInfo?.bonus || 0
-                    
-                    const net = storedNet !== null ? storedNet : (paidNets[a.Employee_ID] || 0)
-                    const gross = storedGross !== null ? storedGross : ((net - storedBonus > 0) ? (net - storedBonus) / (1 - storedTds / 100) : 0)
-                    const tdsAmt = gross - (net - storedBonus)
+                    const bonus = payInfo?.bonus || 0
+                    const others = (payInfo as any)?.others_amount || 0
+                    const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                    const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+                    const tdsAmt = gross - (net - bonus - others)
+                    const isExpanded = expandedAnimators.has(a.Employee_ID + '_paid')
+                    const animProjects = projects.filter(p =>
+                      (p.Employee_ID === a.Employee_ID ||
+                        (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) &&
+                      p.Payment_Status === 'Paid'
+                    )
                     return (
-                      <tr key={a.Employee_ID} className={`border-b border-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
-                        <td className="px-3 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-                              style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-                              {(a.Name || '?')[0]}
-                            </div>
-                            <div>
-                              {/* Clickable name — opens project list modal */}
+                      <Fragment key={a.Employee_ID}>
+                        <tr className={`border-b border-gray-50 hover:bg-emerald-50/30 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/20'}`}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
                               <button
                                 onClick={() => {
-                                  const animProjects = projects.filter(p =>
-                                    p.Status === 'Closed' && p.Payment_Status === 'Paid' &&
-                                    (p.Employee_ID === a.Employee_ID ||
-                                      (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
-                                  )
-                                  setPaidProjectsModal({ name: payInfo?.['Account Holder Name'] || a.Name, projects: animProjects })
+                                  const key = a.Employee_ID + '_paid'
+                                  setExpandedAnimators(prev => {
+                                    const next = new Set(prev)
+                                    if (next.has(key)) next.delete(key); else next.add(key)
+                                    return next
+                                  })
                                 }}
-                                className="font-semibold text-gray-800 text-xs hover:text-indigo-600 hover:underline transition-colors text-left"
+                                className="text-gray-400 hover:text-emerald-600 transition-colors"
                               >
-                                {payInfo?.['Account Holder Name'] || a.Name}
-                                {a.Tier && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{a.Tier}</span>}
+                                <svg className={`w-4 h-4 transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
                               </button>
-                              <p className="text-[10px] text-gray-400">{a.Employee_ID}</p>
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+                                style={{ background: `hsl(${(a.Name || '').charCodeAt(0) * 37 % 360}, 65%, 55%)` }}>
+                                {(a.Name || '?')[0].toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-gray-800 text-xs">{payInfo?.['Account Holder Name'] || a.Name}</p>
+                                <p className="text-[10px] text-gray-400 font-mono">{a.Employee_ID}</p>
+                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">✓ PAID</span>
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 font-mono text-xs text-gray-600">{payInfo?.['PAN Number'] || <span className="text-gray-300">—</span>}</td>
-                        <td className="px-3 py-3 text-right font-mono text-gray-600 text-xs">₹{Math.round(gross).toLocaleString()}</td>
-                        <td className="px-3 py-3 text-right font-mono text-xs">
-                           <p className="text-red-500">−₹{Math.round(tdsAmt).toLocaleString()} <span className="text-[9px] text-red-300">({storedTds}%)</span></p>
-                           {storedBonus > 0 && <p className="text-amber-500 mt-0.5">+₹{Math.round(storedBonus).toLocaleString()} <span className="text-[9px] text-amber-300">(Bonus)</span></p>}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <span className="font-mono font-bold text-emerald-600">₹{Math.round(net).toLocaleString()}</span>
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-gray-600">₹{Math.round(gross).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono text-xs">
+                            <p className="text-red-500">−₹{Math.round(tdsAmt).toLocaleString()} <span className="text-[9px] text-red-300">({storedTds}%)</span></p>
+                            {bonus > 0 && <p className="text-amber-500 mt-0.5">+₹{Math.round(bonus).toLocaleString()} <span className="text-[9px] text-amber-300">(Bonus)</span></p>}
+                            {others > 0 && <p className="text-blue-500 mt-0.5">+₹{Math.round(others).toLocaleString()} <span className="text-[9px] text-blue-300">(Others)</span></p>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className="font-mono font-bold text-emerald-600 text-sm">₹{Math.round(net).toLocaleString()}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{animProjects.length} project(s)</span>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-emerald-50/30">
+                            <td colSpan={5} className="px-8 py-3">
+                              <div className="rounded-xl border border-emerald-100 overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="bg-emerald-50 text-emerald-700 uppercase font-semibold">
+                                      <th className="px-3 py-2 text-left">Project ID</th>
+                                      <th className="px-3 py-2 text-left">Title</th>
+                                      <th className="px-3 py-2 text-right">Duration</th>
+                                      <th className="px-3 py-2 text-right">Date Approved</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {animProjects.length === 0 ? (
+                                      <tr><td colSpan={4} className="px-3 py-3 text-center text-gray-400">No projects found</td></tr>
+                                    ) : animProjects.map((p, pi) => (
+                                      <tr key={p.Project_ID} className={`border-t border-emerald-50 ${pi % 2 === 0 ? 'bg-white' : 'bg-emerald-50/20'}`}>
+                                        <td className="px-3 py-2 font-mono text-gray-500">{p.Project_ID}</td>
+                                        <td className="px-3 py-2 text-gray-700 max-w-[200px] truncate">{p.Project_title || '—'}</td>
+                                        <td className="px-3 py-2 text-right font-mono text-gray-600">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
+                                        <td className="px-3 py-2 text-right text-gray-500">{p['Date Approved'] || '—'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
                 </tbody>
                 <tfoot>
                   <tr className="bg-emerald-50">
-                    <td colSpan={2} className="px-3 py-2 text-xs font-bold text-emerald-800 uppercase">Total</td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-emerald-800 text-xs">
+                    <td className="px-4 py-3 text-xs font-bold text-emerald-800 uppercase">Total</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-800 text-xs">
                       ₹{Math.round(paidRows.reduce((s, a) => {
                         const payInfo = latestPaymentByEmpId[a.Employee_ID]
                         const storedTds = payInfo?.tds_percent || 0
                         const bonus = payInfo?.bonus || 0
+                        const others = (payInfo as any)?.others_amount || 0
                         const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
-                        const gross = net - bonus > 0 ? (net - bonus) / (1 - storedTds / 100) : 0
+                        const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
                         return s + gross;
                       }, 0)).toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-red-600 text-xs">
+                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600 text-xs">
                       −₹{Math.round(paidRows.reduce((s, a) => {
                         const payInfo = latestPaymentByEmpId[a.Employee_ID]
                         const storedTds = payInfo?.tds_percent || 0
                         const bonus = payInfo?.bonus || 0
+                        const others = (payInfo as any)?.others_amount || 0
                         const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
-                        const gross = net - bonus > 0 ? (net - bonus) / (1 - storedTds / 100) : 0
-                        return s + gross - (net - bonus);
+                        const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+                        return s + gross - (net - bonus - others);
                       }, 0)).toLocaleString()}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-emerald-800">
+                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-800">
                       ₹{Math.round(paidRows.reduce((s, a) => {
                         const payInfo = latestPaymentByEmpId[a.Employee_ID]
                         const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
                         return s + net;
                       }, 0)).toLocaleString()}
                     </td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>
