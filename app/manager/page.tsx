@@ -8166,11 +8166,30 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       {paidRows.length > 0 && (() => {
         const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
 
+        // Helper: convert "04 Jun 2026" or ISO "2026-06-04" → "2026-06"
+        const toMonthKey = (dateStr: string): string => {
+          if (!dateStr) return ''
+          // ISO format: 2026-06-04T... or 2026-06-04
+          if (/^\d{4}-\d{2}/.test(dateStr)) return dateStr.substring(0, 7)
+          // "DD MMM YYYY" format from formatDate()
+          const MONTHS: Record<string, string> = {
+            jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+            jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'
+          }
+          const parts = dateStr.trim().split(/\s+/)
+          if (parts.length >= 3) {
+            const mon = MONTHS[parts[1].toLowerCase().substring(0,3)] || '01'
+            const yr = parts[2].length === 2 ? '20' + parts[2] : parts[2]
+            return `${yr}-${mon}`
+          }
+          return ''
+        }
+
         // Filter paidRows by paidSelectedMonth using payments.paid_date
         const paidMonthStr = paidSelectedMonth // e.g. "2026-06"
         const paymentsByEmpForMonth: Record<string, Payment> = {}
         payments
-          .filter(p => p.Payment_Status === 'Paid' && (p.paid_date || '').startsWith(paidMonthStr))
+          .filter(p => p.Payment_Status === 'Paid' && toMonthKey(p.paid_date || p.Timestamp || '') === paidMonthStr)
           .sort((a, b) => new Date(b.Timestamp || b.paid_date || '').getTime() - new Date(a.Timestamp || a.paid_date || '').getTime())
           .forEach(p => {
             if (p['Employee ID'] && !paymentsByEmpForMonth[p['Employee ID']]) {
@@ -8180,11 +8199,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
         const filteredPaidRows = paidRows.filter(a => paymentsByEmpForMonth[a.Employee_ID])
 
-        // Generate available months from payments
+        // Generate available months from payments (using toMonthKey)
         const availableMonths = [...new Set(
           payments
-            .filter(p => p.Payment_Status === 'Paid' && p.paid_date)
-            .map(p => (p.paid_date || '').substring(0, 7))
+            .filter(p => p.Payment_Status === 'Paid' && (p.paid_date || p.Timestamp))
+            .map(p => toMonthKey(p.paid_date || p.Timestamp || ''))
+            .filter(Boolean)
         )].sort((a, b) => b.localeCompare(a)) // newest first
 
         const downloadCsv = () => {
