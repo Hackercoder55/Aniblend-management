@@ -2485,6 +2485,39 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
   const [form, setForm] = useState({ Name: '', Employee_ID: '', Role: 'Animator', Discord_ID: '', Discord_Username: '', phoneNumber: '', emailAddress: '' })
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
+  const [nextId, setNextId] = useState<string>('')
+  const [vacantIds, setVacantIds] = useState<string[]>([])
+  const [idLoading, setIdLoading] = useState(true)
+
+  useEffect(() => {
+    // Fetch all existing numeric Employee IDs to compute next and vacant
+    apiClient.from('animators').select('Employee_ID').then(({ data }) => {
+      if (!data) { setIdLoading(false); return }
+      // Only pure numeric IDs (not 1147A etc)
+      const numericIds = data
+        .map((a: any) => a.Employee_ID)
+        .filter((id: string) => id && /^\d+$/.test(String(id)))
+        .map((id: string) => parseInt(String(id), 10))
+        .sort((a: number, b: number) => a - b)
+
+      if (numericIds.length === 0) { setNextId('1001'); setIdLoading(false); return }
+
+      // Next ID = max + 1
+      const maxId = numericIds[numericIds.length - 1]
+      const next = String(maxId + 1)
+      setNextId(next)
+      setForm(prev => ({ ...prev, Employee_ID: next }))
+
+      // Vacant IDs = gaps in the sequence starting from min
+      const minId = numericIds[0]
+      const vacant: string[] = []
+      for (let i = minId; i <= maxId; i++) {
+        if (!numericIds.includes(i)) vacant.push(String(i))
+      }
+      setVacantIds(vacant)
+      setIdLoading(false)
+    })
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setMsg('')
@@ -2501,43 +2534,78 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-bold text-gray-800">Add New Animator</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {[
-            { key: 'Name', label: 'Name', required: true },
-            { key: 'Employee_ID', label: 'Employee ID', required: true },
-            { key: 'Discord_ID', label: 'Discord ID', required: false },
-            { key: 'Discord_Username', label: 'Discord Username', required: false },
-            { key: 'phoneNumber', label: 'Phone Number', required: false },
-            { key: 'emailAddress', label: 'E-mail', required: false },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}{f.required && <span className="text-red-400 ml-1">*</span>}</label>
-              <input type="text" value={form[f.key as keyof typeof form]} required={f.required}
-                onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
-            </div>
-          ))}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-            <select value={form.Role} onChange={e => setForm(prev => ({ ...prev, Role: e.target.value }))}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800">
-              <option>Animator</option>
-              <option>Lead Animator</option>
-              <option>Senior Animator</option>
-            </select>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex gap-0 overflow-hidden">
+        {/* Left: Form */}
+        <div className="flex-1">
+          <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="font-bold text-gray-800">Add New Animator</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
           </div>
-          {msg && <p className={`text-sm ${msg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{msg}</p>}
-          <button type="submit" disabled={loading}
-            className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
-            {loading ? 'Adding...' : 'Add Animator'}
-          </button>
-        </form>
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            {[
+              { key: 'Name', label: 'Name', required: true },
+              { key: 'Discord_ID', label: 'Discord ID', required: false },
+              { key: 'Discord_Username', label: 'Discord Username', required: false },
+              { key: 'phoneNumber', label: 'Phone Number', required: false },
+              { key: 'emailAddress', label: 'E-mail', required: false },
+            ].map(f => (
+              <div key={f.key}>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}{f.required && <span className="text-red-400 ml-1">*</span>}</label>
+                <input type="text" value={form[f.key as keyof typeof form]} required={f.required}
+                  onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+              </div>
+            ))}
+            {/* Employee ID — with auto suggestion */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Employee ID <span className="text-red-400">*</span>
+                {!idLoading && <span className="ml-2 text-[10px] text-indigo-500 font-semibold bg-indigo-50 px-2 py-0.5 rounded-full">Next: {nextId}</span>}
+              </label>
+              <input type="text" value={form.Employee_ID} required
+                onChange={e => setForm(prev => ({ ...prev, Employee_ID: e.target.value }))}
+                className="w-full px-3 py-2.5 border border-indigo-300 rounded-lg text-sm focus:outline-none text-gray-800 font-mono font-bold" />
+              <p className="text-[10px] text-gray-400 mt-1">Auto-filled with next available ID. You can change it (e.g., add "A" suffix for special rates)</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+              <select value={form.Role} onChange={e => setForm(prev => ({ ...prev, Role: e.target.value }))}
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800">
+                <option>Animator</option>
+                <option>Lead Animator</option>
+                <option>Senior Animator</option>
+              </select>
+            </div>
+            {msg && <p className={`text-sm ${msg.startsWith('✅') ? 'text-green-600' : 'text-red-500'}`}>{msg}</p>}
+            <button type="submit" disabled={loading}
+              className="w-full py-2.5 rounded-xl text-white font-semibold text-sm disabled:opacity-60"
+              style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+              {loading ? 'Adding...' : 'Add Animator'}
+            </button>
+          </form>
+        </div>
+        {/* Right: Vacant IDs Panel */}
+        <div className="w-48 bg-gray-50 border-l border-gray-100 p-4">
+          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">Vacant IDs</p>
+          {idLoading ? (
+            <p className="text-xs text-gray-400">Loading...</p>
+          ) : vacantIds.length === 0 ? (
+            <p className="text-xs text-gray-400">No gaps in IDs — all sequential!</p>
+          ) : (
+            <div className="space-y-1 max-h-80 overflow-y-auto">
+              {vacantIds.slice(0, 30).map(vid => (
+                <button key={vid} onClick={() => setForm(prev => ({ ...prev, Employee_ID: vid }))}
+                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-mono text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors">
+                  {vid}
+                </button>
+              ))}
+              {vacantIds.length > 30 && <p className="text-[10px] text-gray-400 text-center">+{vacantIds.length - 30} more</p>}
+            </div>
+          )}
+          <div className="mt-4 pt-3 border-t border-gray-200">
+            <p className="text-[10px] text-gray-400">Click any vacant ID to use it</p>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -3033,6 +3101,7 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
     projects: { proj: Project; amount: number; dateStr: string }[];
     totalGrossFromProjects: number;
     totalBonus: number;
+    totalOthers: number;
     totalNetTable: number;
     bonusNote: string;
     basePay: number;
@@ -3053,7 +3122,7 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
       } catch {}
     }
 
-    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '', basePay: 0, lightingPay: 0, leadPay: 0 }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalOthers: 0, totalNetTable: 0, bonusNote: '', basePay: 0, lightingPay: 0, leadPay: 0 }
 
     // 2. Calculate Amount
     let projEarn = 0
@@ -3093,10 +3162,11 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
       monthKey = getNormalizedMonthStr(pay.paid_date || pay.Timestamp)
     }
     
-    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalNetTable: 0, bonusNote: '', basePay: 0, lightingPay: 0, leadPay: 0 }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { projects: [], totalGrossFromProjects: 0, totalBonus: 0, totalOthers: 0, totalNetTable: 0, bonusNote: '', basePay: 0, lightingPay: 0, leadPay: 0 }
     
     // Use the maximum bonus or net found for this month (avoiding duplicates if any)
     byMonth[monthKey].totalBonus += Number(pay.bonus) || 0
+    byMonth[monthKey].totalOthers += Number(pay.others_amount) || 0
     byMonth[monthKey].totalNetTable = Math.max(byMonth[monthKey].totalNetTable, Number(pay.net_paid) || 0)
     if (pay.bonus_note) byMonth[monthKey].bonusNote = pay.bonus_note
   })
@@ -3229,6 +3299,12 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
                       <div className="border-l border-indigo-200 pl-3">
                         <p className="text-[10px] font-bold text-indigo-500 uppercase">Bonus</p>
                         <p className="text-xs font-black text-indigo-700">{grp.totalBonus >= 0 ? '+' : ''}₹{Math.round(grp.totalBonus).toLocaleString('en-IN')}</p>
+                      </div>
+                    )}
+                    {(grp as any).totalOthers !== 0 && (
+                      <div className="border-l border-indigo-200 pl-3">
+                        <p className="text-[10px] font-bold text-orange-500 uppercase">Others</p>
+                        <p className="text-xs font-black text-orange-700">{(grp as any).totalOthers >= 0 ? '+' : ''}₹{Math.round((grp as any).totalOthers).toLocaleString('en-IN')}</p>
                       </div>
                     )}
                     <div className="border-l border-indigo-200 pl-3">
@@ -5812,12 +5888,9 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; l
   { id: 'bank', label: 'Projects', icon: '🗂️' },
   { id: 'team', label: 'Animators', icon: '👥' },
   { id: 'create', label: 'Create Project', icon: '➕', managerOnly: true },
-  { id: 'submissions', label: 'Form Submissions', icon: '📋' },
   { id: 'analytics', label: 'Analytics', icon: '📈' },
-  { id: 'payments', label: 'Payments', icon: '💳', managerOnly: true },
   { id: 'payouts', label: 'Payout Calculator', icon: '🧭', managerOnly: true },
   { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
-  { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
   { id: 'users', label: 'User Management', icon: '🔐', managerOnly: true },
 ]
@@ -6017,7 +6090,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
           const minsStr = (finalSec / 60).toFixed(2)
-          const amt = Math.round(parseFloat(minsStr) * 5000)
+          const amt = Math.round(parseFloat(minsStr) * (String(eid).includes('A') ? 3000 : 5000))
           totalVal += amt
           return {
             project_id: p.Project_ID,
@@ -6042,9 +6115,15 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             bonusAmount = Number(payData[0].bonus) || 0
           }
         } catch (e) { console.error("Could not fetch TDS/Bonus", e) }
+        let othersAmount = 0
+        try {
+          const { data: animData } = await apiClient.from('animators').select('others_amount').eq('Employee_ID', eid)
+          if (animData && animData[0]) othersAmount = Number(animData[0].others_amount) || 0
+        } catch (e) { console.error("Could not fetch others_amount", e) }
+
 
         const grossTotal = totalVal
-        const newTotalVal = grossTotal + Number(bonusAmount || 0)
+        const newTotalVal = grossTotal + bonusAmount + othersAmount
         const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
         const finalNet = Math.round(newTotalVal - tdsAmt)
 
@@ -6068,6 +6147,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           invoice_date: String(invoiceDate || '').trim(),
           line_items: lineItems || [],
           total_amount: Number(grossTotal || 0),
+          bonus_amount: Number(bonusAmount || 0),
+          others_amount: Number(othersAmount || 0),
           tds_percent: Number(tdsPct || 0),
           tds_amount: Number(tdsAmt || 0),
           net_payable: Number(finalNet || 0),
@@ -7079,18 +7160,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         return
       }
 
-      // 1a. Approved projects → Status=Closed + Payment_Status=Paid
+      // 1a. Approved projects → Status=Closed + Payment_Status=Paid + paid_at=now
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update(notify ? { Payment_Status: 'Paid', Status: 'Closed' } : { Payment_Status: 'Paid', Status: 'Closed', Thread_Archived: true, paid_at: new Date().toISOString() })
+          .update({ Payment_Status: 'Paid', Status: 'Closed', paid_at: new Date().toISOString(), client_paid_date: formatDate(), Thread_Archived: true })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
 
-      // 1b. Ongoing/advance projects → only Payment_Status=Paid, Status stays unchanged
+      // 1b. Ongoing/advance projects → only Payment_Status=Paid, Status stays unchanged, paid_at=now
       if (ongoingProjects.length > 0) {
         const { error: e2 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid' })
+          .update({ Payment_Status: 'Paid', paid_at: new Date().toISOString(), client_paid_date: formatDate() })
           .in('Project_ID', ongoingProjects.map(p => p.Project_ID).filter(Boolean))
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
@@ -7105,6 +7186,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         tds_percent: tds,
         net_paid: totalPaid,
         bonus: bonus > 0 ? bonus : 0,
+        others_amount: Math.round(parseFloat(String(animators.find(a => a.Employee_ID === eid)?.others_amount || '0')) || 0),
         paid_date: formatDate(),
         Timestamp: new Date().toISOString(),
         'Project ID': `Month: ${targetMonth}`
@@ -8212,74 +8294,131 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 // ─── DuplicatesTab ───────────────────────────────────────────────────────────
 
 function DuplicatesTab({ projects }: { projects: Project[] }) {
-  const activeProjects = projects.filter(p => ['Pending', 'Ongoing', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA'].includes(p.Status));
-  // Group by ProjectId
-  const grouped = new Map<string, Project[]>();
+  const activeStatuses = ['Pending', 'Ongoing', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA'];
+  const activeProjects = projects.filter(p => activeStatuses.includes(p.Status));
+
+  // Group by Project_ID (same DB record duplicated)
+  const groupedById = new Map<string, Project[]>();
   for (const p of activeProjects) {
     if (!p.Project_ID) continue;
     const pid = p.Project_ID.trim();
-    if (!grouped.has(pid)) grouped.set(pid, []);
-    grouped.get(pid)!.push(p);
+    if (!groupedById.has(pid)) groupedById.set(pid, []);
+    groupedById.get(pid)!.push(p);
   }
 
-  const duplicates: { projectId: string; rows: Project[] }[] = [];
-
-  for (const [pid, rows] of grouped.entries()) {
+  const duplicatesById: { projectId: string; rows: Project[]; reason: string }[] = [];
+  for (const [pid, rows] of groupedById.entries()) {
     if (rows.length > 1) {
       const threadIds = new Set(rows.map(r => r.Thread_ID ? r.Thread_ID.trim() : null));
       const dates = new Set(rows.map(r => r['Date Assigned'] ? r['Date Assigned'].trim() : null));
-      
       if (threadIds.size > 1 || (threadIds.size === 1 && threadIds.has(null)) || dates.size > 1) {
-        duplicates.push({ projectId: pid, rows });
+        duplicatesById.push({ projectId: pid, rows, reason: 'Same Project ID, different threads/dates' });
       }
     }
   }
 
+  // Group by normalized title (same title, different Project_IDs)
+  const groupedByTitle = new Map<string, Project[]>();
+  for (const p of activeProjects) {
+    const title = (p.Project_title || '').trim().toLowerCase();
+    if (!title || title.length < 5) continue; // Skip empty/very short titles
+    if (!groupedByTitle.has(title)) groupedByTitle.set(title, []);
+    groupedByTitle.get(title)!.push(p);
+  }
+
+  const duplicatesByTitle: { title: string; rows: Project[]; reason: string }[] = [];
+  for (const [title, rows] of groupedByTitle.entries()) {
+    // Only flag if different Project_IDs
+    const uniquePids = new Set(rows.map(r => r.Project_ID));
+    if (uniquePids.size > 1) {
+      duplicatesByTitle.push({ title, rows, reason: 'Same title, different Project IDs' });
+    }
+  }
+
+  const totalDuplicates = duplicatesById.length + duplicatesByTitle.length;
+
+  const renderProjectRows = (rows: Project[]) => (
+    <table className="w-full text-sm text-left">
+      <thead>
+        <tr className="text-xs text-gray-500 border-b border-gray-200">
+          <th className="pb-2">Project ID</th>
+          <th className="pb-2">Animator</th>
+          <th className="pb-2 text-center">Status</th>
+          <th className="pb-2 text-center">Date Assigned</th>
+          <th className="pb-2 text-right">Discord Thread</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={i} className="border-b border-gray-50 last:border-0">
+            <td className="py-2.5 font-mono text-xs text-gray-600">{row.Project_ID}</td>
+            <td className="py-2.5 font-medium text-gray-800">{row.Animator || 'Unassigned'} <span className="text-[10px] text-gray-400 font-mono ml-1">({row.Employee_ID})</span></td>
+            <td className="py-2.5 text-center">
+              <span className="px-2 py-1 text-[10px] font-semibold bg-gray-100 text-gray-600 rounded-full">{row.Status}</span>
+            </td>
+            <td className="py-2.5 text-center text-xs text-gray-500">{row['Date Assigned'] || '—'}</td>
+            <td className="py-2.5 text-right font-mono text-xs text-gray-500">{row.Thread_ID || <span className="text-red-400 italic">null</span>}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 md:p-8">
-        <h2 className="text-xl font-bold text-gray-800 mb-2">👯 Duplicate Working Threads</h2>
-        <p className="text-sm text-gray-500 mb-6">These active projects have multiple assignment rows that don't share the same Discord Thread (which could indicate accidental duplicate assignments instead of a valid Group Workspace).</p>
-        
-        {duplicates.length === 0 ? (
+        <div className="flex items-center gap-3 mb-2">
+          <h2 className="text-xl font-bold text-gray-800">👯 Duplicate Projects</h2>
+          {totalDuplicates > 0 && <span className="text-xs font-bold text-red-600 bg-red-100 px-2.5 py-1 rounded-full">{totalDuplicates} issues</span>}
+        </div>
+        <p className="text-sm text-gray-500 mb-6">Detects projects with the same Discord Thread ID discrepancy, or active projects with the same title under different Project IDs.</p>
+
+        {totalDuplicates === 0 ? (
           <div className="text-center py-10">
-            <p className="text-lg text-emerald-600 font-semibold mb-1">✅ No duplicate threads found!</p>
+            <p className="text-lg text-emerald-600 font-semibold mb-1">✅ No duplicates found!</p>
             <p className="text-sm text-gray-400">All assignments look clean.</p>
           </div>
         ) : (
-          <div className="space-y-6">
-            {duplicates.map(dup => (
-              <div key={dup.projectId} className="border border-red-100 rounded-xl overflow-hidden bg-red-50/20">
-                <div className="bg-red-50 px-4 py-3 border-b border-red-100 flex items-center justify-between">
-                  <h3 className="font-bold text-red-800">{dup.projectId} <span className="text-red-500 font-normal ml-2">({dup.rows[0].Project_title || 'No Title'})</span></h3>
-                  <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-1 rounded-full">{dup.rows.length} records</span>
-                </div>
-                <div className="p-4 overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead>
-                      <tr className="text-xs text-gray-500 border-b border-gray-200">
-                        <th className="pb-2">Animator</th>
-                        <th className="pb-2 text-center">Status</th>
-                        <th className="pb-2 text-center">Date Assigned</th>
-                        <th className="pb-2 text-right">Discord Thread ID</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dup.rows.map((row, i) => (
-                        <tr key={i} className="border-b border-gray-50 last:border-0">
-                          <td className="py-2.5 font-medium text-gray-800">{row.Animator || 'Unassigned'} <span className="text-[10px] text-gray-400 font-mono ml-1">({row.Employee_ID})</span></td>
-                          <td className="py-2.5 text-center">
-                            <span className="px-2 py-1 text-[10px] font-semibold bg-gray-100 text-gray-600 rounded-full">{row.Status}</span>
-                          </td>
-                          <td className="py-2.5 text-center text-xs text-gray-500">{row['Date Assigned'] || '—'}</td>
-                          <td className="py-2.5 text-right font-mono text-xs text-gray-500">{row.Thread_ID || <span className="text-red-400 italic">null</span>}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+          <div className="space-y-8">
+            {/* Section 1: Same Project ID duplicates */}
+            {duplicatesById.length > 0 && (
+              <div>
+                <h3 className="text-sm font-bold text-orange-700 bg-orange-50 px-3 py-1.5 rounded-lg mb-4 inline-block">
+                  🔁 Same Project ID — Different Threads ({duplicatesById.length})
+                </h3>
+                <div className="space-y-4">
+                  {duplicatesById.map(dup => (
+                    <div key={dup.projectId} className="border border-red-100 rounded-xl overflow-hidden bg-red-50/20">
+                      <div className="bg-red-50 px-4 py-3 border-b border-red-100 flex items-center justify-between">
+                        <h3 className="font-bold text-red-800">{dup.projectId} <span className="text-red-500 font-normal ml-2">({dup.rows[0].Project_title || 'No Title'})</span></h3>
+                        <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-1 rounded-full">{dup.rows.length} records</span>
+                      </div>
+                      <div className="p-4 overflow-x-auto">{renderProjectRows(dup.rows)}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
+            )}
+
+            {/* Section 2: Same Title duplicates */}
+            {duplicatesByTitle.length > 0 && (
+              <div>
+                <h3 className="text-sm font-bold text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg mb-4 inline-block">
+                  📋 Same Title — Different Project IDs ({duplicatesByTitle.length})
+                </h3>
+                <div className="space-y-4">
+                  {duplicatesByTitle.map((dup, idx) => (
+                    <div key={idx} className="border border-purple-100 rounded-xl overflow-hidden bg-purple-50/20">
+                      <div className="bg-purple-50 px-4 py-3 border-b border-purple-100 flex items-center justify-between">
+                        <h3 className="font-bold text-purple-800 text-sm">{dup.rows[0].Project_title}</h3>
+                        <span className="text-xs font-bold text-purple-600 bg-purple-100 px-2 py-1 rounded-full">{dup.rows.length} records</span>
+                      </div>
+                      <div className="p-4 overflow-x-auto">{renderProjectRows(dup.rows)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -9264,4 +9403,5 @@ export default function ManagerDashboard() {
     </div>
   )
 }
+
 
