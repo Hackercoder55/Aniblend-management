@@ -6971,6 +6971,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [paidStatus, setPaidStatus] = useState<Record<string, 'Pending' | 'Paid'>>({})
   const [paidNets, setPaidNets] = useState<Record<string, number>>({})
   const [payingId, setPayingId] = useState<string | null>(null)
+  const [paidSelectedMonth, setPaidSelectedMonth] = useState<string>(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
   
   // Per-animator state for Payout calculation (saved to DB instead of global)
   const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({}) 
@@ -8154,25 +8158,47 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       {/* ── Paid History ─────────────────────────────── */}
       {paidRows.length > 0 && (() => {
         const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
+
+        // Filter paidRows by paidSelectedMonth using payments.paid_date
+        const paidMonthStr = paidSelectedMonth // e.g. "2026-06"
+        const paymentsByEmpForMonth: Record<string, Payment> = {}
+        payments
+          .filter(p => p.Payment_Status === 'Paid' && (p.paid_date || '').startsWith(paidMonthStr))
+          .sort((a, b) => new Date(b.Timestamp || b.paid_date || '').getTime() - new Date(a.Timestamp || a.paid_date || '').getTime())
+          .forEach(p => {
+            if (p['Employee ID'] && !paymentsByEmpForMonth[p['Employee ID']]) {
+              paymentsByEmpForMonth[p['Employee ID']] = p
+            }
+          })
+
+        const filteredPaidRows = paidRows.filter(a => paymentsByEmpForMonth[a.Employee_ID])
+
+        // Generate available months from payments
+        const availableMonths = [...new Set(
+          payments
+            .filter(p => p.Payment_Status === 'Paid' && p.paid_date)
+            .map(p => (p.paid_date || '').substring(0, 7))
+        )].sort((a, b) => b.localeCompare(a)) // newest first
+
         const downloadCsv = () => {
           const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Bonus (₹)', 'Others (₹)', 'Net Payment (₹)']
           const csvRows: string[] = []
-          paidRows.forEach(a => {
-            const payInfo = latestPaymentByEmpId[a.Employee_ID]
+          filteredPaidRows.forEach(a => {
+            const payInfo = paymentsByEmpForMonth[a.Employee_ID] || latestPaymentByEmpId[a.Employee_ID]
             const storedTds = payInfo?.tds_percent || 0
             const bonus = payInfo?.bonus || 0
             const others = payInfo?.others_amount || 0
-            const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+            const net = payInfo?.net_paid || paidNets[a.Employee_ID] || 0
             const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
             const tdsAmt = gross - (net - bonus - others)
-            const paidMonth = payInfo?.paid_date ? new Date(payInfo.paid_date).toLocaleString('default', { month: 'long', year: 'numeric' }) : selectedMonth
             csvRows.push([
-escCsv(paidMonth),
+              escCsv(paidMonthStr),
               escCsv(payInfo?.['Account Holder Name'] || a.Name),
               escCsv(a.Employee_ID),
               escCsv(payInfo?.['PAN Number'] || ''),
               escCsv(Math.round(gross)),
               escCsv(storedTds),
+              escCsv(Math.round(tdsAmt)),
               escCsv(bonus),
               escCsv(others),
               escCsv(Math.round(net)),
@@ -8183,25 +8209,45 @@ escCsv(paidMonth),
           const url = URL.createObjectURL(blob)
           const el = document.createElement('a')
           el.href = url
-          el.download = `payout_paid_${selectedMonth.replace(/ /g, '_')}.csv`
+          el.download = `payout_paid_${paidMonthStr}.csv`
           el.click()
           URL.revokeObjectURL(url)
         }
 
+        const displayMonth = (() => {
+          const [y, m] = paidMonthStr.split('-').map(Number)
+          return new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+        })()
+
         return (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-            <div className="flex items-center justify-between mb-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
               <div>
-                <h2 className="text-base font-bold text-gray-800">🟢 Paid — {selectedMonth}</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{paidRows.length} animator(s) paid this month</p>
+                <h2 className="text-base font-bold text-gray-800">🟢 Paid — {displayMonth}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{filteredPaidRows.length} animator(s) paid this month</p>
               </div>
-              <button onClick={downloadCsv}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download CSV
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Month toggle */}
+                <select
+                  value={paidSelectedMonth}
+                  onChange={e => setPaidSelectedMonth(e.target.value)}
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                >
+                  {availableMonths.length === 0 && <option value={paidMonthStr}>{displayMonth}</option>}
+                  {availableMonths.map(m => {
+                    const [y, mo] = m.split('-').map(Number)
+                    const label = new Date(y, mo - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+                    return <option key={m} value={m}>{label}</option>
+                  })}
+                </select>
+                <button onClick={downloadCsv}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download CSV
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -8216,20 +8262,23 @@ escCsv(paidMonth),
                   </tr>
                 </thead>
                 <tbody>
-                {paidRows.map((a, i) => {
-                    const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                {filteredPaidRows.map((a, i) => {
+                    const payInfo = paymentsByEmpForMonth[a.Employee_ID] || latestPaymentByEmpId[a.Employee_ID]
                     const storedTds = payInfo?.tds_percent || 0
                     const bonus = payInfo?.bonus || 0
-                    const others = (payInfo as any)?.others_amount || 0
-                    const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                    const others = payInfo?.others_amount || 0
+                    const net = payInfo?.net_paid || paidNets[a.Employee_ID] || 0
                     const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
                     const tdsAmt = gross - (net - bonus - others)
                     const isExpanded = expandedAnimators.has(a.Employee_ID + '_paid')
-                    const animProjects = projects.filter(p =>
-                      (p.Employee_ID === a.Employee_ID ||
-                        (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) &&
-                      p.Payment_Status === 'Paid'
-                    )
+                    // Filter projects by paid_at matching paidSelectedMonth
+                    const animProjects = projects.filter(p => {
+                      const matchesAnimator = p.Employee_ID === a.Employee_ID ||
+                        (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())
+                      const paidAt = (p as any).paid_at || (p as any).client_paid_date || ''
+                      const matchesMonth = paidAt.startsWith(paidMonthStr) || paidAt.startsWith(paidMonthStr.replace('-', '/'))
+                      return p.Payment_Status === 'Paid' && matchesAnimator && matchesMonth
+                    })
                     return (
                       <Fragment key={a.Employee_ID}>
                         <tr className={`border-b border-gray-50 hover:bg-emerald-50/30 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/20'}`}>
