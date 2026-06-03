@@ -2491,7 +2491,7 @@ function AddAnimatorModal({ onClose, onRefresh }: { onClose: () => void; onRefre
 
   useEffect(() => {
     // Fetch all existing numeric Employee IDs to compute next and vacant
-    apiClient.from('animators').select('Employee_ID').then(({ data }) => {
+    apiClient.from('animators').select('Employee_ID').then(({ data }: { data: any[] | null }) => {
       if (!data) { setIdLoading(false); return }
       // Only pure numeric IDs (not 1147A etc)
       const numericIds = data
