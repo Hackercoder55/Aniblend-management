@@ -1261,12 +1261,6 @@ function AssignTab({ projects, animators, onRefresh }: {
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Lead Name <span className="text-red-400">*</span></label>
-                  <input type="text" value={leadName} onChange={e => setLeadName(e.target.value)} required
-                    placeholder="Enter lead name"
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 text-gray-800" />
-                </div>
 
                 {/* Thread conflict */}
                 {threadConflict && (
@@ -3858,7 +3852,6 @@ function CreateProjectTab({ onRefresh, projects = [] }: { onRefresh: () => void;
             {[
               { key: 'Project_title', label: 'Project Title', placeholder: 'Enter project title', required: true },
               { key: 'Project_link', label: 'Project Link', placeholder: 'https://', required: false },
-              { key: 'Lead', label: 'Lead Name', placeholder: 'Enter lead name', required: true },
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}{f.required && <span className="text-red-400 ml-1">*</span>}</label>
@@ -5896,6 +5889,7 @@ interface Invoice {
   tds_percent: number
   tds_amount: number
   bonus_amount?: number
+  others_amount?: number
   net_payable: number
   status: string // Draft | Awaiting Details | Sent | Edit Requested | Acknowledged | Paid | Downloaded
   sent_at: string
@@ -6026,7 +6020,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
           const minsStr = (finalSec / 60).toFixed(2)
-          const amt = Math.round(parseFloat(minsStr) * (String(eid).includes('A') ? 3000 : 5000))
+          const perMin = p.Lighting_Artist ? 3000 : 5000
+          const amt = Math.round(parseFloat(minsStr) * perMin)
           totalVal += amt
           return {
             project_id: p.Project_ID,
@@ -6141,7 +6136,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         })
       const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
       const minsStr = (finalSec / 60).toFixed(2)
-      const amt = Math.round(parseFloat(minsStr) * 5000)
+      const perMin = p.Lighting_Artist ? 3000 : 5000
+      const amt = Math.round(parseFloat(minsStr) * perMin)
       totalVal += amt
 
       return {
@@ -6168,7 +6164,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         bonusAmount = Number(payData[0].bonus) || 0
       }
     } catch (e) { console.error("Could not fetch TDS/Bonus for preview", e) }
-    const newTotalVal = totalVal + bonusAmount
+    let othersAmount = 0
+    try {
+      const { data: animData } = await apiClient.from('animators').select('others_amount').eq('Employee_ID', eid)
+      if (animData && animData[0]) othersAmount = Number(animData[0].others_amount) || 0
+    } catch (e) { console.error('Could not fetch others_amount for preview', e) }
+    const newTotalVal = totalVal + bonusAmount + othersAmount
     const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
     const netPay = Math.round(newTotalVal - tdsAmt)
     const now = new Date()
@@ -6187,6 +6188,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       tds_percent: tdsPct,
       tds_amount: tdsAmt,
       bonus_amount: bonusAmount,
+      others_amount: othersAmount,
       net_payable: netPay,
       status: 'Preview',
       thread_id: '',
@@ -6359,6 +6361,12 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
                     <span style={{ color: '#4b5563' }}>Bonus:</span>
                     <span style={{ fontWeight: 700, color: '#059669' }}>+₹{Math.round(printInvoice.bonus_amount).toLocaleString()}</span>
+                  </div>
+                ) : null}
+                {(printInvoice as any).others_amount && (printInvoice as any).others_amount > 0 ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+                    <span style={{ color: '#4b5563' }}>Others:</span>
+                    <span style={{ fontWeight: 700, color: '#0ea5e9' }}>+₹{Math.round((printInvoice as any).others_amount).toLocaleString()}</span>
                   </div>
                 ) : null}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
