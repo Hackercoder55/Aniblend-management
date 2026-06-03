@@ -491,7 +491,7 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
   const activeProjectsList = projects.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status))
   const approvedTodayList = projects.filter(p => p['Date Approved'] === today)
   const workingAnimatorsList = animators.filter(a => (a['Current video'] || 0) > 0)
-  const pendingProjectsList = projects.filter(p => p.Status === 'Pending' && p.Employee_ID)
+  const pendingProjectsList = projects.filter(p => p.Status === 'Pending')
 
   const days: { label: string; assigned: number; approved: number }[] = []
   for (let i = 13; i >= 0; i--) {
