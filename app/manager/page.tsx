@@ -6020,7 +6020,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
           const minsStr = (finalSec / 60).toFixed(2)
-          const perMin = p.Lighting_Artist ? 3000 : 5000
+          const isA = String(eid).toUpperCase().includes('A')
+          const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
           const amt = Math.round(parseFloat(minsStr) * perMin)
           totalVal += amt
           return {
@@ -6136,7 +6137,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         })
       const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
       const minsStr = (finalSec / 60).toFixed(2)
-      const perMin = p.Lighting_Artist ? 3000 : 5000
+      const isA = String(eid).toUpperCase().includes('A')
+      const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
       const amt = Math.round(parseFloat(minsStr) * perMin)
       totalVal += amt
 
@@ -6203,18 +6205,23 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
   const handleDownload = async (inv: Invoice) => {
     let bonusToShow = 0;
-    // Fetch the latest bonus from the most recent payment record for this animator
+    let othersToShow = 0;
+    // Fetch the latest bonus and others_amount from payment record
     try {
-      const { data } = await apiClient.from('payments').select('bonus').match({ 'Employee ID': inv.employee_id }).order('Timestamp', { ascending: false })
+      const { data } = await apiClient.from('payments')
+        .select('bonus, others_amount')
+        .match({ 'Employee ID': inv.employee_id })
+        .order('Timestamp', { ascending: false })
       if (data && data.length > 0) {
-        // Use only the latest payment record's bonus (not sum)
         bonusToShow = Number(data[0].bonus) || 0;
+        othersToShow = Number(data[0].others_amount) || 0;
       }
     } catch { }
 
-    // Use the fetched bonus if the stored value is missing or zero
+    // Use stored values if present, fallback to freshly fetched
     const finalBonus = (inv.bonus_amount && inv.bonus_amount > 0) ? inv.bonus_amount : bonusToShow;
-    const printObj = { ...inv, bonus_amount: finalBonus };
+    const finalOthers = (inv.others_amount && inv.others_amount > 0) ? inv.others_amount : othersToShow;
+    const printObj = { ...inv, bonus_amount: finalBonus, others_amount: finalOthers };
     setPrintInvoice(printObj)
 
     // Mark downloaded
