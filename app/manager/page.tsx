@@ -7115,18 +7115,19 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         return
       }
 
-      // 1a. Approved projects → Status=Closed + Payment_Status=Paid + paid_at=now
+      // 1a. Approved projects → Status=Closed + Payment_Status=Paid
+      // NOTE: paid_at is intentionally NOT set here — bot sets it after sending Discord notification
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Closed', paid_at: new Date().toISOString(), client_paid_date: formatDate(), Thread_Archived: true })
+          .update({ Payment_Status: 'Paid', Status: 'Closed', client_paid_date: formatDate(), Thread_Archived: false })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
 
-      // 1b. Ongoing/advance projects → only Payment_Status=Paid, Status stays unchanged, paid_at=now
+      // 1b. Ongoing/advance projects → only Payment_Status=Paid
       if (ongoingProjects.length > 0) {
         const { error: e2 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', paid_at: new Date().toISOString(), client_paid_date: formatDate() })
+          .update({ Payment_Status: 'Paid', client_paid_date: formatDate() })
           .in('Project_ID', ongoingProjects.map(p => p.Project_ID).filter(Boolean))
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
