@@ -8298,12 +8298,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                     const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
                     const tdsAmt = gross - (net - bonus - others)
                     const isExpanded = expandedAnimators.has(a.Employee_ID + '_paid')
-                    // Filter projects by paid_at matching paidSelectedMonth
+                    // Filter projects by paid_at matching paidSelectedMonth (use toMonthKey for format handling)
                     const animProjects = projects.filter(p => {
                       const matchesAnimator = p.Employee_ID === a.Employee_ID ||
                         (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())
                       const paidAt = (p as any).paid_at || (p as any).client_paid_date || ''
-                      const matchesMonth = paidAt.startsWith(paidMonthStr) || paidAt.startsWith(paidMonthStr.replace('-', '/'))
+                      const monthKey = paidAt ? toMonthKey(paidAt) : ''
+                      // Show if month matches, or if no date stored (fallback: show all paid)
+                      const matchesMonth = monthKey === paidMonthStr || monthKey === ''
                       return p.Payment_Status === 'Paid' && matchesAnimator && matchesMonth
                     })
                     return (
