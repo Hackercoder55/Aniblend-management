@@ -7343,12 +7343,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const paymentForMonthByEmpId: Record<string, Payment> = {}
 
   payments.forEach(p => {
-    if (p['Employee ID'] && !latestPaymentByEmpId[p['Employee ID']]) {
-      latestPaymentByEmpId[p['Employee ID']] = p
+    const empId = p['Employee ID'] || (p as any).Employee_ID || ''
+    if (empId && !latestPaymentByEmpId[empId]) {
+      latestPaymentByEmpId[empId] = p
     }
-    if (p['Employee ID'] && p['Project ID'] === `Month: ${selectedMonth}`) {
-      if (!paymentForMonthByEmpId[p['Employee ID']]) {
-         paymentForMonthByEmpId[p['Employee ID']] = p;
+    if (empId && p['Project ID'] === `Month: ${selectedMonth}`) {
+      if (!paymentForMonthByEmpId[empId]) {
+         paymentForMonthByEmpId[empId] = p;
       }
     }
   })
@@ -8192,8 +8193,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .filter(p => p.Payment_Status === 'Paid' && toMonthKey(p.paid_date || p.Timestamp || '') === paidMonthStr)
           .sort((a, b) => new Date(b.Timestamp || b.paid_date || '').getTime() - new Date(a.Timestamp || a.paid_date || '').getTime())
           .forEach(p => {
-            if (p['Employee ID'] && !paymentsByEmpForMonth[p['Employee ID']]) {
-              paymentsByEmpForMonth[p['Employee ID']] = p
+            // payments table uses 'Employee ID' (with space), animators use Employee_ID (underscore)
+            const empId = p['Employee ID'] || (p as any).Employee_ID || ''
+            if (empId && !paymentsByEmpForMonth[empId]) {
+              paymentsByEmpForMonth[empId] = p
             }
           })
 
