@@ -8301,15 +8301,23 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                     const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
                     const tdsAmt = gross - (net - bonus - others)
                     const isExpanded = expandedAnimators.has(a.Employee_ID + '_paid')
-                    // Filter projects by paid_at matching paidSelectedMonth (use toMonthKey for format handling)
+                    // Show projects approved within 2 months before the payment month
+                    // e.g. June payment → show projects approved May or June (not Feb/March)
+                    const [paidYr, paidMon] = paidMonthStr.split('-').map(Number)
+                    const paidMonthDate = new Date(paidYr, paidMon - 1, 1) // 1st of payment month
+                    const cutoffDate = new Date(paidYr, paidMon - 3, 1)    // 2 months before payment month
+
                     const animProjects = projects.filter(p => {
                       const matchesAnimator = p.Employee_ID === a.Employee_ID ||
                         (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())
-                      const paidAt = (p as any).paid_at || (p as any).client_paid_date || ''
-                      const monthKey = paidAt ? toMonthKey(paidAt) : ''
-                      // Show if month matches, or if no date stored (fallback: show all paid)
-                      const matchesMonth = monthKey === paidMonthStr || monthKey === ''
-                      return p.Payment_Status === 'Paid' && matchesAnimator && matchesMonth
+                      if (!matchesAnimator) return false
+                      // Check Date Approved is within range (>= 2 months before payment, <= payment month)
+                      const approvedStr = p['Date Approved'] || p.Approved_Date || ''
+                      const approvedDate = approvedStr ? parseDate(approvedStr) : null
+                      const withinRange = approvedDate
+                        ? (approvedDate >= cutoffDate && approvedDate <= new Date(paidYr, paidMon, 0)) // up to last day of payment month
+                        : true // no date → show anyway
+                      return p.Payment_Status === 'Paid' && withinRange
                     })
                     return (
                       <Fragment key={a.Employee_ID}>
