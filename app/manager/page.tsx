@@ -106,6 +106,7 @@ interface Animator {
   Compensation: string
   Render: string
   others_amount?: number | string
+  others_notes?: string
 }
 
 interface DashboardUser {
@@ -3536,6 +3537,28 @@ function TeamTab({ animators, projects, user, onRefresh }: {
           const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime()
           const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59).getTime()
 
+          // Calculate previous month seconds (approved/paid projects approved in prev month)
+          let prevMonthApprovedSec = 0
+          let thisMonthApprovedSec = 0
+          projects
+            .filter(p =>
+              (p.Employee_ID === a.Employee_ID ||
+                (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) ||
+                (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase()) &&
+              ['Approved', 'Paid', 'Closed'].includes(p.Status)
+            )
+            .forEach(p => {
+              const dateStr = p.Approved_Date || p['Date Approved']
+              if (!dateStr) return
+              try {
+                const t = parseDate(dateStr).getTime()
+                const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                if (t >= prevMonthStart && t <= prevMonthEnd) prevMonthApprovedSec += sec
+                else if (t >= currentMonthStart && t <= currentMonthEnd) thisMonthApprovedSec += sec
+              } catch (e) {}
+            })
+
+          // Paid-based growth (original)
           let currentMonthSec = 0
           let prevMonthSec = 0
           projects
@@ -3550,6 +3573,15 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                  else if (t >= prevMonthStart && t <= prevMonthEnd) prevMonthSec += sec
                } catch (e) {}
             })
+
+          // Active (WIP) minutes — projects not yet approved
+          const activeSec = projects
+            .filter(p =>
+              (p.Employee_ID === a.Employee_ID ||
+                (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())) &&
+              !['Approved', 'Paid', 'Closed'].includes(p.Status)
+            )
+            .reduce((sum, p) => sum + parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID), 0)
 
           let growthDisplay = null
           if (prevMonthSec > 0 || currentMonthSec > 0) {
@@ -3625,27 +3657,43 @@ function TeamTab({ animators, projects, user, onRefresh }: {
                 </div>
               </div>
 
-              {/* Stats: Total Projects | Avg/Day | Payment (clickable) */}
+              {/* Stats: Total Projects | Prev Month | Payment (clickable) */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <button
                   onClick={() => setListModalProps({ title: `${a.Name} - Total Projects`, sortedProjects: projects.filter(p => (p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes((a.Name || '').toLowerCase()) || (String(p.Lead || '')).toLowerCase() === (a.Name || '').toLowerCase() || (String(p.Lighting_Artist || '')).toLowerCase() === (a.Name || '').toLowerCase())) })}
                   className="bg-gray-50 rounded-xl p-2.5 text-center hover:bg-gray-100 transition-colors flex flex-col items-center justify-center relative">
                   <p className="text-xl font-bold text-gray-700">{realTotalCount}</p>
                   <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-semibold">Total</p>
-                  <p className={`text-[10px] font-semibold mt-0.5 ${historicalApprovedSec > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                    {historicalApprovedSec > 0 ? formatSec(historicalApprovedSec) : '0s'}
+                  <p className={`text-[10px] font-semibold mt-0.5 ${activeSec > 0 ? 'text-blue-500' : 'text-gray-400'}`}
+                    title="Active (in-progress) minutes not yet approved">
+                    {activeSec > 0 ? `${formatSec(activeSec)} active` : '0s active'}
                   </p>
                 </button>
                 <button
                   onClick={() => setOutputHistoryProps({ animator: a, avgInfo })}
                   className="bg-orange-50 rounded-xl p-2.5 text-center flex flex-col items-center justify-center hover:bg-orange-100 transition-colors">
                   {(() => {
-                    const avgDay = Math.round(historicalApprovedSec / daysSinceJoined)
+                    const prevMonthLabel = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+                      .toLocaleString('default', { month: 'short', year: '2-digit' })
+                    const thisMonthLabel = new Date(now.getFullYear(), now.getMonth(), 1)
+                      .toLocaleString('default', { month: 'short', year: '2-digit' })
+                    const pct = prevMonthApprovedSec > 0
+                      ? Math.round(((thisMonthApprovedSec - prevMonthApprovedSec) / prevMonthApprovedSec) * 100)
+                      : null
                     return (
                       <>
-                        <p className="text-xl font-bold text-orange-600">{historicalApprovedSec > 0 ? formatSec(avgDay) : '0s'}</p>
-                        <p className="text-[9px] text-orange-500 mt-1 uppercase tracking-wider font-semibold">Avg/Day</p>
-                        <p className="text-[10px] font-semibold mt-0.5 text-orange-600">{daysSinceJoined} days</p>
+                        <p className="text-[13px] font-bold text-orange-600 leading-tight">
+                          {prevMonthApprovedSec > 0 ? formatSec(prevMonthApprovedSec) : '—'}
+                        </p>
+                        <p className="text-[9px] text-orange-500 mt-0.5 uppercase tracking-wider font-semibold">Prev Month</p>
+                        <p className="text-[10px] font-semibold mt-0.5 text-orange-500">
+                          {thisMonthApprovedSec > 0 ? formatSec(thisMonthApprovedSec) : '0s'}
+                          {pct !== null && (
+                            <span className={`ml-1 ${pct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                              {pct >= 0 ? `↑${pct}%` : `↓${Math.abs(pct)}%`}
+                            </span>
+                          )}
+                        </p>
                       </>
                     )
                   })()}
@@ -3965,6 +4013,22 @@ function FormSubmissionsTab({ animators, userRole, userLead }: { animators: Anim
   const handleSave = async (id: number) => {
     setSaving(true); setSaveMsg('')
     const sub = submissions.find(s => s.id === id)
+    
+    // Show confirmation before approving
+    if (editStatus === 'Approved' && sub) {
+      const animName = animatorMap[sub.employee_id] || sub.employee_id || 'Unknown Animator'
+      const projTitle = sub.title || sub.project_id || 'Unknown Project'
+      const confirmed = window.confirm(
+        `✅ Approve Submission?\n\n` +
+        `Animator: ${animName}\n` +
+        `Project: ${projTitle} (${sub.project_id || ''})\n` +
+        `Version: ${sub.version || '—'}\n` +
+        `Lead: ${sub.lead_name || '—'}\n\n` +
+        `This will mark the project as Approved and notify the animator via Discord.\nProceed?`
+      )
+      if (!confirmed) { setSaving(false); return }
+    }
+    
     const { error } = await apiClient.from('form_submissions').update({ status: editStatus, feedback: editFeedback, animator_notified: true }).eq('id', id)
     if (!error) {
       // If moving to Approved or Changes Requested, also update project + notify Discord thread
@@ -6988,6 +7052,11 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({})
   const [bonusNotes, setBonusNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
+  // Others "add" overlay state
+  const [othersAddOpen, setOthersAddOpen] = useState<string | null>(null)
+  const [othersAddAmt, setOthersAddAmt] = useState('')
+  const [othersAddNote, setOthersAddNote] = useState('')
+  const [othersAddSaving, setOthersAddSaving] = useState(false)
 
   const [sendingInvoices, setSendingInvoices] = useState(false)
   const [excludeNotify, setExcludeNotify] = useState<Set<string>>(new Set())
@@ -7106,20 +7175,25 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
     
     setPayingId(eid)
     try {
-      const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved')
-      const ongoingProjects = animatorProjects.filter(p => !['Approved', 'Paid', 'Closed'].includes(p.Status))
+      // Separate lead-only projects (emp_type === 'Lead') — these should NOT be marked Paid here;
+      // they belong in the lead's own payment cycle.
+      const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved' && p.emp_type !== 'Lead')
+      const ongoingProjects = animatorProjects.filter(p => !['Approved', 'Paid', 'Closed'].includes(p.Status) && p.emp_type !== 'Lead')
+      // Lead-only approved projects for this animator as LEAD role (need to pay other leads)
+      const leadOwnProjects = animatorProjects.filter(p => p.Status === 'Approved' && p.emp_type === 'Lead')
 
-      if (approvedProjects.length === 0 && ongoingProjects.length === 0) {
+      if (approvedProjects.length === 0 && ongoingProjects.length === 0 && leadOwnProjects.length === 0) {
         addToast(`⚠️ No projects found for ${animatorName}`, 'error')
         setPayingId(null)
         return
       }
 
-      // 1a. Approved projects → Status=Closed + Payment_Status=Paid
-      // NOTE: paid_at is intentionally NOT set here — bot sets it after sending Discord notification
+      // 1a. Approved projects → Status=Paid + Payment_Status=Paid (exclude lead-only)
+      // NOTE: paid_at intentionally NOT set — bot sets it after Discord notification
+      // NOTE: Status="Closed" happens 12hrs later when bot locks the thread
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Closed', client_paid_date: formatDate(), Thread_Archived: false })
+          .update({ Payment_Status: 'Paid', Status: 'Paid', client_paid_date: formatDate(), Thread_Archived: false })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
@@ -7130,6 +7204,47 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .update({ Payment_Status: 'Paid', client_paid_date: formatDate() })
           .in('Project_ID', ongoingProjects.map(p => p.Project_ID).filter(Boolean))
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
+      }
+
+      // 1c. For each project where THIS animator is the Lead (but not the primary animator),
+      //     add ₹1000 to the actual lead animator's others_amount automatically.
+      //     These are already included in gross via leadBonus logic in the rows calculation.
+      //     We mark them paid too since the payment covers them.
+      if (leadOwnProjects.length > 0) {
+        await apiClient.from('projects')
+          .update({ Payment_Status: 'Paid', Status: 'Paid', client_paid_date: formatDate(), Thread_Archived: false })
+          .in('Project_ID', leadOwnProjects.map(p => p.Project_ID).filter(Boolean))
+      }
+
+      // 1d. Find projects where OTHER people are lead — add ₹1000 to their others_amount
+      try {
+        const leadPayMap: Record<string, { name: string; amount: number; notes: string[] }> = {}
+        ;[...approvedProjects, ...ongoingProjects].forEach(p => {
+          if (p.Lead && p.Lead.trim()) {
+            const leadName = p.Lead.trim().toLowerCase()
+            // Don't add to self
+            if (leadName === animatorName.toLowerCase()) return
+            if (!leadPayMap[leadName]) leadPayMap[leadName] = { name: p.Lead.trim(), amount: 0, notes: [] }
+            leadPayMap[leadName].amount += 1000
+            leadPayMap[leadName].notes.push(p.Project_ID)
+          }
+        })
+        for (const [, leadInfo] of Object.entries(leadPayMap)) {
+          const leadAnimRow = animators.find(a => (a.Name || '').toLowerCase() === leadInfo.name.toLowerCase())
+          if (!leadAnimRow) continue
+          const leadEid = leadAnimRow.Employee_ID
+          const { data: leadData } = await apiClient.from('animators').select('others_amount, others_notes').eq('Employee_ID', leadEid).single()
+          const existingOthers = Number((leadData as any)?.others_amount || 0)
+          const existingNotes = String((leadData as any)?.others_notes || '')
+          const newNotes = existingNotes
+            ? `${existingNotes}; Lead pay (${leadInfo.notes.join(', ')}): ₹${leadInfo.amount}`
+            : `Lead pay (${leadInfo.notes.join(', ')}): ₹${leadInfo.amount}`
+          await apiClient.from('animators')
+            .update({ others_amount: existingOthers + leadInfo.amount, others_notes: newNotes })
+            .eq('Employee_ID', leadEid)
+        }
+      } catch (leadErr) {
+        console.error('Failed to add lead pay to others:', leadErr)
       }
 
       const totalPaid = Math.round(net) // net already includes bonus - TDS
@@ -7171,7 +7286,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .limit(1)
         const existing = Number((animData && animData[0]?.total_earnings) || 0)
         await apiClient.from('animators')
-          .update({ total_earnings: existing + totalPaid, others_amount: 0 })
+          .update({ total_earnings: existing + totalPaid, others_amount: 0, others_notes: '' })
           .eq('Employee_ID', eid)
       } catch (earnErr) {
         console.error('Failed to update total_earnings:', earnErr)
@@ -7192,15 +7307,18 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         }
         const invoiceNumber = `${eid}${String(currentSeq + 1).padStart(2, '0')}`
 
-        // Create Line Items
-        const lineItems = [...approvedProjects, ...ongoingProjects].map(p => {
+        // Create Line Items — round each project amount to nearest ₹100 (matches payout calculator)
+        const animRow = animators.find(a => a.Employee_ID === eid)
+        const lineItems = [...approvedProjects, ...ongoingProjects, ...leadOwnProjects].map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
           let rate = 5000 / 60
           if (p.emp_type === 'Lead') rate = 0 
           else if (p.emp_type === 'Lighting') rate = 2000 / 60
           else if (p.emp_type === 'Animator+Lighting') rate = 3000 / 60
           
-          const baseAmt = p.emp_type === 'Lead' ? 1000 : Math.round(rawSec * rate)
+          const baseAmtRaw = p.emp_type === 'Lead' ? 1000 : rawSec * rate
+          // Round to nearest ₹100 to match payout calculator
+          const baseAmt = p.emp_type === 'Lead' ? 1000 : Math.round(baseAmtRaw / 100) * 100
           
           // Note: Add p.Bonus and p.Other_Payment if they exist
           const pBonus = Number((p as any).Bonus) || 0
@@ -7227,7 +7345,20 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
            })
         }
 
-        const animRow = animators.find(a => a.Employee_ID === eid)
+        // Fix 2: Add others_amount as a line item in the invoice if > 0
+        const invoiceOthersAmt = parseFloat(String(animRow?.others_amount || '0')) || 0
+        const invoiceOthersNote = String((animRow as any)?.others_notes || '')
+        if (invoiceOthersAmt > 0) {
+           lineItems.push({
+              project_id: 'OTHERS',
+              title: invoiceOthersNote ? `Additional Payment: ${invoiceOthersNote}` : 'Additional Payment (Others)',
+              seconds: 0,
+              amount: invoiceOthersAmt,
+              assigned_date: formatDate(),
+              approved_date: formatDate()
+           })
+        }
+
         const threadId = animRow?.Channel_ID || 'Unknown'
         
         const insertPayload = {
@@ -7912,7 +8043,67 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-gray-500">
-                        ₹{(r.othersAmt || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        <div className="flex items-center justify-end gap-1 group relative">
+                          {/* Hover tooltip showing notes */}
+                          {(r.animator as any)?.others_notes && (
+                            <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 hidden group-hover:block z-20 w-52 bg-gray-800 text-white text-[10px] rounded-lg p-2 shadow-lg leading-relaxed">
+                              {String((r.animator as any).others_notes)}
+                            </div>
+                          )}
+                          <span className={`${r.othersAmt > 0 ? 'text-sky-600 font-semibold' : 'text-gray-400'}`}>
+                            ₹{(r.othersAmt || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                          {/* + button to add to others */}
+                          <button
+                            title="Add to Others"
+                            onClick={() => { setOthersAddOpen(r.animator.Employee_ID); setOthersAddAmt(''); setOthersAddNote('') }}
+                            className="w-5 h-5 rounded-full bg-sky-100 text-sky-600 hover:bg-sky-200 flex items-center justify-center text-[11px] font-bold transition-colors flex-shrink-0"
+                          >+</button>
+                          {/* Add Others mini-form */}
+                          {othersAddOpen === r.animator.Employee_ID && (
+                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-sky-200 rounded-xl shadow-xl p-3 w-56">
+                              <p className="text-[10px] font-bold text-sky-700 uppercase tracking-wider mb-2">Add to Others</p>
+                              <input
+                                type="number" min="0" placeholder="Amount ₹" value={othersAddAmt}
+                                onChange={e => setOthersAddAmt(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm font-mono mb-1 focus:outline-none"
+                                autoFocus
+                              />
+                              <input
+                                type="text" placeholder="Note (optional)" value={othersAddNote}
+                                onChange={e => setOthersAddNote(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-xs mb-2 focus:outline-none"
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  disabled={othersAddSaving || !othersAddAmt}
+                                  onClick={async () => {
+                                    setOthersAddSaving(true)
+                                    const eid = r.animator.Employee_ID
+                                    const { data: cur } = await apiClient.from('animators').select('others_amount, others_notes').eq('Employee_ID', eid).single()
+                                    const existing = Number((cur as any)?.others_amount || 0)
+                                    const existNotes = String((cur as any)?.others_notes || '')
+                                    const addAmt = Number(othersAddAmt) || 0
+                                    const addNote = othersAddNote.trim()
+                                    const newNotes = existNotes
+                                      ? (addNote ? `${existNotes}; ${addNote}: ₹${addAmt}` : existNotes)
+                                      : (addNote ? `${addNote}: ₹${addAmt}` : '')
+                                    await apiClient.from('animators')
+                                      .update({ others_amount: existing + addAmt, others_notes: newNotes })
+                                      .eq('Employee_ID', eid)
+                                    setOthersAddOpen(null)
+                                    setOthersAddSaving(false)
+                                    addToast(`✅ Added ₹${addAmt} to ${r.animator.Name}'s others`)
+                                    // Force refresh by re-fetching
+                                    window.location.reload()
+                                  }}
+                                  className="flex-1 py-1 rounded-lg text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors"
+                                >Save</button>
+                                <button onClick={() => setOthersAddOpen(null)} className="px-3 py-1 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors">✕</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-semibold text-gray-800">
                         ₹{(r.totalAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
