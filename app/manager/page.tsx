@@ -8649,8 +8649,28 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 // ─── DuplicatesTab ───────────────────────────────────────────────────────────
 
 function DuplicatesTab({ projects }: { projects: Project[] }) {
+  const { addToast } = useToast()
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set())
+
+  const handleDeleteProject = async (row: Project) => {
+    const label = row.Project_title ? `"${row.Project_title}" (${row.Project_ID})` : row.Project_ID
+    if (!window.confirm(`Are you sure you want to permanently delete project ${label}?\n\nThis CANNOT be undone.`)) return
+    setDeletingId(row.Project_ID)
+    try {
+      const { error } = await apiClient.from('projects').delete().eq('Project_ID', row.Project_ID)
+      if (error) throw new Error(error.message || JSON.stringify(error))
+      setDeletedIds(prev => new Set(prev).add(row.Project_ID))
+      addToast(`🗑️ Deleted project ${row.Project_ID}`, 'success')
+    } catch (e: any) {
+      addToast(`❌ Delete failed: ${e.message}`, 'error')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const activeStatuses = ['Pending', 'Ongoing', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA'];
-  const activeProjects = projects.filter(p => activeStatuses.includes(p.Status));
+  const activeProjects = projects.filter(p => activeStatuses.includes(p.Status) && !deletedIds.has(p.Project_ID));
 
   // Group by Project_ID (same DB record duplicated)
   const groupedById = new Map<string, Project[]>();
@@ -8672,9 +8692,9 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
     }
   }
 
-  // Group by normalized title (same title, different Project_IDs) — check ALL projects, not just active
+  // Group by normalized title (same title, different Project_IDs) — only active projects (excludes Approved/Paid/Closed)
   const groupedByTitle = new Map<string, Project[]>();
-  for (const p of projects) {
+  for (const p of activeProjects) {
     const title = (p.Project_title || '').trim().toLowerCase();
     if (!title || title.length < 5) continue; // Skip empty/very short titles
     if (!groupedByTitle.has(title)) groupedByTitle.set(title, []);
@@ -8701,12 +8721,13 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
           <th className="pb-2 pr-3">Animator</th>
           <th className="pb-2 text-center pr-3">Status</th>
           <th className="pb-2 text-center pr-3">Date Assigned</th>
-          <th className="pb-2 text-right">Discord Thread</th>
+          <th className="pb-2 pr-3">Discord Thread</th>
+          <th className="pb-2 text-right">Delete</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((row, i) => (
-          <tr key={i} className="border-b border-gray-50 last:border-0">
+          <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-red-50/30 transition-colors">
             <td className="py-2.5 pr-3 font-mono text-xs text-gray-600 whitespace-nowrap">{row.Project_ID}</td>
             {showTitle && (
               <td className="py-2.5 pr-3 text-xs font-semibold text-purple-700 max-w-[200px] truncate" title={row.Project_title || ''}>
@@ -8722,12 +8743,23 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
               }`}>{row.Status}</span>
             </td>
             <td className="py-2.5 text-center pr-3 text-xs text-gray-500 whitespace-nowrap">{row['Date Assigned'] || '—'}</td>
-            <td className="py-2.5 text-right font-mono text-xs text-gray-500">{row.Thread_ID || <span className="text-red-400 italic">null</span>}</td>
+            <td className="py-2.5 pr-3 font-mono text-xs text-gray-500">{row.Thread_ID || <span className="text-red-400 italic">null</span>}</td>
+            <td className="py-2.5 text-right">
+              <button
+                onClick={() => handleDeleteProject(row)}
+                disabled={deletingId === row.Project_ID}
+                title={`Delete ${row.Project_ID}`}
+                className="px-2.5 py-1 text-[11px] font-bold bg-red-50 text-red-600 hover:bg-red-100 rounded-lg border border-red-200 transition-colors disabled:opacity-40 whitespace-nowrap"
+              >
+                {deletingId === row.Project_ID ? '⏳...' : '🗑️ Delete'}
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
     </table>
   );
+
 
   return (
     <div className="space-y-6">
