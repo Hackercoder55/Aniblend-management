@@ -6350,7 +6350,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               width: '90%',
               maxHeight: '90vh',
               overflowY: 'auto',
-              fonAniBlendmily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+              fontFamily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
               boxShadow: '0 20px 40px rgba(0,0,0,0.1)'
             }}
             onClick={e => e.stopPropagation()}
@@ -6520,7 +6520,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               width: '90%',
               maxHeight: '90vh',
               overflowY: 'auto',
-              fonAniBlendmily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+              fontFamily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
               boxShadow: '0 20px 40px rgba(0,0,0,0.1)'
             }}
             onClick={e => e.stopPropagation()}
