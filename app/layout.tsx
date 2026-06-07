@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TFA Dashboard | The Future Animation Agency",
-  description: "Management dashboard for TFA Animation Agency",
+  title: "AniBlend Dashboard | The Future Animation Agency",
+  description: "Management dashboard for AniBlend Animation Agency",
 };
 
 export default function RootLayout({
@@ -19,7 +19,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `
               try {
-                const theme = localStorage.getItem('tfa_theme') || 'light';
+                const theme = localStorage.getItem('AniBlend_theme') || 'light';
                 document.documentElement.setAttribute('data-theme', theme);
               } catch (e) {}
             `,

@@ -9,7 +9,7 @@ export async function DELETE(request: Request) {
             return NextResponse.json({ error: 'Thread ID is required' }, { status: 400 });
         }
 
-        const token = process.env.DISCORD_BOT_TOKEN;
+        const token = process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN;
 
         if (!token) {
             return NextResponse.json({ error: 'Discord token is missing' }, { status: 500 });

@@ -3114,7 +3114,7 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
 
   const handleDownloadCSV = () => {
     const rows: string[][] = [
-      ['TFA — Paid Payment History'],
+      ['AniBlend — Paid Payment History'],
       ['Animator:', animator.Name, 'Employee ID:', animator.Employee_ID],
       [],
       ['Month', 'Project ID', 'Project Title', 'Paid Date', 'Duration', 'Project Amount (₹)'],
@@ -5763,7 +5763,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                   type="email"
                   value={form.email}
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  placeholder="e.g. divya@tfa.com"
+                  placeholder="e.g. divya@AniBlend.com"
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
                 />
               </div>
@@ -6350,7 +6350,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               width: '90%',
               maxHeight: '90vh',
               overflowY: 'auto',
-              fontFamily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+              fonAniBlendmily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
               boxShadow: '0 20px 40px rgba(0,0,0,0.1)'
             }}
             onClick={e => e.stopPropagation()}
@@ -6520,7 +6520,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               width: '90%',
               maxHeight: '90vh',
               overflowY: 'auto',
-              fontFamily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
+              fonAniBlendmily: '"Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif',
               boxShadow: '0 20px 40px rgba(0,0,0,0.1)'
             }}
             onClick={e => e.stopPropagation()}
@@ -9595,7 +9595,7 @@ export default function ManagerDashboard() {
 
   // Dark mode init
   useEffect(() => {
-    const saved = localStorage.getItem('tfa_theme')
+    const saved = localStorage.getItem('AniBlend_theme')
     const isDark = saved === 'dark'
     setDarkMode(isDark)
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light')
@@ -9604,12 +9604,12 @@ export default function ManagerDashboard() {
   const toggleDarkMode = () => {
     const next = !darkMode
     setDarkMode(next)
-    localStorage.setItem('tfa_theme', next ? 'dark' : 'light')
+    localStorage.setItem('AniBlend_theme', next ? 'dark' : 'light')
     document.documentElement.setAttribute('data-theme', next ? 'dark' : 'light')
   }
 
   useEffect(() => {
-    const stored = localStorage.getItem('tfa_user')
+    const stored = localStorage.getItem('AniBlend_user')
     if (!stored) { router.push('/'); return }
     setUser(JSON.parse(stored))
   }, [router])
@@ -9638,7 +9638,7 @@ export default function ManagerDashboard() {
 
   useEffect(() => { if (user) fetchData() }, [user, fetchData])
 
-  const handleLogout = () => { localStorage.removeItem('tfa_user'); router.push('/') }
+  const handleLogout = () => { localStorage.removeItem('AniBlend_user'); router.push('/') }
 
   if (!user) return null
 
@@ -9676,12 +9676,12 @@ export default function ManagerDashboard() {
               alt="Logo"
               className="w-full h-full object-contain drop-shadow-md"
               onError={(e) => {
-                e.currentTarget.src = 'https://ui-avatars.com/api/?name=TFA&background=667eea&color=fff&rounded=true';
+                e.currentTarget.src = 'https://ui-avatars.com/api/?name=AniBlend&background=667eea&color=fff&rounded=true';
               }}
             />
           </div>
           <div>
-            <p className="font-bold text-gray-800 text-sm">TFA Dashboard</p>
+            <p className="font-bold text-gray-800 text-sm">AniBlend Dashboard</p>
             <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
           </div>
         </div>
@@ -9728,7 +9728,7 @@ export default function ManagerDashboard() {
       <aside className="fixed inset-y-0 left-0 z-40 w-64 flex flex-col bg-white border-r border-gray-100 shadow-lg lg:hidden transition-transform"
         style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
         <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <span className="font-bold text-gray-800">TFA Dashboard</span>
+          <span className="font-bold text-gray-800">AniBlend Dashboard</span>
           <button onClick={() => setSidebarOpen(false)} className="text-gray-400 text-xl">✕</button>
         </div>
         <SidebarContent />

@@ -32,7 +32,7 @@ export default function LoginPage() {
         return
       }
 
-      localStorage.setItem('tfa_user', JSON.stringify(result.user))
+      localStorage.setItem('AniBlend_user', JSON.stringify(result.user))
 
       router.push('/manager')
     } catch {
@@ -55,11 +55,11 @@ export default function LoginPage() {
               alt="The Future Animations Logo"
               className="w-24 h-24 object-contain drop-shadow-2xl"
               onError={(e) => {
-                e.currentTarget.src = 'https://ui-avatars.com/api/?name=TFA&background=667eea&color=fff&rounded=true&size=128';
+                e.currentTarget.src = 'https://ui-avatars.com/api/?name=AniBlend&background=667eea&color=fff&rounded=true&size=128';
               }}
             />
           </div>
-          <h1 className="text-3xl font-bold text-white">TFA Dashboard</h1>
+          <h1 className="text-3xl font-bold text-white">AniBlend Dashboard</h1>
           <p className="mt-1" style={{ color: '#d8b4fe' }}>The Future Animation Agency</p>
         </div>
 
