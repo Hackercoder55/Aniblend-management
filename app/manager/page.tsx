@@ -6083,10 +6083,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               if (found) empSet.add(found.Employee_ID)
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
-          const minsStr = (finalSec / 60).toFixed(2)
           const isA = String(eid).toUpperCase().includes('A')
           const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
-          const amt = Math.round(parseFloat(minsStr) * perMin)
+          // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
+          const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
           totalVal += amt
           return {
             project_id: p.Project_ID,
@@ -6119,9 +6119,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
 
 
         const grossTotal = totalVal
-        const newTotalVal = grossTotal + bonusAmount + othersAmount
-        const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
-        const finalNet = Math.round(newTotalVal - tdsAmt)
+        // TDS on gross only (matches payout calculator); net = gross + bonus + others - TDS
+        const tdsAmt = Math.round(grossTotal * (tdsPct / 100))
+        const finalNet = Math.round(grossTotal + bonusAmount + othersAmount - tdsAmt)
 
         // The Python Discord bot will pick this up and use the permanent "Invoices" thread
         const thread_id = (anim as any).Discord_Channel_ID || anim.Channel_ID || ''
@@ -6200,10 +6200,10 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           if (found) empSet.add(found.Employee_ID)
         })
       const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
-      const minsStr = (finalSec / 60).toFixed(2)
       const isA = String(eid).toUpperCase().includes('A')
       const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
-      const amt = Math.round(parseFloat(minsStr) * perMin)
+      // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
+      const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
       totalVal += amt
 
       return {
@@ -6235,9 +6235,9 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const { data: animData } = await apiClient.from('animators').select('others_amount').eq('Employee_ID', eid)
       if (animData && animData[0]) othersAmount = Number(animData[0].others_amount) || 0
     } catch (e) { console.error('Could not fetch others_amount for preview', e) }
-    const newTotalVal = totalVal + bonusAmount + othersAmount
-    const tdsAmt = Math.round(newTotalVal * (tdsPct / 100))
-    const netPay = Math.round(newTotalVal - tdsAmt)
+    // TDS on gross only (matches invoice logic); net = gross + bonus + others - TDS
+    const tdsAmt = Math.round(totalVal * (tdsPct / 100))
+    const netPay = Math.round(totalVal + bonusAmount + othersAmount - tdsAmt)
     const now = new Date()
 
     setPrintInvoice({
