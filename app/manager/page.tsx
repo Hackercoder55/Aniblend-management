@@ -8672,9 +8672,9 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
     }
   }
 
-  // Group by normalized title (same title, different Project_IDs)
+  // Group by normalized title (same title, different Project_IDs) — check ALL projects, not just active
   const groupedByTitle = new Map<string, Project[]>();
-  for (const p of activeProjects) {
+  for (const p of projects) {
     const title = (p.Project_title || '').trim().toLowerCase();
     if (!title || title.length < 5) continue; // Skip empty/very short titles
     if (!groupedByTitle.has(title)) groupedByTitle.set(title, []);
@@ -8692,26 +8692,36 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
 
   const totalDuplicates = duplicatesById.length + duplicatesByTitle.length;
 
-  const renderProjectRows = (rows: Project[]) => (
+  const renderProjectRows = (rows: Project[], showTitle = false) => (
     <table className="w-full text-sm text-left">
       <thead>
         <tr className="text-xs text-gray-500 border-b border-gray-200">
-          <th className="pb-2">Project ID</th>
-          <th className="pb-2">Animator</th>
-          <th className="pb-2 text-center">Status</th>
-          <th className="pb-2 text-center">Date Assigned</th>
+          <th className="pb-2 pr-3">Project ID</th>
+          {showTitle && <th className="pb-2 pr-3">Project Title</th>}
+          <th className="pb-2 pr-3">Animator</th>
+          <th className="pb-2 text-center pr-3">Status</th>
+          <th className="pb-2 text-center pr-3">Date Assigned</th>
           <th className="pb-2 text-right">Discord Thread</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((row, i) => (
           <tr key={i} className="border-b border-gray-50 last:border-0">
-            <td className="py-2.5 font-mono text-xs text-gray-600">{row.Project_ID}</td>
-            <td className="py-2.5 font-medium text-gray-800">{row.Animator || 'Unassigned'} <span className="text-[10px] text-gray-400 font-mono ml-1">({row.Employee_ID})</span></td>
-            <td className="py-2.5 text-center">
-              <span className="px-2 py-1 text-[10px] font-semibold bg-gray-100 text-gray-600 rounded-full">{row.Status}</span>
+            <td className="py-2.5 pr-3 font-mono text-xs text-gray-600 whitespace-nowrap">{row.Project_ID}</td>
+            {showTitle && (
+              <td className="py-2.5 pr-3 text-xs font-semibold text-purple-700 max-w-[200px] truncate" title={row.Project_title || ''}>
+                {row.Project_title || <span className="text-gray-400 italic">No title</span>}
+              </td>
+            )}
+            <td className="py-2.5 pr-3 font-medium text-gray-800 whitespace-nowrap">{row.Animator || 'Unassigned'} <span className="text-[10px] text-gray-400 font-mono ml-1">({row.Employee_ID})</span></td>
+            <td className="py-2.5 text-center pr-3">
+              <span className={`px-2 py-1 text-[10px] font-semibold rounded-full ${
+                row.Status === 'Approved' ? 'bg-green-100 text-green-700' :
+                row.Status === 'Paid' || row.Status === 'Closed' ? 'bg-gray-200 text-gray-500' :
+                'bg-amber-100 text-amber-700'
+              }`}>{row.Status}</span>
             </td>
-            <td className="py-2.5 text-center text-xs text-gray-500">{row['Date Assigned'] || '—'}</td>
+            <td className="py-2.5 text-center pr-3 text-xs text-gray-500 whitespace-nowrap">{row['Date Assigned'] || '—'}</td>
             <td className="py-2.5 text-right font-mono text-xs text-gray-500">{row.Thread_ID || <span className="text-red-400 italic">null</span>}</td>
           </tr>
         ))}
@@ -8748,7 +8758,7 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
                         <h3 className="font-bold text-red-800">{dup.projectId} <span className="text-red-500 font-normal ml-2">({dup.rows[0].Project_title || 'No Title'})</span></h3>
                         <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-1 rounded-full">{dup.rows.length} records</span>
                       </div>
-                      <div className="p-4 overflow-x-auto">{renderProjectRows(dup.rows)}</div>
+                      <div className="p-4 overflow-x-auto">{renderProjectRows(dup.rows, true)}</div>
                     </div>
                   ))}
                 </div>
@@ -8764,9 +8774,13 @@ function DuplicatesTab({ projects }: { projects: Project[] }) {
                 <div className="space-y-4">
                   {duplicatesByTitle.map((dup, idx) => (
                     <div key={idx} className="border border-purple-100 rounded-xl overflow-hidden bg-purple-50/20">
-                      <div className="bg-purple-50 px-4 py-3 border-b border-purple-100 flex items-center justify-between">
-                        <h3 className="font-bold text-purple-800 text-sm">{dup.rows[0].Project_title}</h3>
-                        <span className="text-xs font-bold text-purple-600 bg-purple-100 px-2 py-1 rounded-full">{dup.rows.length} records</span>
+                      <div className="bg-purple-50 px-4 py-3 border-b border-purple-100 flex items-center gap-3">
+                        <span className="text-purple-400 text-lg">📋</span>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-bold text-purple-800 text-sm truncate">{dup.rows[0].Project_title}</h3>
+                          <p className="text-[10px] text-purple-500 mt-0.5">{new Set(dup.rows.map(r => r.Project_ID)).size} different Project IDs with this title</p>
+                        </div>
+                        <span className="text-xs font-bold text-purple-600 bg-purple-100 px-2 py-1 rounded-full shrink-0">{dup.rows.length} records</span>
                       </div>
                       <div className="p-4 overflow-x-auto">{renderProjectRows(dup.rows)}</div>
                     </div>
