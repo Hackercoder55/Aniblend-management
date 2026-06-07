@@ -7360,7 +7360,16 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         }
 
         const threadId = animRow?.Channel_ID || 'Unknown'
-        
+
+        // Compute total_amount from actual project line items (each rounded to ₹100)
+        // so the invoice numbers are self-consistent (sum of items = gross total shown)
+        const projectLineItems = lineItems.filter(li => li.project_id !== 'BONUS' && li.project_id !== 'OTHERS')
+        const invoiceGross = projectLineItems.reduce((s, li) => s + (li.amount || 0), 0)
+        // TDS applies on gross (project amounts only, excluding bonus/others per accounting convention)
+        const invoiceTds = Math.round(invoiceGross * (tds / 100))
+        // Net = gross + bonus + others - TDS
+        const invoiceNet = invoiceGross + (bonus > 0 ? bonus : 0) + invoiceOthersAmt - invoiceTds
+
         const insertPayload = {
           invoice_number: invoiceNumber,
           employee_id: eid,
@@ -7368,10 +7377,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           month_label: targetMonth,
           invoice_date: new Date().toISOString(),
           line_items: lineItems,
-          total_amount: Math.round(gross || 0),
+          total_amount: invoiceGross,
+          bonus_amount: bonus > 0 ? bonus : 0,
+          others_amount: invoiceOthersAmt,
           tds_percent: tds,
-          tds_amount: Math.round((gross || 0) * (tds / 100)),
-          net_payable: Math.round(net),
+          tds_amount: invoiceTds,
+          net_payable: invoiceNet,
           status: 'Paid',
           thread_id: threadId,
           sent_at: new Date().toISOString(),
@@ -7736,7 +7747,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const gross = Math.round(baseGross / 100) * 100;
       const totalBonusParsed = bonusParsed + leadBonus
       const totalAmount = gross + totalBonusParsed + othersAmt
-      const net = totalAmount - (totalAmount * tdsPct / 100)
+      // TDS on gross only (bonus/others are not subject to TDS deduction in invoice)
+      const tdsMath = Math.round(gross * tdsPct / 100)
+      const net = Math.round(totalAmount - tdsMath)
 
       const payInfo = latestPaymentByEmpId[eid]
 
