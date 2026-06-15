@@ -7048,7 +7048,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   })
   
   // Per-animator state for Payout calculation (saved to DB instead of global)
-  const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({}) 
+  const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({})
+    const [isTdsEnabled, setIsTdsEnabled] = useState(true) 
   const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({})
   const [bonusNotes, setBonusNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -7711,7 +7712,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       const currentMinsStr = manualMinutes[eid] !== undefined ? manualMinutes[eid] : autoMins.toFixed(2)
       const currentMins = parseFloat(currentMinsStr) || 0
 
-      const tdsPct = parseFloat(tdsPercents[eid] || '10') || 10
+      const tdsPct = isTdsEnabled ? (parseFloat(tdsPercents[eid] || '10') || 10) : 0
       const othersAmt = parseFloat(String(a.others_amount || '0')) || 0
       const bonusParsed = parseFloat(bonusAmounts[eid] || '0') || 0
       // Gross calculation: check each approved project for lighting split pricing
@@ -7839,6 +7840,10 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
             <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹4000/minute.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm mr-2">
+              <span className="text-sm font-medium text-gray-700">Apply TDS</span>
+              <input type="checkbox" checked={isTdsEnabled} onChange={e => setIsTdsEnabled(e.target.checked)} className="form-checkbox h-4 w-4 text-indigo-600 transition duration-150 ease-in-out cursor-pointer" />
+            </label>
             <button onClick={handleSendInvoices} disabled={sendingInvoices}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border-2 border-green-100 text-green-600 hover:bg-green-50 flex-shrink-0 transition-colors disabled:opacity-50">
               {sendingInvoices ? 'Sending...' : '🟢 Send Invoices'}
@@ -7971,7 +7976,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                   <th className="px-4 py-3 text-right">Bonus (₹)</th>
                   <th className="px-4 py-3 text-right">Others (₹)</th>
                   <th className="px-4 py-3 text-right">Total (₹)</th>
-                  <th className="px-4 py-3 text-right">TDS %</th>
+                  {isTdsEnabled && <th className="px-4 py-3 text-right">TDS %</th>}
                   <th className="px-4 py-3 text-right">Net (₹)</th>
                   <th className="px-4 py-3 text-center">Save / Pay</th>
                 </tr>
