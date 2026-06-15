@@ -291,10 +291,10 @@ function calculateAnimatorNetPay(animator: Animator, projects: Project[], paymen
     
     if (isLighting || isAnim) {
        if (isLighting && p.Payment_Status === 'Paid') {
-          amount += (sec / 60) * 2000
+          amount += (sec / 60) * 1500
        } else if (isAnim && p.Payment_Status === 'Paid') {
           const isA = (animator.Employee_ID || '').toUpperCase().includes('A')
-          const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
+          const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
           amount += (sec / 60) * rate
        }
     }
@@ -3068,12 +3068,12 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
       byMonth[monthKey].leadPay += 1000;
     }
     if (isLighting) {
-      const earn = rawSec * (2000 / 60);
+      const earn = rawSec * (1500 / 60);
       projEarn += earn;
       byMonth[monthKey].lightingPay += earn;
     } else if (isAnim) {
       const isA = (animator.Employee_ID || '').toUpperCase().includes('A');
-      const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000);
+      const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
       const earn = rawSec * (rate / 60);
       projEarn += earn;
       byMonth[monthKey].basePay += earn;
@@ -6084,7 +6084,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
             })
           const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
           const isA = String(eid).toUpperCase().includes('A')
-          const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
+          const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
           // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
           const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
           totalVal += amt
@@ -6201,7 +6201,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         })
       const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
       const isA = String(eid).toUpperCase().includes('A')
-      const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
+      const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
       // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
       const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
       totalVal += amt
@@ -7090,7 +7090,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
         
         if (isLead) totalGross += 1000
-        if (isLighting) totalGross += (sec / 60) * 2000
+        if (isLighting) totalGross += (sec / 60) * 1500
         else if (isAnim) totalGross += (sec / 60) * (p.Lighting_Artist ? 3000 : 5000)
       })
 
@@ -7311,9 +7311,9 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         const animRow = animators.find(a => a.Employee_ID === eid)
         const lineItems = [...approvedProjects, ...ongoingProjects, ...leadOwnProjects].map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-          let rate = 5000 / 60
+          let rate = 4000 / 60
           if (p.emp_type === 'Lead') rate = 0 
-          else if (p.emp_type === 'Lighting') rate = 2000 / 60
+          else if (p.emp_type === 'Lighting') rate = 1500 / 60
           else if (p.emp_type === 'Animator+Lighting') rate = 3000 / 60
           
           const baseAmtRaw = p.emp_type === 'Lead' ? 1000 : rawSec * rate
@@ -7733,16 +7733,16 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         if (isLead) leadBonus += 1000
         
         if (isLighting) {
-          calculatedGross += projSec * (2000 / 60)
+          calculatedGross += projSec * (1500 / 60)
         } else if (isAnim) {
           const isA = (eid || '').toUpperCase().includes('A')
-          const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
+          const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
           calculatedGross += projSec * (rate / 60)
         }
       })
       
       // Nearest 100 round off
-      const fallbackRate = (eid || '').toUpperCase().includes('A') ? 3000 : 5000;
+      const fallbackRate = (eid || '').toUpperCase().includes('L') ? 1500 : ((eid || '').toUpperCase().includes('A') ? 2500 : 4000);
       let baseGross = calculatedGross > 0 ? calculatedGross : currentMins * fallbackRate;
       const gross = Math.round(baseGross / 100) * 100;
       const totalBonusParsed = bonusParsed + leadBonus
@@ -7836,7 +7836,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div>
             <h2 className="text-lg font-bold text-gray-800">Payout Calculator</h2>
-            <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹5000/minute.</p>
+            <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹4000/minute.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <button onClick={handleSendInvoices} disabled={sendingInvoices}
@@ -7935,7 +7935,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                       ₹{lightingRows.reduce((sum, la) => {
                         return sum + la.projects.reduce((s, p) => {
                           const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-                          return s + Math.round((sec / 60) * 2000)
+                          return s + Math.round((sec / 60) * 1500)
                         }, 0)
                       }, 0).toLocaleString('en-IN')}
                     </td>
@@ -9300,10 +9300,10 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                   
                   if (isLead) projEarn += 1000;
                   if (isLighting) {
-                     projEarn += projSec * (2000 / 60);
+                     projEarn += projSec * (1500 / 60);
                   } else if (isAnim) {
                      const isA = (eid || '').toUpperCase().includes('A');
-                     const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000);
+                     const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
                      projEarn += projSec * (rate / 60);
                   }
                   projEarn = Math.round(projEarn / 100) * 100;
@@ -9392,10 +9392,10 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                            
                            if (isLead) projEarn += 1000;
                            if (isLighting) {
-                              projEarn += projSec * (2000 / 60);
+                              projEarn += projSec * (1500 / 60);
                            } else if (isAnim) {
                               const isA = (eid || '').toUpperCase().includes('A');
-                     const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000);
+                     const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
                      projEarn += projSec * (rate / 60);
                            }
                            projEarn = Math.round(projEarn / 100) * 100;
@@ -9461,7 +9461,7 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
     if (isOwn) {
       const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
       const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 2000 : (isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000));
+                    const rate = isLighting ? 1500 : (isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000));
       const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
       earn += projSec * (rate / 60);
     }
@@ -9477,7 +9477,7 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
     if (isOwn) {
       const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
       const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 2000 : (isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000));
+                    const rate = isLighting ? 1500 : (isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000));
       const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
       earn += projSec * (rate / 60);
     }
@@ -9544,7 +9544,7 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
                   if (isOwn) {
                     const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
                     const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 2000 : (isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000));
+                    const rate = isLighting ? 1500 : (isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000));
                     const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
                     earn += projSec * (rate / 60);
                   }
