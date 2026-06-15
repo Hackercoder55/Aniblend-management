@@ -6378,11 +6378,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               </div>
               <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>ANIBLEND STUDIO</div>
                 <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
-                  GSTIN: 07AAGCF2334M1ZJ<br />
-                  PAN: AAGCF2334M<br />
-                  New Delhi, India
+                  PAN: KUPPK9759D<br />
+                  Contact: Santosh Kumar | +91 6205789970<br />
+                  D-110 Bhagwati Vihar, Uttam Nagar East, New Delhi
                 </div>
               </div>
             </div>
@@ -6572,11 +6572,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                       </div>
                       <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
                         <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
-                        <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                        <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>ANIBLEND STUDIO</div>
                         <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
-                          GSTIN: 07AAGCF2334M1ZJ<br />
-                          PAN: AAGCF2334M<br />
-                          New Delhi, India
+                          PAN: KUPPK9759D<br />
+                          Contact: Santosh Kumar | +91 6205789970<br />
+                          D-110 Bhagwati Vihar, Uttam Nagar East, New Delhi
                         </div>
                       </div>
                     </div>
