@@ -5294,6 +5294,28 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     if (!selectedMonth && monthOptions.length > 0) setSelectedMonth(monthOptions[0])
   }, [monthOptions])
 
+  // ── Compute monthly P&L ──────────────────────────────────────────────────
+  const rateMap = new Map<string, ClientRate>()
+  rates.forEach(r => rateMap.set(r.client_code.toUpperCase(), r))
+
+  const getProjectMonth = (p: Project): string => {
+    const d = p.client_paid_date || p['Date Assigned'] || ''
+    if (!d) return 'Unknown'
+    const dt = new Date(d)
+    if (isNaN(dt.getTime())) return 'Unknown'
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[dt.getMonth()]} ${dt.getFullYear()}`
+  }
+
+  const getProjectRevenue = (p: Project): { revenue: number; clientCode: string; minutes: number } => {
+    const clientCode = extractClientCode(p.Project_ID || '')
+    const rate = rateMap.get(clientCode)
+    if (!rate) return { revenue: 0, clientCode, minutes: 0 }
+    const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
+    const revenue = rate.rate_type === 'flat' ? rate.rate_inr : rate.rate_inr * minutes
+    return { revenue: Math.round(revenue), clientCode, minutes }
+  }
+
   // Paid projects for selected month
   const paidProjectsThisMonth = projects.filter(p => {
     const isCorrectMonth = getProjectMonth(p) === selectedMonth
