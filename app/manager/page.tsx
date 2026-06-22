@@ -5294,6 +5294,38 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     if (!selectedMonth && monthOptions.length > 0) setSelectedMonth(monthOptions[0])
   }, [monthOptions])
 
+  // Paid projects for selected month
+  const paidProjectsThisMonth = projects.filter(p => {
+    const isCorrectMonth = getProjectMonth(p) === selectedMonth
+    const isPaid = ['Paid', 'Closed'].includes(p.Status || '') || p.Payment_Status === 'Paid'
+    return isCorrectMonth && isPaid
+  })
+
+  const allProjectsThisMonth = projects.filter(p => getProjectMonth(p) === selectedMonth)
+
+  // Revenue from paid projects
+  const totalRevenue = paidProjectsThisMonth.reduce((sum, p) => sum + getProjectRevenue(p).revenue, 0)
+
+  // Artist payouts for this month
+  const monthPayments = payments.filter(p => {
+    const pid = String(p['Project ID'] || '')
+    // Month: Jun 2026 format
+    const monthStr = selectedMonth // e.g. "Jun 2026"
+    // Convert to "Month: Jun 2026"
+    return pid === `Month: ${monthStr}` && String(p.Payment_Status || '').toLowerCase() === 'paid'
+  })
+  const totalArtistPayout = monthPayments.reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
+
+  // Overhead: ₹300 per paid project
+  const totalOverhead = paidProjectsThisMonth.length * overheadPerProject
+
+  // Misc expenses for this month
+  const monthMisc = miscEntries.filter(m => m.month === selectedMonth)
+  const totalMisc = monthMisc.reduce((sum, m) => sum + m.amount, 0)
+
+  // Net Profit
+  const netProfit = totalRevenue - totalArtistPayout - totalOverhead - totalMisc
+
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
   paidProjectsThisMonth.forEach(p => {
