@@ -9673,48 +9673,67 @@ export default function ManagerDashboard() {
   })
   const SidebarContent = () => (
     <>
-      <div className="p-5 border-b border-gray-100">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
+      {/* Sidebar Header with AniBlend Logo */}
+      <div style={{ background: '#2d3038', padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 52, height: 52, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <img
               src="/logo.png"
-              alt="Logo"
-              className="w-full h-full object-contain drop-shadow-md"
+              alt="AniBlend Studio"
+              style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'brightness(1.05)' }}
               onError={(e) => {
-                e.currentTarget.src = 'https://ui-avatars.com/api/?name=AniBlend&background=667eea&color=fff&rounded=true';
+                e.currentTarget.src = 'https://ui-avatars.com/api/?name=AB&background=2d3038&color=fff&rounded=true';
               }}
             />
           </div>
           <div>
-            <p className="font-bold text-gray-800 text-sm">AniBlend Dashboard</p>
-            <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
+            <p style={{ fontWeight: 800, color: '#ffffff', fontSize: 15, lineHeight: 1.2, letterSpacing: '-0.3px' }}>AniBlend</p>
+            <p style={{ fontWeight: 500, color: '#9ca3af', fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 }}>Studio</p>
           </div>
+        </div>
+        <div style={{ marginTop: 12, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.07)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 10 }}>{isHead ? '👑' : '🔧'}</span>
+          <span style={{ fontSize: 11, color: isHead ? '#c084fc' : '#94a3b8', fontWeight: 600 }}>{isHead ? 'Head Access' : 'Manager'}</span>
         </div>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+      <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto', background: '#2d3038' }}>
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSidebarOpen(false) }}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-            style={{ backgroundColor: activeTab === tab.id ? (darkMode ? '#312e81' : '#f0f0ff') : 'transparent', color: activeTab === tab.id ? (darkMode ? '#a5b4fc' : '#667eea') : (darkMode ? '#94a3b8' : '#64748b') }}>
-            <span>{tab.icon}</span>
-            {tab.label}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 12px', borderRadius: 10, fontSize: 13, fontWeight: 500,
+              transition: 'all 0.15s', border: 'none', cursor: 'pointer', marginBottom: 2,
+              backgroundColor: activeTab === tab.id ? 'rgba(255,255,255,0.13)' : 'transparent',
+              color: activeTab === tab.id ? '#ffffff' : '#9ca3af',
+              boxShadow: activeTab === tab.id ? 'inset 0 0 0 1px rgba(255,255,255,0.1)' : 'none'
+            }}
+            onMouseEnter={e => { if (activeTab !== tab.id) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#e5e7eb'; }}
+            onMouseLeave={e => { if (activeTab !== tab.id) { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af'; } }}>
+            <span style={{ fontSize: 16 }}>{tab.icon}</span>
+            <span>{tab.label}</span>
           </button>
         ))}
       </nav>
 
-      <div className="p-4 border-t border-gray-100 flex-shrink-0">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+      <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.08)', flexShrink: 0, background: '#2d3038' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff',
+            background: 'linear-gradient(135deg, #667eea, #764ba2)', flexShrink: 0
+          }}>
             {(user.full_name || user.email)[0].toUpperCase()}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-800 truncate">{user.full_name || user.email}</p>
-            <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: '#f3f4f6', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.full_name || user.email}</p>
+            <p style={{ fontSize: 11, color: isHead ? '#c084fc' : '#6b7280' }}>{isHead ? '👑 Head' : 'Manager'}</p>
           </div>
         </div>
-        <button onClick={handleLogout} className="w-full py-2 rounded-lg text-xs font-medium text-red-500 border border-red-200 hover:bg-red-50">Sign out</button>
+        <button onClick={handleLogout}
+          style={{ width: '100%', padding: '7px 0', borderRadius: 8, fontSize: 12, fontWeight: 600, color: '#f87171', border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', cursor: 'pointer' }}>
+          Sign out
+        </button>
       </div>
     </>
   )
@@ -9722,7 +9741,7 @@ export default function ManagerDashboard() {
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: darkMode ? '#0f172a' : '#f8fafc' }}>
       {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex-col bg-white border-r border-gray-100 shadow-sm hidden lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex-col hidden lg:flex" style={{ background: '#2d3038', boxShadow: '4px 0 24px rgba(0,0,0,0.25)' }}>
         <SidebarContent />
       </aside>
 
@@ -9730,11 +9749,14 @@ export default function ManagerDashboard() {
       {sidebarOpen && <div className="fixed inset-0 z-30 bg-black bg-opacity-40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
       {/* Mobile Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex flex-col bg-white border-r border-gray-100 shadow-lg lg:hidden transition-transform"
-        style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <span className="font-bold text-gray-800">AniBlend Dashboard</span>
-          <button onClick={() => setSidebarOpen(false)} className="text-gray-400 text-xl">✕</button>
+      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex flex-col lg:hidden transition-transform"
+        style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)', background: '#2d3038', boxShadow: '4px 0 24px rgba(0,0,0,0.35)' }}>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/logo.png" alt="AniBlend" style={{ width: 36, height: 36, objectFit: 'contain' }} />
+            <span style={{ fontWeight: 800, color: '#fff', fontSize: 15 }}>AniBlend Studio</span>
+          </div>
+          <button onClick={() => setSidebarOpen(false)} style={{ color: '#9ca3af', fontSize: 20, background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>
         <SidebarContent />
       </aside>
