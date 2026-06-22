@@ -5232,8 +5232,8 @@ function extractClientCode(projectId: string): string {
   return last.replace(/\d+$/, '').toUpperCase()
 }
 
-function parseDurationMinutes(duration: string | undefined | null, projectId: string): number {
-  if (!duration) {
+function parseDurationMinutes(duration: any, projectId: string): number {
+  if (duration === undefined || duration === null || duration === '') {
     // Try to extract from project ID e.g. "1563_67_PGS" → 67 seconds
     const parts = (projectId || '').split('_')
     if (parts.length >= 2) {
@@ -5242,8 +5242,9 @@ function parseDurationMinutes(duration: string | undefined | null, projectId: st
     }
     return 0
   }
+  if (typeof duration === 'number') return duration < 10 ? duration : duration / 60;
   // Parse "1:23", "83s", "1m23s", "83"
-  const s = duration.trim()
+  const s = String(duration).trim()
   if (s.includes(':')) {
     const [m, sec] = s.split(':').map(Number)
     return (m || 0) + (sec || 0) / 60
@@ -5274,20 +5275,27 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
   const [miscAmount, setMiscAmount] = useState('')
   const [addingMisc, setAddingMisc] = useState(false)
 
-  // Generate month options
+  // Generate month options safely (avoid toLocaleDateString hydration mismatch)
   const monthOptions = (() => {
     const opts: string[] = []
     const now = new Date()
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     for (let i = 0; i < 13; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+      opts.push(`${months[d.getMonth()]} ${d.getFullYear()}`)
     }
     return opts
   })()
 
+  // Use useEffect to set selected month safely on client side
+  const [isClient, setIsClient] = useState(false)
   useEffect(() => {
+    setIsClient(true)
     if (!selectedMonth && monthOptions.length > 0) setSelectedMonth(monthOptions[0])
   }, [monthOptions])
+
+  // Don't render complex UI until client-side hydration is complete
+  if (!isClient) return <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>Loading Profit Tracker...</div>
 
   // Load rates from Supabase
   useEffect(() => {
@@ -5388,7 +5396,8 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     if (!d) return 'Unknown'
     const dt = new Date(d)
     if (isNaN(dt.getTime())) return 'Unknown'
-    return dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[dt.getMonth()]} ${dt.getFullYear()}`
   }
 
   const getProjectRevenue = (p: Project): { revenue: number; clientCode: string; minutes: number } => {
