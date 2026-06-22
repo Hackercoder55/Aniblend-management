@@ -5205,6 +5205,572 @@ function NotesTab({ user }: { user: DashboardUser }) {
   )
 }
 
+// ─── Profit Tracker Tab ─────────────────────────────────────────────────
+
+interface ClientRate {
+  id?: string
+  client_code: string        // e.g. "HN", "PGS"
+  label: string              // Display name
+  rate_inr: number           // Rate in INR
+  rate_type: 'flat' | 'per_minute'  // flat = per project, per_minute = per minute of video
+  notes?: string
+}
+
+const DEFAULT_RATES: ClientRate[] = [
+  { client_code: 'HN',   label: 'HN',   rate_inr: 6600,  rate_type: 'flat',       notes: '~$70/project' },
+  { client_code: 'PGS',  label: 'PGS',  rate_inr: 10000, rate_type: 'per_minute', notes: '~$120/min' },
+  { client_code: 'MDSC', label: 'MDSC', rate_inr: 7000,  rate_type: 'per_minute', notes: '~$85/min' },
+  { client_code: 'MRC',  label: 'MRC',  rate_inr: 7000,  rate_type: 'flat',       notes: '₹7000/project' },
+  { client_code: 'WN',   label: 'WN',   rate_inr: 11200, rate_type: 'per_minute', notes: '~$120/min' },
+]
+
+function extractClientCode(projectId: string): string {
+  // Project IDs like "1563_67_PGS" → last segment after underscore
+  const parts = projectId.split('_')
+  const last = parts[parts.length - 1]
+  // Strip trailing digits (e.g. "PGS2" → "PGS")
+  return last.replace(/\d+$/, '').toUpperCase()
+}
+
+function parseDurationMinutes(duration: string | undefined | null, projectId: string): number {
+  if (!duration) {
+    // Try to extract from project ID e.g. "1563_67_PGS" → 67 seconds
+    const parts = (projectId || '').split('_')
+    if (parts.length >= 2) {
+      const sec = parseInt(parts[1], 10)
+      if (!isNaN(sec)) return sec / 60
+    }
+    return 0
+  }
+  // Parse "1:23", "83s", "1m23s", "83"
+  const s = duration.trim()
+  if (s.includes(':')) {
+    const [m, sec] = s.split(':').map(Number)
+    return (m || 0) + (sec || 0) / 60
+  }
+  const secMatch = s.match(/(\d+)\s*s/i)
+  if (secMatch) return parseInt(secMatch[1]) / 60
+  const minMatch = s.match(/(\d+)\s*m/i)
+  if (minMatch) return parseInt(minMatch[1])
+  const num = parseFloat(s)
+  if (!isNaN(num)) return num < 10 ? num : num / 60  // if > 10, likely seconds
+  return 0
+}
+
+function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animators: Animator[] }) {
+  const { addToast } = useToast()
+  const [rates, setRates] = useState<ClientRate[]>(DEFAULT_RATES)
+  const [loadingRates, setLoadingRates] = useState(true)
+  const [payments, setPayments] = useState<any[]>([])
+  const [overheadPerProject, setOverheadPerProject] = useState<number>(300)
+  const [miscEntries, setMiscEntries] = useState<{ id: string; label: string; amount: number; month: string }[]>([])
+  const [selectedMonth, setSelectedMonth] = useState<string>('')
+  const [showRateEditor, setShowRateEditor] = useState(false)
+  const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
+  const [newRate, setNewRate] = useState<ClientRate>({ client_code: '', label: '', rate_inr: 0, rate_type: 'flat', notes: '' })
+  const [addingRate, setAddingRate] = useState(false)
+  const [savingRate, setSavingRate] = useState(false)
+  const [miscLabel, setMiscLabel] = useState('')
+  const [miscAmount, setMiscAmount] = useState('')
+  const [addingMisc, setAddingMisc] = useState(false)
+
+  // Generate month options
+  const monthOptions = (() => {
+    const opts: string[] = []
+    const now = new Date()
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
+
+  useEffect(() => {
+    if (!selectedMonth && monthOptions.length > 0) setSelectedMonth(monthOptions[0])
+  }, [monthOptions])
+
+  // Load rates from Supabase
+  useEffect(() => {
+    setLoadingRates(true)
+    apiClient.from('client_rates').select('*').then(({ data }: { data: any }) => {
+      if (data && data.length > 0) {
+        setRates(data as ClientRate[])
+      } else {
+        // First time — seed defaults
+        setRates(DEFAULT_RATES)
+      }
+      setLoadingRates(false)
+    }).catch(() => {
+      setRates(DEFAULT_RATES)
+      setLoadingRates(false)
+    })
+  }, [])
+
+  // Load payments + misc from DB
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      setPayments((data as any[]) || [])
+    })
+    // Load misc expenses
+    apiClient.from('misc_expenses').select('*').then(({ data }: { data: any }) => {
+      if (data) setMiscEntries(data as any[])
+    }).catch(() => {})
+  }, [])
+
+  // Save/update a rate
+  const saveRate = async (rate: ClientRate) => {
+    setSavingRate(true)
+    try {
+      if (rate.id) {
+        const { error } = await apiClient.from('client_rates').update({
+          label: rate.label, rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
+        }).match({ id: rate.id })
+        if (error) throw new Error((error as any).message)
+        setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
+      } else {
+        const { data, error } = await apiClient.from('client_rates').insert({
+          client_code: rate.client_code.toUpperCase(), label: rate.label,
+          rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
+        }).select().single()
+        if (error) throw new Error((error as any).message)
+        setRates(prev => [...prev, data as ClientRate])
+      }
+      addToast(`✅ Rate saved for ${rate.client_code}`)
+      setEditingRate(null)
+      setAddingRate(false)
+    } catch (e: any) {
+      addToast(`⚠️ Could not save to DB — using local only: ${e.message}`, 'error')
+      // Still update locally
+      if (rate.id) {
+        setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
+      } else {
+        setRates(prev => [...prev, { ...rate, id: Date.now().toString(), client_code: rate.client_code.toUpperCase() }])
+      }
+      setEditingRate(null)
+      setAddingRate(false)
+    }
+    setSavingRate(false)
+  }
+
+  const deleteRate = async (rate: ClientRate) => {
+    if (!window.confirm(`Delete rate for ${rate.client_code}?`)) return
+    if (rate.id) {
+      await apiClient.from('client_rates').delete().match({ id: rate.id })
+    }
+    setRates(prev => prev.filter(r => r.client_code !== rate.client_code))
+    addToast(`Deleted rate for ${rate.client_code}`)
+  }
+
+  const addMisc = async () => {
+    if (!miscLabel || !miscAmount || !selectedMonth) return
+    const entry = { label: miscLabel, amount: parseFloat(miscAmount), month: selectedMonth, id: Date.now().toString() }
+    setMiscEntries(prev => [...prev, entry])
+    try {
+      await apiClient.from('misc_expenses').insert(entry)
+    } catch {}
+    setMiscLabel('')
+    setMiscAmount('')
+    setAddingMisc(false)
+    addToast('✅ Misc expense added')
+  }
+
+  const deleteMisc = async (id: string) => {
+    setMiscEntries(prev => prev.filter(m => m.id !== id))
+    try { await apiClient.from('misc_expenses').delete().match({ id }) } catch {}
+  }
+
+  // ── Compute monthly P&L ──────────────────────────────────────────────────
+  const rateMap = new Map<string, ClientRate>()
+  rates.forEach(r => rateMap.set(r.client_code.toUpperCase(), r))
+
+  const getProjectMonth = (p: Project): string => {
+    const d = p.client_paid_date || p['Date Assigned'] || ''
+    if (!d) return 'Unknown'
+    const dt = new Date(d)
+    if (isNaN(dt.getTime())) return 'Unknown'
+    return dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+  }
+
+  const getProjectRevenue = (p: Project): { revenue: number; clientCode: string; minutes: number } => {
+    const clientCode = extractClientCode(p.Project_ID || '')
+    const rate = rateMap.get(clientCode)
+    if (!rate) return { revenue: 0, clientCode, minutes: 0 }
+    const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
+    const revenue = rate.rate_type === 'flat' ? rate.rate_inr : rate.rate_inr * minutes
+    return { revenue: Math.round(revenue), clientCode, minutes }
+  }
+
+  // Paid projects for selected month
+  const paidProjectsThisMonth = projects.filter(p => {
+    const isCorrectMonth = getProjectMonth(p) === selectedMonth
+    const isPaid = ['Paid', 'Closed'].includes(p.Status || '') || p.Payment_Status === 'Paid'
+    return isCorrectMonth && isPaid
+  })
+
+  const allProjectsThisMonth = projects.filter(p => getProjectMonth(p) === selectedMonth)
+
+  // Revenue from paid projects
+  const totalRevenue = paidProjectsThisMonth.reduce((sum, p) => sum + getProjectRevenue(p).revenue, 0)
+
+  // Artist payouts for this month
+  const monthPayments = payments.filter(p => {
+    const pid = String(p['Project ID'] || '')
+    // Month: Jun 2026 format
+    const monthStr = selectedMonth // e.g. "Jun 2026"
+    // Convert to "Month: Jun 2026"
+    return pid === `Month: ${monthStr}` && String(p.Payment_Status || '').toLowerCase() === 'paid'
+  })
+  const totalArtistPayout = monthPayments.reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
+
+  // Overhead: ₹300 per paid project
+  const totalOverhead = paidProjectsThisMonth.length * overheadPerProject
+
+  // Misc expenses for this month
+  const monthMisc = miscEntries.filter(m => m.month === selectedMonth)
+  const totalMisc = monthMisc.reduce((sum, m) => sum + m.amount, 0)
+
+  // Net Profit
+  const netProfit = totalRevenue - totalArtistPayout - totalOverhead - totalMisc
+
+  // Revenue breakdown by client
+  const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
+  paidProjectsThisMonth.forEach(p => {
+    const { revenue, clientCode, minutes } = getProjectRevenue(p)
+    if (!revenueByClient[clientCode]) revenueByClient[clientCode] = { revenue: 0, count: 0, minutes: 0 }
+    revenueByClient[clientCode].revenue += revenue
+    revenueByClient[clientCode].count++
+    revenueByClient[clientCode].minutes += minutes
+  })
+
+  const fmt = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+  const pct = (n: number, total: number) => total > 0 ? ((n / total) * 100).toFixed(1) : '0'
+
+  return (
+    <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto' }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: '#111', margin: 0 }}>💹 Profit Tracker</h2>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Month selector */}
+          <select
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(e.target.value)}
+            style={{ padding: '8px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', cursor: 'pointer' }}
+          >
+            {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          {/* Overhead per project */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fef3c7', borderRadius: 10, padding: '6px 12px', border: '1px solid #fcd34d' }}>
+            <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>Overhead/project:</span>
+            <span style={{ fontSize: 12, color: '#92400e' }}>₹</span>
+            <input
+              type="number"
+              value={overheadPerProject}
+              onChange={e => setOverheadPerProject(Number(e.target.value))}
+              style={{ width: 60, border: 'none', background: 'transparent', fontSize: 13, fontWeight: 700, color: '#92400e', outline: 'none' }}
+            />
+          </div>
+          <button
+            onClick={() => setShowRateEditor(v => !v)}
+            style={{ padding: '8px 16px', borderRadius: 10, background: showRateEditor ? '#1e293b' : '#f1f5f9', color: showRateEditor ? '#fff' : '#374151', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer' }}
+          >
+            ⚙️ Client Rates
+          </button>
+        </div>
+      </div>
+
+      {/* ── Client Rates Editor ── */}
+      {showRateEditor && (
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20, marginBottom: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 800, color: '#111', margin: 0 }}>Client Pricing Rates</h3>
+            <button
+              onClick={() => setAddingRate(true)}
+              style={{ padding: '7px 16px', borderRadius: 9, background: 'linear-gradient(135deg,#667eea,#764ba2)', color: '#fff', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer' }}
+            >
+              + New Client
+            </button>
+          </div>
+
+          {loadingRates ? (
+            <p style={{ color: '#9ca3af', fontSize: 14 }}>Loading rates...</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {rates.map(rate => (
+                <div key={rate.client_code} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e5e7eb' }}>
+                  {editingRate?.client_code === rate.client_code ? (
+                    <>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: '#667eea', minWidth: 60 }}>{rate.client_code}</span>
+                      <input
+                        value={editingRate.label}
+                        onChange={e => setEditingRate({ ...editingRate, label: e.target.value })}
+                        placeholder="Label"
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13, width: 90 }}
+                      />
+                      <input
+                        type="number"
+                        value={editingRate.rate_inr}
+                        onChange={e => setEditingRate({ ...editingRate, rate_inr: Number(e.target.value) })}
+                        placeholder="Rate (₹)"
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13, width: 100 }}
+                      />
+                      <select
+                        value={editingRate.rate_type}
+                        onChange={e => setEditingRate({ ...editingRate, rate_type: e.target.value as 'flat' | 'per_minute' })}
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13 }}
+                      >
+                        <option value="flat">Flat / project</option>
+                        <option value="per_minute">Per minute</option>
+                      </select>
+                      <input
+                        value={editingRate.notes || ''}
+                        onChange={e => setEditingRate({ ...editingRate, notes: e.target.value })}
+                        placeholder="Notes"
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13, flex: 1 }}
+                      />
+                      <button onClick={() => saveRate(editingRate)} disabled={savingRate}
+                        style={{ padding: '6px 14px', borderRadius: 8, background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        {savingRate ? '...' : 'Save'}
+                      </button>
+                      <button onClick={() => setEditingRate(null)}
+                        style={{ padding: '6px 12px', borderRadius: 8, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: '#667eea', minWidth: 60 }}>{rate.client_code}</span>
+                      <span style={{ fontSize: 14, color: '#374151', fontWeight: 600, flex: 1 }}>{fmt(rate.rate_inr)} <span style={{ color: '#9ca3af', fontSize: 12, fontWeight: 400 }}>/ {rate.rate_type === 'flat' ? 'project' : 'minute'}</span></span>
+                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{rate.notes}</span>
+                      <button onClick={() => setEditingRate({ ...rate })}
+                        style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f0ff', color: '#667eea', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        Edit
+                      </button>
+                      <button onClick={() => deleteRate(rate)}
+                        style={{ padding: '5px 10px', borderRadius: 8, background: '#fef2f2', color: '#ef4444', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        ✕
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+
+              {/* Add new rate form */}
+              {addingRate && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#f0f9ff', borderRadius: 12, border: '1.5px dashed #93c5fd', flexWrap: 'wrap' }}>
+                  <input
+                    value={newRate.client_code}
+                    onChange={e => setNewRate({ ...newRate, client_code: e.target.value.toUpperCase() })}
+                    placeholder="Code (e.g. XYZ)"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, width: 90, fontWeight: 700 }}
+                  />
+                  <input
+                    value={newRate.label}
+                    onChange={e => setNewRate({ ...newRate, label: e.target.value })}
+                    placeholder="Label"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, width: 90 }}
+                  />
+                  <input
+                    type="number"
+                    value={newRate.rate_inr || ''}
+                    onChange={e => setNewRate({ ...newRate, rate_inr: Number(e.target.value) })}
+                    placeholder="Rate ₹"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, width: 100 }}
+                  />
+                  <select
+                    value={newRate.rate_type}
+                    onChange={e => setNewRate({ ...newRate, rate_type: e.target.value as 'flat' | 'per_minute' })}
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13 }}
+                  >
+                    <option value="flat">Flat / project</option>
+                    <option value="per_minute">Per minute</option>
+                  </select>
+                  <input
+                    value={newRate.notes || ''}
+                    onChange={e => setNewRate({ ...newRate, notes: e.target.value })}
+                    placeholder="Notes (e.g. ~$120/min)"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, flex: 1 }}
+                  />
+                  <button
+                    onClick={() => saveRate(newRate)}
+                    disabled={!newRate.client_code || !newRate.rate_inr || savingRate}
+                    style={{ padding: '7px 16px', borderRadius: 9, background: '#667eea', color: '#fff', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer', opacity: (!newRate.client_code || !newRate.rate_inr) ? 0.5 : 1 }}>
+                    {savingRate ? '...' : '✓ Add'}
+                  </button>
+                  <button onClick={() => { setAddingRate(false); setNewRate({ client_code: '', label: '', rate_inr: 0, rate_type: 'flat', notes: '' }) }}
+                    style={{ padding: '7px 12px', borderRadius: 9, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 13, border: 'none', cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 12 }}>
+            💡 Client code is matched from the last part of Project ID (e.g. <code>1563_67_PGS</code> → PGS). Rates are saved to database.
+          </p>
+        </div>
+      )}
+
+      {/* ── P&L Summary Cards ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+        {[
+          { label: 'Gross Revenue', value: totalRevenue, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${paidProjectsThisMonth.length} paid projects` },
+          { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '👨‍🎨', sub: `${monthPayments.length} animators paid` },
+          { label: 'Overhead', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${paidProjectsThisMonth.length}` },
+          { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${monthMisc.length} entries` },
+          { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, totalRevenue)}%`, bold: true },
+        ].map(card => (
+          <div key={card.label} style={{ background: card.bg, borderRadius: 14, padding: '16px 18px', border: `1.5px solid ${card.color}22` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 20 }}>{card.icon}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{card.label}</span>
+            </div>
+            <div style={{ fontSize: card.bold ? 24 : 20, fontWeight: 800, color: card.color }}>{fmt(card.value)}</div>
+            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>{card.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        {/* ── Revenue by Client ── */}
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', marginBottom: 14, margin: '0 0 14px' }}>Revenue by Client — {selectedMonth}</h3>
+          {Object.keys(revenueByClient).length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No paid projects for {selectedMonth} yet.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {Object.entries(revenueByClient).sort((a, b) => b[1].revenue - a[1].revenue).map(([code, data]) => (
+                <div key={code} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontWeight: 800, color: '#667eea', minWidth: 50, fontSize: 13 }}>{code}</span>
+                  <div style={{ flex: 1, background: '#f1f5f9', borderRadius: 8, height: 10, overflow: 'hidden' }}>
+                    <div style={{ width: `${pct(data.revenue, totalRevenue)}%`, height: '100%', background: 'linear-gradient(90deg,#667eea,#10b981)', borderRadius: 8, transition: 'width 0.5s' }} />
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#374151', minWidth: 80, textAlign: 'right' }}>{fmt(data.revenue)}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af', minWidth: 40 }}>{data.count}p{rateMap.get(code)?.rate_type === 'per_minute' ? ` · ${data.minutes.toFixed(1)}m` : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Misc Expenses ── */}
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Miscellaneous Expenses</h3>
+            <button onClick={() => setAddingMisc(v => !v)}
+              style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f0ff', color: '#667eea', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+              + Add
+            </button>
+          </div>
+
+          {addingMisc && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <input
+                value={miscLabel}
+                onChange={e => setMiscLabel(e.target.value)}
+                placeholder="Description"
+                style={{ flex: 1, minWidth: 120, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <input
+                type="number"
+                value={miscAmount}
+                onChange={e => setMiscAmount(e.target.value)}
+                placeholder="Amount ₹"
+                style={{ width: 90, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <button onClick={addMisc} style={{ padding: '7px 14px', borderRadius: 8, background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>Add</button>
+              <button onClick={() => setAddingMisc(false)} style={{ padding: '7px 10px', borderRadius: 8, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 12, border: 'none', cursor: 'pointer' }}>✕</button>
+            </div>
+          )}
+
+          {monthMisc.length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No misc expenses for {selectedMonth}.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {monthMisc.map(m => (
+                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#faf5ff', borderRadius: 10, border: '1px solid #e9d5ff' }}>
+                  <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{m.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#8b5cf6' }}>{fmt(m.amount)}</span>
+                  <button onClick={() => deleteMisc(m.id)} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Project-level breakdown ── */}
+      <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Project Breakdown — {selectedMonth}</h3>
+          <span style={{ fontSize: 12, color: '#9ca3af' }}>{allProjectsThisMonth.length} total · {paidProjectsThisMonth.length} paid</span>
+        </div>
+        {allProjectsThisMonth.length === 0 ? (
+          <p style={{ padding: 20, color: '#9ca3af', fontSize: 13 }}>No projects for this month.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', color: '#6b7280', fontSize: 12, fontWeight: 700 }}>
+                  {['Project ID', 'Title', 'Client', 'Duration', 'Revenue', 'Status', 'Overhead'].map(h => (
+                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allProjectsThisMonth.map(p => {
+                  const { revenue, clientCode, minutes } = getProjectRevenue(p)
+                  const isPaid = ['Paid', 'Closed'].includes(p.Status || '') || p.Payment_Status === 'Paid'
+                  const unknownClient = !rateMap.has(clientCode)
+                  return (
+                    <tr key={p.Project_ID} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#667eea', fontFamily: 'monospace' }}>{p.Project_ID}</td>
+                      <td style={{ padding: '10px 14px', color: '#374151', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.Project_title || '—'}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ fontWeight: 700, color: unknownClient ? '#ef4444' : '#374151', fontSize: 12, background: unknownClient ? '#fef2f2' : '#f1f5f9', padding: '2px 8px', borderRadius: 6 }}>
+                          {clientCode || '?'}{unknownClient && ' ⚠️'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px', color: '#6b7280' }}>
+                        {minutes > 0 ? `${minutes.toFixed(2)}m` : p.Duration || '—'}
+                      </td>
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: isPaid ? '#10b981' : '#9ca3af' }}>
+                        {isPaid ? fmt(revenue) : '—'}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
+                          background: isPaid ? '#ecfdf5' : p.Status === 'Approved' ? '#eff6ff' : '#fef3c7',
+                          color: isPaid ? '#059669' : p.Status === 'Approved' ? '#2563eb' : '#92400e'
+                        }}>
+                          {p.Status || 'Unknown'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px', color: isPaid ? '#f59e0b' : '#d1d5db', fontWeight: 600 }}>
+                        {isPaid ? `-${fmt(overheadPerProject)}` : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Unknown client warning */}
+      {allProjectsThisMonth.some(p => !rateMap.has(extractClientCode(p.Project_ID || ''))) && (
+        <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 12, fontSize: 13, color: '#92400e' }}>
+          ⚠️ Some projects have unknown client codes. Go to <strong>⚙️ Client Rates</strong> above and add the missing client to include their revenue.
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
 
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
@@ -5870,7 +6436,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; leadOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -5883,6 +6449,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; l
   { id: 'create', label: 'Create Project', icon: '➕', managerOnly: true },
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payouts', label: 'Payout Calculator', icon: '🧭', managerOnly: true },
+  { id: 'profit', label: 'Profit Tracker', icon: '💹', managerOnly: true },
   { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
   { id: 'users', label: 'User Management', icon: '🔐', managerOnly: true },
@@ -9820,6 +10387,7 @@ export default function ManagerDashboard() {
               {activeTab === 'lead_payments' && <LeadPaymentsTab projects={projects} user={user} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
+              {activeTab === 'profit' && <ProfitTrackerTab projects={projects} animators={animators} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
