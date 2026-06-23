@@ -5405,7 +5405,8 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     if (!rate) return { revenue: 0, clientCode, minutes: 0 }
     const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
     const revenue = rate.rate_type === 'flat' ? rate.rate_inr : rate.rate_inr * minutes
-    return { revenue: Math.round(revenue), clientCode, minutes }
+    const finalRevenue = isNaN(revenue) ? 0 : Math.round(revenue);
+    return { revenue: finalRevenue, clientCode, minutes }
   }
 
   // Paid projects for selected month
@@ -5428,8 +5429,11 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     // Convert to "Month: Jun 2026"
     return pid === `Month: ${monthStr}` && String(p.Payment_Status || '').toLowerCase() === 'paid'
   })
-  const totalArtistPayout = monthPayments.reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0)
-
+  const totalArtistPayout = monthPayments.reduce((sum, p) => {
+    const val = Number(p.net_paid);
+    return sum + (isNaN(val) ? 0 : val);
+  }, 0)
+  
   // Overhead: ₹300 per paid project
   const totalOverhead = paidProjectsThisMonth.length * overheadPerProject
 
@@ -5438,7 +5442,11 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
   const totalMisc = monthMisc.reduce((sum, m) => sum + m.amount, 0)
 
   // Net Profit
-  const netProfit = totalRevenue - totalArtistPayout - totalOverhead - totalMisc
+  const safeTotalRevenue = isNaN(totalRevenue) ? 0 : totalRevenue
+  const safeTotalArtistPayout = isNaN(totalArtistPayout) ? 0 : totalArtistPayout
+  const safeTotalOverhead = isNaN(totalOverhead) ? 0 : totalOverhead
+  const safeTotalMisc = isNaN(totalMisc) ? 0 : totalMisc
+  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc
 
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
@@ -5450,8 +5458,11 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     revenueByClient[clientCode].minutes += minutes
   })
 
-  const fmt = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
-  const pct = (n: number, total: number) => total > 0 ? ((n / total) * 100).toFixed(1) : '0'
+  const fmt = (n: number) => {
+    if (isNaN(n) || n === undefined || n === null) return '₹0'
+    return `₹${Math.round(n).toLocaleString('en-IN')}`
+  }
+  const pct = (n: number, total: number) => (total > 0 && !isNaN(n) && !isNaN(total)) ? ((n / total) * 100).toFixed(1) : '0'
 
   // Don't render complex UI until client-side hydration is complete
   if (!isClient) return <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>Loading Profit Tracker...</div>
