@@ -5224,18 +5224,19 @@ const DEFAULT_RATES: ClientRate[] = [
   { client_code: 'WN',   label: 'WN',   rate_inr: 11200, rate_type: 'per_minute', notes: '~$120/min' },
 ]
 
-function extractClientCode(projectId: string): string {
+function extractClientCode(projectId: any): string {
+  if (!projectId) return ''
   // Project IDs like "1563_67_PGS" → last segment after underscore
-  const parts = projectId.split('_')
-  const last = parts[parts.length - 1]
+  const parts = String(projectId).split('_')
+  const last = parts[parts.length - 1] || ''
   // Strip trailing digits (e.g. "PGS2" → "PGS")
   return last.replace(/\d+$/, '').toUpperCase()
 }
 
-function parseDurationMinutes(duration: any, projectId: string): number {
+function parseDurationMinutes(duration: any, projectId: any): number {
   if (duration === undefined || duration === null || duration === '') {
     // Try to extract from project ID e.g. "1563_67_PGS" → 67 seconds
-    const parts = (projectId || '').split('_')
+    const parts = String(projectId || '').split('_')
     if (parts.length >= 2) {
       const sec = parseInt(parts[1], 10)
       if (!isNaN(sec)) return sec / 60
@@ -5296,7 +5297,7 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
 
   // ── Compute monthly P&L ──────────────────────────────────────────────────
   const rateMap = new Map<string, ClientRate>()
-  rates.forEach(r => rateMap.set(r.client_code.toUpperCase(), r))
+  rates.forEach(r => rateMap.set(String(r.client_code || '').toUpperCase(), r))
 
   const getProjectMonth = (p: Project): string => {
     const d = p.client_paid_date || p['Date Assigned'] || ''
