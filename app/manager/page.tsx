@@ -1762,6 +1762,21 @@ We will notify you here once the payment has been sent. Thank you for your excel
     setIsUpdating(false)
   }
 
+  const handleMarkClientPaid = async (project: Project) => {
+    setIsUpdating(true)
+    const { error } = await apiClient.from('projects').update({
+      client_paid_date: new Date().toISOString()
+    }).eq('Project_ID', project.Project_ID)
+
+    if (!error) {
+      addToast(`✅ Marked ${project.Project_ID} as Paid by Client`)
+      onRefresh()
+    } else {
+      addToast(`❌ Failed to mark as paid: ${error.message}`, 'error')
+    }
+    setIsUpdating(false)
+  }
+
   const statuses = ['All', 'Ongoing', 'Pending', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed']
 
   return (
@@ -1989,6 +2004,15 @@ We will notify you here once the payment has been sent. Thank you for your excel
                               style={{ backgroundColor: '#10b981' }}>
                               {approving === p.Project_ID ? '...' : 'Approve'}
                             </button>
+                          )}
+                          {!p.client_paid_date ? (
+                            <button onClick={() => handleMarkClientPaid(p)} disabled={isUpdating} className="px-3 py-1 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-medium border border-green-200 transition-colors whitespace-nowrap">
+                              💰 Mark Client Paid
+                            </button>
+                          ) : (
+                            <span className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-xs font-medium border border-green-200 whitespace-nowrap">
+                              ✅ Client Paid
+                            </span>
                           )}
                         </>
                       )}
@@ -5408,9 +5432,10 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
 
   // Paid projects for selected month
   const paidProjectsThisMonth = projects.filter(p => {
+    // Strictly filter based on the Client Paid date
+    if (!p.client_paid_date) return false
     const isCorrectMonth = getProjectMonth(p) === selectedMonth
-    const isPaid = ['Paid', 'Closed'].includes(p.Status || '') || p.Payment_Status === 'Paid'
-    return isCorrectMonth && isPaid
+    return isCorrectMonth
   })
 
   const allProjectsThisMonth = projects.filter(p => getProjectMonth(p) === selectedMonth)
