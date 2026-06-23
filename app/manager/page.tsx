@@ -5296,8 +5296,9 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
   }, [monthOptions])
 
   // ── Compute monthly P&L ──────────────────────────────────────────────────
-  const rateMap = new Map<string, ClientRate>()
-  rates.forEach(r => rateMap.set(String(r.client_code || '').toUpperCase(), r))
+  try {
+    const rateMap = new Map<string, ClientRate>()
+    rates.forEach(r => rateMap.set(String(r.client_code || '').toUpperCase(), r))
 
   const getProjectMonth = (p: Project): string => {
     const d = p.client_paid_date || p['Date Assigned'] || ''
@@ -5689,6 +5690,22 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
       )}
     </div>
   )
+  } catch (err: any) {
+    return (
+      <div style={{ padding: '40px 24px', maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ background: '#fee2e2', borderRadius: 16, border: '2px solid #ef4444', padding: 32 }}>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: '#991b1b', marginBottom: 12 }}>⚠️ Profit Tracker Crashed</h2>
+          <p style={{ fontSize: 16, color: '#b91c1c', marginBottom: 24 }}>An unexpected error occurred while calculating the profits.</p>
+          <div style={{ background: '#7f1d1d', color: '#fca5a5', padding: 16, borderRadius: 8, textAlign: 'left', overflowX: 'auto', fontFamily: 'monospace', fontSize: 13 }}>
+            <strong>Error Message:</strong> {err.message}
+            <br/><br/>
+            <strong>Stack Trace:</strong><br/>
+            {err.stack}
+          </div>
+        </div>
+      </div>
+    )
+  }
 }
 
 // ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
