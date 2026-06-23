@@ -5306,9 +5306,6 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
         setRates(DEFAULT_RATES)
       }
       setLoadingRates(false)
-    }).catch(() => {
-      setRates(DEFAULT_RATES)
-      setLoadingRates(false)
     })
   }, [])
 
@@ -5316,11 +5313,11 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
   useEffect(() => {
     apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
       setPayments((data as any[]) || [])
-    }).catch(() => {})
+    })
     // Load misc expenses
     apiClient.from('misc_expenses').select('*').then(({ data }: { data: any }) => {
       if (data) setMiscEntries(data as any[])
-    }).catch(() => {})
+    })
   }, [])
 
   // Save/update a rate
