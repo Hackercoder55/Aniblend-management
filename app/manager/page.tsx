@@ -5295,6 +5295,96 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     if (!selectedMonth && monthOptions.length > 0) setSelectedMonth(monthOptions[0])
   }, [monthOptions])
 
+  // Load rates from Supabase
+  useEffect(() => {
+    setLoadingRates(true)
+    apiClient.from('client_rates').select('*').then(({ data }: { data: any }) => {
+      if (data && data.length > 0) {
+        setRates(data as ClientRate[])
+      } else {
+        // First time — seed defaults
+        setRates(DEFAULT_RATES)
+      }
+      setLoadingRates(false)
+    }).catch(() => {
+      setRates(DEFAULT_RATES)
+      setLoadingRates(false)
+    })
+  }, [])
+
+  // Load payments + misc from DB
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      setPayments((data as any[]) || [])
+    })
+    // Load misc expenses
+    apiClient.from('misc_expenses').select('*').then(({ data }: { data: any }) => {
+      if (data) setMiscEntries(data as any[])
+    }).catch(() => {})
+  }, [])
+
+  // Save/update a rate
+  const saveRate = async (rate: ClientRate) => {
+    setSavingRate(true)
+    try {
+      if (rate.id) {
+        const { error } = await apiClient.from('client_rates').update({
+          label: rate.label, rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
+        }).match({ id: rate.id })
+        if (error) throw new Error((error as any).message)
+        setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
+      } else {
+        const { data, error } = await apiClient.from('client_rates').insert({
+          client_code: String(rate.client_code || '').toUpperCase(), label: rate.label,
+          rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
+        }).select().single()
+        if (error) throw new Error((error as any).message)
+        setRates(prev => [...prev, data as ClientRate])
+      }
+      addToast(`✅ Rate saved for ${rate.client_code}`)
+      setEditingRate(null)
+      setAddingRate(false)
+    } catch (e: any) {
+      addToast(`⚠️ Could not save to DB — using local only: ${e.message}`, 'error')
+      // Still update locally
+      if (rate.id) {
+        setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
+      } else {
+        setRates(prev => [...prev, { ...rate, id: Date.now().toString(), client_code: String(rate.client_code || '').toUpperCase() }])
+      }
+      setEditingRate(null)
+      setAddingRate(false)
+    }
+    setSavingRate(false)
+  }
+
+  const deleteRate = async (rate: ClientRate) => {
+    if (!window.confirm(`Delete rate for ${rate.client_code}?`)) return
+    if (rate.id) {
+      await apiClient.from('client_rates').delete().match({ id: rate.id })
+    }
+    setRates(prev => prev.filter(r => r.client_code !== rate.client_code))
+    addToast(`Deleted rate for ${rate.client_code}`)
+  }
+
+  const addMisc = async () => {
+    if (!miscLabel || !miscAmount || !selectedMonth) return
+    const entry = { label: miscLabel, amount: parseFloat(miscAmount), month: selectedMonth, id: Date.now().toString() }
+    setMiscEntries(prev => [...prev, entry])
+    try {
+      await apiClient.from('misc_expenses').insert(entry)
+    } catch {}
+    setMiscLabel('')
+    setMiscAmount('')
+    setAddingMisc(false)
+    addToast('✅ Misc expense added')
+  }
+
+  const deleteMisc = async (id: string) => {
+    setMiscEntries(prev => prev.filter(m => m.id !== id))
+    try { await apiClient.from('misc_expenses').delete().match({ id }) } catch {}
+  }
+
   // ── Compute monthly P&L ──────────────────────────────────────────────────
   try {
     const rateMap = new Map<string, ClientRate>()
