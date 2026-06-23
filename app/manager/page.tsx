@@ -10414,7 +10414,7 @@ export default function ManagerDashboard() {
               {activeTab === 'lead_payments' && <LeadPaymentsTab projects={projects} user={user} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
-              {activeTab === 'profit' && <ProfitTrackerTab projects={projects} animators={animators} />}
+              {activeTab === 'profit' && <ErrorBoundary><ProfitTrackerTab projects={projects} animators={animators} /></ErrorBoundary>}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
