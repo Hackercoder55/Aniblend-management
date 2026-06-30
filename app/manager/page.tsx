@@ -83,6 +83,8 @@ interface Project {
   Lighting_Artist?: string
   Lighting_Discord_ID?: string
   stl_override?: boolean
+  client_paid_50_date?: string
+  exclude_editor_paid?: boolean
 }
 
 interface Animator {
@@ -5283,7 +5285,7 @@ function parseDurationMinutes(duration: any, projectId: any): number {
   return 0
 }
 
-function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animators: Animator[] }) {
+function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Project[]; animators: Animator[]; onRefresh?: () => void }) {
   const { addToast } = useToast()
   const [rates, setRates] = useState<ClientRate[]>(DEFAULT_RATES)
   const [loadingRates, setLoadingRates] = useState(true)
@@ -5440,8 +5442,13 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
 
   const allProjectsThisMonth = projects.filter(p => getProjectMonth(p) === selectedMonth)
 
-  // Revenue from paid projects
-  const totalRevenue = paidProjectsThisMonth.reduce((sum, p) => sum + getProjectRevenue(p).revenue, 0)
+  // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
+  const totalRevenue = paidProjectsThisMonth.reduce((sum, p) => {
+    const rev = getProjectRevenue(p).revenue;
+    if (p.client_paid_date) return sum + rev; // 100% paid
+    if (p.client_paid_50_date) return sum + (rev * 0.5); // 50% paid
+    return sum;
+  }, 0)
 
   // Artist payouts for this month
   const monthPayments = payments.filter(p => {
@@ -5456,9 +5463,13 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
     return sum + (isNaN(val) ? 0 : val);
   }, 0)
   
-  // Overhead: ₹300 per paid project
-  const totalOverhead = paidProjectsThisMonth.length * overheadPerProject
-
+  // Overhead (Editor Paid): ₹300 per paid project that hasn't excluded it
+  const projectsWithEditorPaid = paidProjectsThisMonth.filter(p => {
+    const clientCode = extractClientCode(p.Project_ID || '')
+    const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
+    return p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
+  })
+  const totalOverhead = projectsWithEditorPaid.length * overheadPerProject
   // Misc expenses for this month
   const monthMisc = miscEntries.filter(m => m.month === selectedMonth)
   const totalMisc = monthMisc.reduce((sum, m) => sum + m.amount, 0)
@@ -5759,7 +5770,7 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f8fafc', color: '#6b7280', fontSize: 12, fontWeight: 700 }}>
-                  {['Project ID', 'Title', 'Client', 'Duration', 'Revenue', 'Status', 'Overhead'].map(h => (
+                  {['Project ID', 'Title', 'Client', 'Duration', 'Revenue', 'Status', 'Editor Paid', 'Artist Pay', 'Client Payment'].map(h => (
                     <th key={h} style={{ padding: '10px 14px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -5767,8 +5778,35 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
               <tbody>
                 {allProjectsThisMonth.map(p => {
                   const { revenue, clientCode, minutes } = getProjectRevenue(p)
-                  const isPaid = ['Paid', 'Closed'].includes(p.Status || '') || p.Payment_Status === 'Paid'
+                  // For MDSC and PGS, Editor Paid applies by default unless excluded
+                  const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
+                  const hasEditorPaid = p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
+                  
+                  // Artist Pay lookup
+                  const projPayment = payments.find(pay => String(pay['Project ID'] || '') === p.Project_ID)
+                  const artistPayAmount = projPayment ? Number(projPayment.net_paid) : 0
+
                   const unknownClient = !rateMap.has(clientCode)
+                  const isFullyPaid = !!p.client_paid_date
+                  const is50Paid = !!p.client_paid_50_date
+
+                  // Handlers
+                  const mark50 = async () => {
+                    await apiClient.from('projects').update({ client_paid_50_date: new Date().toISOString() }).eq('Project_ID', p.Project_ID)
+                    addToast(`✅ Marked 50% Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const markFull = async () => {
+                    await apiClient.from('projects').update({ client_paid_date: new Date().toISOString() }).eq('Project_ID', p.Project_ID)
+                    addToast(`✅ Marked Full Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const toggleEditorPaid = async () => {
+                    await apiClient.from('projects').update({ exclude_editor_paid: hasEditorPaid }).eq('Project_ID', p.Project_ID)
+                    addToast(hasEditorPaid ? `Removed Editor Paid for ${p.Project_ID}` : `Added Editor Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+
                   return (
                     <tr key={p.Project_ID} style={{ borderBottom: '1px solid #f1f5f9' }}>
                       <td style={{ padding: '10px 14px', fontWeight: 700, color: '#667eea', fontFamily: 'monospace' }}>{p.Project_ID}</td>
@@ -5781,20 +5819,48 @@ function ProfitTrackerTab({ projects, animators }: { projects: Project[]; animat
                       <td style={{ padding: '10px 14px', color: '#6b7280' }}>
                         {minutes > 0 ? `${minutes.toFixed(2)}m` : p.Duration || '—'}
                       </td>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: isPaid ? '#10b981' : '#9ca3af' }}>
-                        {isPaid ? fmt(revenue) : '—'}
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: isFullyPaid ? '#10b981' : is50Paid ? '#f59e0b' : '#9ca3af' }}>
+                        {isFullyPaid ? fmt(revenue) : is50Paid ? `${fmt(revenue * 0.5)} (50%)` : '—'}
                       </td>
                       <td style={{ padding: '10px 14px' }}>
                         <span style={{
                           fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
-                          background: isPaid ? '#ecfdf5' : p.Status === 'Approved' ? '#eff6ff' : '#fef3c7',
-                          color: isPaid ? '#059669' : p.Status === 'Approved' ? '#2563eb' : '#92400e'
+                          background: isFullyPaid ? '#ecfdf5' : p.Status === 'Approved' ? '#eff6ff' : '#fef3c7',
+                          color: isFullyPaid ? '#059669' : p.Status === 'Approved' ? '#2563eb' : '#92400e'
                         }}>
                           {p.Status || 'Unknown'}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 14px', color: isPaid ? '#f59e0b' : '#d1d5db', fontWeight: 600 }}>
-                        {isPaid ? `-${fmt(overheadPerProject)}` : '—'}
+                      <td style={{ padding: '10px 14px', fontWeight: 600 }}>
+                        <button onClick={toggleEditorPaid} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 4 }} title="Click to toggle Editor Paid">
+                          {hasEditorPaid ? <span style={{ color: '#f59e0b' }}>-{fmt(overheadPerProject)}</span> : <span style={{ color: '#d1d5db' }}>—</span>}
+                        </button>
+                      </td>
+                      <td style={{ padding: '10px 14px', fontWeight: 600, color: artistPayAmount > 0 ? '#ef4444' : '#d1d5db' }}>
+                        {artistPayAmount > 0 ? `-${fmt(artistPayAmount)}` : '—'}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
+                          {(clientCode === 'MDSC' || clientCode === 'PGS') ? (
+                            <>
+                              {!is50Paid && !isFullyPaid && (
+                                <button onClick={mark50} style={{ padding: '4px 8px', background: '#fffbeb', border: '1px solid #fde68a', color: '#d97706', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>50% Done</button>
+                              )}
+                              {!isFullyPaid && (
+                                <button onClick={markFull} style={{ padding: '4px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Full Done</button>
+                              )}
+                              {isFullyPaid && <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>}
+                            </>
+                          ) : (
+                            <>
+                              {!isFullyPaid ? (
+                                <button onClick={markFull} style={{ padding: '4px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Mark Paid</button>
+                              ) : (
+                                <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -10447,7 +10513,7 @@ export default function ManagerDashboard() {
               {activeTab === 'lead_payments' && <LeadPaymentsTab projects={projects} user={user} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
-              {activeTab === 'profit' && <ErrorBoundary><ProfitTrackerTab projects={projects} animators={animators} /></ErrorBoundary>}
+              {activeTab === 'profit' && <ErrorBoundary><ProfitTrackerTab projects={projects} animators={animators} onRefresh={fetchData} /></ErrorBoundary>}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
