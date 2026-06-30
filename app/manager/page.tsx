@@ -5450,18 +5450,15 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return sum;
   }, 0)
 
-  // Artist payouts for this month
-  const monthPayments = payments.filter(p => {
-    const pid = String(p['Project ID'] || '')
-    // Month: Jun 2026 format
-    const monthStr = selectedMonth // e.g. "Jun 2026"
-    // Convert to "Month: Jun 2026"
-    return pid === `Month: ${monthStr}` && String(p.Payment_Status || '').toLowerCase() === 'paid'
-  })
-  const totalArtistPayout = monthPayments.reduce((sum, p) => {
-    const val = Number(p.net_paid);
-    return sum + (isNaN(val) ? 0 : val);
-  }, 0)
+  const getExpectedArtistPay = (p: Project) => {
+    const clientCode = extractClientCode(p.Project_ID || '')
+    if (clientCode === 'HN' || clientCode === 'WN') return 3000
+    const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
+    return Math.round(minutes * 4000)
+  }
+
+  // Artist payouts for this month (Expected based on fixed rates)
+  const totalArtistPayout = paidProjectsThisMonth.reduce((sum, p) => sum + getExpectedArtistPay(p), 0)
   
   // Overhead (Editor Paid): ₹300 per paid project that hasn't excluded it
   const projectsWithEditorPaid = paidProjectsThisMonth.filter(p => {
@@ -5673,8 +5670,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
         {[
           { label: 'Gross Revenue', value: totalRevenue, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${paidProjectsThisMonth.length} paid projects` },
-          { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '👨‍🎨', sub: `${monthPayments.length} animators paid` },
-          { label: 'Overhead', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${paidProjectsThisMonth.length}` },
+          { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '💸', sub: `Expected pay for ${paidProjectsThisMonth.length} projects` },
+          { label: 'Editor Paid', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${projectsWithEditorPaid.length}` },
           { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${monthMisc.length} entries` },
           { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, totalRevenue)}%`, bold: true },
         ].map(card => (
@@ -5783,8 +5780,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                   const hasEditorPaid = p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
                   
                   // Artist Pay lookup
-                  const projPayment = payments.find(pay => String(pay['Project ID'] || '') === p.Project_ID)
-                  const artistPayAmount = projPayment ? Number(projPayment.net_paid) : 0
+                  const artistPayAmount = getExpectedArtistPay(p)
 
                   const unknownClient = !rateMap.has(clientCode)
                   const isFullyPaid = !!p.client_paid_date
