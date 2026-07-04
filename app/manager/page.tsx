@@ -7752,7 +7752,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
   
   // Per-animator state for Payout calculation (saved to DB instead of global)
   const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({})
-    const [isTdsEnabled, setIsTdsEnabled] = useState(true) 
+    const [isTdsEnabled, setIsTdsEnabled] = useState(false) 
   const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({})
   const [bonusNotes, setBonusNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
