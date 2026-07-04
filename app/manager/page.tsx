@@ -5353,7 +5353,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       if (rate.id) {
         const { error } = await apiClient.from('client_rates').update({
           label: rate.label, rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
-        }).match({ id: rate.id })
+        }).eq('id', rate.id)
         if (error) throw new Error((error as any).message)
         setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
       } else {
@@ -5476,7 +5476,16 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const safeTotalArtistPayout = isNaN(totalArtistPayout) ? 0 : totalArtistPayout
   const safeTotalOverhead = isNaN(totalOverhead) ? 0 : totalOverhead
   const safeTotalMisc = isNaN(totalMisc) ? 0 : totalMisc
-  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc
+  
+  // Bonuses paid this month
+  const monthPayments = payments.filter(p => {
+    const pid = String(p['Project ID'] || '')
+    return pid === `Month: ${selectedMonth}` && String(p.Payment_Status || '').toLowerCase() === 'paid'
+  })
+  const totalBonus = monthPayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
+  const safeTotalBonus = isNaN(totalBonus) ? 0 : totalBonus
+
+  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus
 
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
@@ -5672,6 +5681,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           { label: 'Gross Revenue', value: totalRevenue, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${paidProjectsThisMonth.length} paid projects` },
           { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '💸', sub: `Expected pay for ${paidProjectsThisMonth.length} projects` },
           { label: 'Editor Paid', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${projectsWithEditorPaid.length}` },
+          { label: 'Bonus Paid', value: totalBonus, color: '#ec4899', bg: '#fdf2f8', icon: '🎁', sub: `${monthPayments.filter(p => Number(p.bonus) > 0).length} bonuses` },
           { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${monthMisc.length} entries` },
           { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, totalRevenue)}%`, bold: true },
         ].map(card => (
@@ -5828,9 +5838,12 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                         </span>
                       </td>
                       <td style={{ padding: '10px 14px', fontWeight: 600 }}>
-                        <button onClick={toggleEditorPaid} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 4 }} title="Click to toggle Editor Paid">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           {hasEditorPaid ? <span style={{ color: '#f59e0b' }}>-{fmt(overheadPerProject)}</span> : <span style={{ color: '#d1d5db' }}>—</span>}
-                        </button>
+                          <button onClick={toggleEditorPaid} style={{ padding: '2px 6px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 10, cursor: 'pointer', color: '#64748b' }}>
+                            {hasEditorPaid ? 'Remove' : 'Add'}
+                          </button>
+                        </div>
                       </td>
                       <td style={{ padding: '10px 14px', fontWeight: 600, color: artistPayAmount > 0 ? '#ef4444' : '#d1d5db' }}>
                         {artistPayAmount > 0 ? `-${fmt(artistPayAmount)}` : '—'}
@@ -6712,7 +6725,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     for (const p of projects) {
       if (p.Status === 'Approved' && p.Payment_Status !== 'Paid' && !invoicedProjectIds.has(p.Project_ID)) {
         let eid = p.Employee_ID || ''
-        if (!eid && p.Animator) {
+        const isValidEid = animators.some(a => a.Employee_ID === eid)
+        if (!isValidEid && p.Animator) {
           const names = p.Animator.split(',').map((s: string) => s.trim().toLowerCase())
           const found = animators.find(a => names.includes((a.Name || '').toLowerCase()))
           if (found) eid = found.Employee_ID
@@ -7883,7 +7897,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       // NOTE: Status="Closed" happens 12hrs later when bot locks the thread
       if (approvedProjects.length > 0) {
         const { error: e1 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Paid', client_paid_date: formatDate(), Thread_Archived: false })
+          .update({ Payment_Status: 'Paid', Status: 'Paid', Thread_Archived: false })
           .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
         if (e1) throw new Error(e1.message || 'Failed to update approved projects')
       }
@@ -7891,7 +7905,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       // 1b. Ongoing/advance projects → only Payment_Status=Paid
       if (ongoingProjects.length > 0) {
         const { error: e2 } = await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', client_paid_date: formatDate() })
+          .update({ Payment_Status: 'Paid' })
           .in('Project_ID', ongoingProjects.map(p => p.Project_ID).filter(Boolean))
         if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
       }
@@ -7902,7 +7916,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       //     We mark them paid too since the payment covers them.
       if (leadOwnProjects.length > 0) {
         await apiClient.from('projects')
-          .update({ Payment_Status: 'Paid', Status: 'Paid', client_paid_date: formatDate(), Thread_Archived: false })
+          .update({ Payment_Status: 'Paid', Status: 'Paid', Thread_Archived: false })
           .in('Project_ID', leadOwnProjects.map(p => p.Project_ID).filter(Boolean))
       }
 
