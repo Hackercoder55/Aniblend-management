@@ -8939,7 +8939,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                   const overrideKey = `${r.animator.Employee_ID}__${p.Project_ID}`
                                   const isEditing = editingDurationId === overrideKey
                                   const rawSec = parseDurationSec(p.Duration || '', p.Project_ID)
-                                  const displaySec = durationOverrides[overrideKey] !== undefined ? durationOverrides[overrideKey] : String(rawSec)
+                                  const empSet = new Set<string>()
+                                  if (p.Employee_ID) empSet.add(p.Employee_ID)
+                                  ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
+                                    const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
+                                    if (found) empSet.add(found.Employee_ID)
+                                  })
+                                  const splitSec = Math.round(rawSec / Math.max(1, empSet.size))
+                                  const displaySec = durationOverrides[overrideKey] !== undefined ? durationOverrides[overrideKey] : String(splitSec)
                                   const isManual = (manualProjects[r.animator.Employee_ID] || []).find(mp => mp.Project_ID === p.Project_ID)
                                   const isDeferred = deferredProjects.has(p.Project_ID)
                                   return (
