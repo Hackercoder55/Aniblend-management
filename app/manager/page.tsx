@@ -6779,13 +6779,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         let totalVal = 0
         const lineItems = projs.map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-          const empSet = new Set<string>()
-          if (p.Employee_ID) empSet.add(p.Employee_ID)
-            ; (String(p.Animator || '')).split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-              const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
-              if (found) empSet.add(found.Employee_ID)
-            })
-          const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
+          const finalSec = Math.round(rawSec)
           const isA = String(eid).toUpperCase().includes('A')
           const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
           // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
@@ -6896,13 +6890,7 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     let totalVal = 0
     const lineItems = projs.map(p => {
       const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-      const empSet = new Set<string>()
-      if (p.Employee_ID) empSet.add(p.Employee_ID)
-        ; (String(p.Animator || '')).split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-          const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
-          if (found) empSet.add(found.Employee_ID)
-        })
-      const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
+      const finalSec = Math.round(rawSec)
       const isA = String(eid).toUpperCase().includes('A')
       const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
       // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
@@ -8380,13 +8368,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
       originalSec = histEntry.seconds || 0
     } else {
       const rawSec = parseDurationSec(proj.Duration || '', proj.Project_ID)
-      const empSet = new Set<string>()
-      if (proj.Employee_ID) empSet.add(proj.Employee_ID)
-        ; (proj.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-          const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
-          if (found) empSet.add(found.Employee_ID)
-        })
-      originalSec = Math.round(rawSec / Math.max(1, empSet.size))
+      originalSec = Math.round(rawSec)
     }
 
     // Adjust: remove original, add override
@@ -8939,13 +8921,7 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
                                   const overrideKey = `${r.animator.Employee_ID}__${p.Project_ID}`
                                   const isEditing = editingDurationId === overrideKey
                                   const rawSec = parseDurationSec(p.Duration || '', p.Project_ID)
-                                  const empSet = new Set<string>()
-                                  if (p.Employee_ID) empSet.add(p.Employee_ID)
-                                  ; (p.Animator || '').split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-                                    const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
-                                    if (found) empSet.add(found.Employee_ID)
-                                  })
-                                  const splitSec = Math.round(rawSec / Math.max(1, empSet.size))
+                                  const splitSec = Math.round(rawSec)
                                   const displaySec = durationOverrides[overrideKey] !== undefined ? durationOverrides[overrideKey] : String(splitSec)
                                   const isManual = (manualProjects[r.animator.Employee_ID] || []).find(mp => mp.Project_ID === p.Project_ID)
                                   const isDeferred = deferredProjects.has(p.Project_ID)
