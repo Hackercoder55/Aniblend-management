@@ -198,7 +198,9 @@ function formatDate(d?: Date): string {
 }
 
 /** Parse "DD MMM YYYY" or "DD MMM YY" into a Date (local midnight, cross-browser safe) */
-function parseDate(s: string): Date {
+function parseDate(rawStr: string): Date {
+  if (!rawStr) return new Date(0)
+  const s = String(rawStr).split('___')[0]
   if (!s) return new Date(0)
   const MONTHS: Record<string, number> = {
     Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
@@ -5297,6 +5299,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
   const [newRate, setNewRate] = useState<ClientRate>({ client_code: '', label: '', rate_inr: 0, rate_type: 'flat', notes: '' })
   const [addingRate, setAddingRate] = useState(false)
+  const [editingRevId, setEditingRevId] = useState<string | null>(null)
+  const [tempRev, setTempRev] = useState<string>('')
   const [savingRate, setSavingRate] = useState(false)
   const [miscLabel, setMiscLabel] = useState('')
   const [miscAmount, setMiscAmount] = useState('')
@@ -5362,7 +5366,10 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
         }).select().single()
         if (error) throw new Error((error as any).message)
-        setRates(prev => [...prev, data as ClientRate])
+        setRates(prev => {
+          const filtered = prev.filter(r => r.client_code !== data.client_code)
+          return [...filtered, data as ClientRate]
+        })
       }
       addToast(`✅ Rate saved for ${rate.client_code}`)
       setEditingRate(null)
@@ -5414,7 +5421,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     rates.forEach(r => rateMap.set(String(r.client_code || '').toUpperCase(), r))
 
   const getProjectMonth = (p: Project): string => {
-    const d = p.client_paid_date || p['Date Assigned'] || ''
+    const rawD = p.client_paid_date || p['Date Assigned'] || ''
+    const d = rawD.split('___')[0]
     if (!d) return 'Unknown'
     const dt = new Date(d)
     if (isNaN(dt.getTime())) return 'Unknown'
@@ -5444,7 +5452,15 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
 
   // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
   const totalRevenue = paidProjectsThisMonth.reduce((sum, p) => {
-    const rev = getProjectRevenue(p).revenue;
+    let rev = getProjectRevenue(p).revenue;
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (parts[2] && !isNaN(parseFloat(parts[2]))) {
+      rev = parseFloat(parts[2])
+    }
+
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum; // Revenue is 0 for these statuses
+
     if (p.client_paid_date) return sum + rev; // 100% paid
     if (p.client_paid_50_date) return sum + (rev * 0.5); // 50% paid
     return sum;
@@ -5793,8 +5809,17 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                   const artistPayAmount = getExpectedArtistPay(p)
 
                   const unknownClient = !rateMap.has(clientCode)
-                  const isFullyPaid = !!p.client_paid_date
+                  const parts = (p.client_paid_date || '').split('___')
+                  const clientPaidStatus = parts[1] || (p.client_paid_date ? 'PAID' : '')
+                  let displayRev = revenue
+                  if (parts[2] && !isNaN(parseFloat(parts[2]))) {
+                    displayRev = parseFloat(parts[2])
+                  }
+                  const isFullyPaid = clientPaidStatus === 'PAID'
+                  const isNotPaid = clientPaidStatus === 'NOT_PAID'
+                  const isCompensate = clientPaidStatus === 'COMPENSATE'
                   const is50Paid = !!p.client_paid_50_date
+                  const baseDateStr = p.client_paid_date ? parts[0] : new Date().toISOString()
 
                   // Handlers
                   const mark50 = async () => {
@@ -5803,8 +5828,26 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                     if (onRefresh) onRefresh()
                   }
                   const markFull = async () => {
-                    await apiClient.from('projects').update({ client_paid_date: new Date().toISOString() }).eq('Project_ID', p.Project_ID)
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___PAID___${displayRev}` }).eq('Project_ID', p.Project_ID)
                     addToast(`✅ Marked Full Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const markNotPaid = async () => {
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___NOT_PAID___${displayRev}` }).eq('Project_ID', p.Project_ID)
+                    addToast(`⚠️ Marked Not Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const markCompensate = async () => {
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___COMPENSATE___${displayRev}` }).eq('Project_ID', p.Project_ID)
+                    addToast(`💸 Marked Compensate for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const saveCustomRev = async () => {
+                    if (!tempRev) return
+                    const currentStatus = clientPaidStatus || 'PAID'
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___${currentStatus}___${tempRev}` }).eq('Project_ID', p.Project_ID)
+                    setEditingRevId(null)
+                    addToast(`✅ Saved custom revenue for ${p.Project_ID}`)
                     if (onRefresh) onRefresh()
                   }
                   const toggleEditorPaid = async () => {
@@ -5825,8 +5868,32 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                       <td style={{ padding: '10px 14px', color: '#6b7280' }}>
                         {minutes > 0 ? `${minutes.toFixed(2)}m` : p.Duration || '—'}
                       </td>
-                      <td style={{ padding: '10px 14px', fontWeight: 700, color: isFullyPaid ? '#10b981' : is50Paid ? '#f59e0b' : '#9ca3af' }}>
-                        {isFullyPaid ? fmt(revenue) : is50Paid ? `${fmt(revenue * 0.5)} (50%)` : '—'}
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: isFullyPaid ? '#10b981' : is50Paid ? '#f59e0b' : isNotPaid ? '#ef4444' : isCompensate ? '#9333ea' : '#9ca3af' }}>
+                        {editingRevId === p.Project_ID ? (
+                          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <input
+                              autoFocus
+                              type="number"
+                              value={tempRev}
+                              onChange={e => setTempRev(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveCustomRev()
+                                if (e.key === 'Escape') setEditingRevId(null)
+                              }}
+                              style={{ width: 60, padding: '2px 4px', fontSize: 12, borderRadius: 4, border: '1px solid #d1d5db' }}
+                            />
+                            <button onClick={saveCustomRev} style={{ padding: '2px 6px', background: '#10b981', color: 'white', border: 'none', borderRadius: 4, fontSize: 10, cursor: 'pointer' }}>✓</button>
+                            <button onClick={() => setEditingRevId(null)} style={{ padding: '2px 6px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 4, fontSize: 10, cursor: 'pointer' }}>✕</button>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => { setEditingRevId(p.Project_ID); setTempRev(String(displayRev)) }}
+                            style={{ cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                            title="Click to tweak revenue"
+                          >
+                            {isFullyPaid ? fmt(displayRev) : isNotPaid ? `Not Paid (${fmt(displayRev)})` : isCompensate ? `Compensated (${fmt(displayRev)})` : is50Paid ? `${fmt(displayRev * 0.5)} (50%)` : fmt(displayRev)}
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '10px 14px' }}>
                         <span style={{
@@ -5852,21 +5919,32 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
                           {(clientCode === 'MDSC' || clientCode === 'PGS') ? (
                             <>
-                              {!is50Paid && !isFullyPaid && (
+                              {!is50Paid && !isFullyPaid && !isNotPaid && !isCompensate && (
                                 <button onClick={mark50} style={{ padding: '4px 8px', background: '#fffbeb', border: '1px solid #fde68a', color: '#d97706', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>50% Done</button>
                               )}
                               {!isFullyPaid && (
                                 <button onClick={markFull} style={{ padding: '4px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Full Done</button>
                               )}
+                              {!isNotPaid && (
+                                <button onClick={markNotPaid} style={{ padding: '4px 8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Not Paid</button>
+                              )}
+                              {!isCompensate && (
+                                <button onClick={markCompensate} style={{ padding: '4px 8px', background: '#faf5ff', border: '1px solid #e9d5ff', color: '#9333ea', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Compensate</button>
+                              )}
                               {isFullyPaid && <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>}
                             </>
                           ) : (
                             <>
-                              {!isFullyPaid ? (
+                              {!isFullyPaid && (
                                 <button onClick={markFull} style={{ padding: '4px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Mark Paid</button>
-                              ) : (
-                                <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>
                               )}
+                              {!isNotPaid && (
+                                <button onClick={markNotPaid} style={{ padding: '4px 8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Not Paid</button>
+                              )}
+                              {!isCompensate && (
+                                <button onClick={markCompensate} style={{ padding: '4px 8px', background: '#faf5ff', border: '1px solid #e9d5ff', color: '#9333ea', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Compensate</button>
+                              )}
+                              {isFullyPaid && <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>}
                             </>
                           )}
                         </div>
