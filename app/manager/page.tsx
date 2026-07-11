@@ -5509,8 +5509,21 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
   paidProjectsThisMonth.forEach(p => {
-    const { revenue, clientCode, minutes } = getProjectRevenue(p)
+    let { revenue, clientCode, minutes } = getProjectRevenue(p)
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (parts[2] && !isNaN(parseFloat(parts[2]))) {
+      revenue = parseFloat(parts[2])
+    }
+    
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return; // Skip from Revenue by Client graph
+
     if (!revenueByClient[clientCode]) revenueByClient[clientCode] = { revenue: 0, count: 0, minutes: 0 }
+    
+    if (p.client_paid_50_date && status !== 'PAID') {
+      revenue = revenue * 0.5
+    }
+    
     revenueByClient[clientCode].revenue += revenue
     revenueByClient[clientCode].count++
     revenueByClient[clientCode].minutes += minutes
@@ -5894,7 +5907,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                             style={{ cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
                             title="Click to tweak revenue"
                           >
-                            {isFullyPaid ? fmt(displayRev) : isNotPaid ? `Not Paid (${fmt(displayRev)})` : isCompensate ? `Compensated (${fmt(displayRev)})` : is50Paid ? `${fmt(displayRev * 0.5)} (50%)` : fmt(displayRev)}
+                            {isFullyPaid ? fmt(displayRev) : isNotPaid ? `₹0 (Not Paid)` : isCompensate ? `₹0 (Compensated)` : is50Paid ? `${fmt(displayRev * 0.5)} (50%)` : fmt(displayRev)}
                           </div>
                         )}
                       </td>
