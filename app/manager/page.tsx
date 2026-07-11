@@ -5296,7 +5296,6 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [loadingRates, setLoadingRates] = useState(true)
   const [payments, setPayments] = useState<any[]>([])
   const [overheadPerProject, setOverheadPerProject] = useState<number>(300)
-  const [miscEntries, setMiscEntries] = useState<{ id: string; label: string; amount: number; month: string }[]>([])
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [showRateEditor, setShowRateEditor] = useState(false)
   const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
@@ -5308,6 +5307,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [miscLabel, setMiscLabel] = useState('')
   const [miscAmount, setMiscAmount] = useState('')
   const [addingMisc, setAddingMisc] = useState(false)
+  const [showBonusList, setShowBonusList] = useState(false)
 
   // Generate month options safely (avoid toLocaleDateString hydration mismatch)
   const monthOptions = (() => {
@@ -5346,10 +5346,6 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   useEffect(() => {
     apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
       setPayments((data as any[]) || [])
-    })
-    // Load misc expenses
-    apiClient.from('misc_expenses').select('*').then(({ data }: { data: any }) => {
-      if (data) setMiscEntries(data as any[])
     })
   }, [])
 
@@ -5402,21 +5398,47 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
 
   const addMisc = async () => {
     if (!miscLabel || !miscAmount || !selectedMonth) return
-    const entry = { label: miscLabel, amount: parseFloat(miscAmount), month: selectedMonth, id: Date.now().toString() }
-    setMiscEntries(prev => [...prev, entry])
+    const newId = Date.now().toString()
+    const entryPayload = {
+      'Employee ID': `MISC_${newId}`,
+      Name: miscLabel,
+      Payment_Status: 'Paid',
+      net_paid: parseFloat(miscAmount),
+      Timestamp: new Date().toISOString(),
+      'Project ID': `Month: ${selectedMonth}`
+    }
+    setPayments(prev => [...prev, entryPayload])
     try {
-      await apiClient.from('misc_expenses').insert(entry)
-    } catch {}
+      await apiClient.from('payments').insert([entryPayload])
+    } catch (e: any) {
+      addToast(`Error adding misc: ${e.message}`)
+    }
     setMiscLabel('')
     setMiscAmount('')
     setAddingMisc(false)
     addToast('✅ Misc expense added')
   }
 
-  const deleteMisc = async (id: string) => {
-    setMiscEntries(prev => prev.filter(m => m.id !== id))
-    try { await apiClient.from('misc_expenses').delete().match({ id }) } catch {}
+  const deleteMisc = async (id: string, dbId?: string) => {
+    setPayments(prev => prev.filter(p => p.id !== dbId && String(p['Employee ID']).replace('MISC_', '') !== id))
+    try { 
+      if (dbId) {
+        await apiClient.from('payments').delete().match({ id: dbId })
+      } else {
+        await apiClient.from('payments').delete().match({ 'Employee ID': `MISC_${id}` }) 
+      }
+    } catch {}
   }
+
+  const miscEntries = payments
+    .filter(p => String(p['Employee ID'] || '').startsWith('MISC_'))
+    .map(p => ({
+      id: String(p['Employee ID']).replace('MISC_', ''),
+      label: p.Name,
+      amount: Number(p.net_paid),
+      month: String(p['Project ID']).replace('Month: ', ''),
+      dbId: p.id
+    }))
 
   // ── Compute monthly P&L ──────────────────────────────────────────────────
   try {
@@ -5717,7 +5739,20 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${monthMisc.length} entries` },
           { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, totalRevenue)}%`, bold: true },
         ].map(card => (
-          <div key={card.label} style={{ background: card.bg, borderRadius: 14, padding: '16px 18px', border: `1.5px solid ${card.color}22` }}>
+          <div 
+            key={card.label} 
+            onClick={() => card.label === 'Bonus Paid' && setShowBonusList(true)}
+            style={{ 
+              background: card.bg, 
+              borderRadius: 14, 
+              padding: '16px 18px', 
+              border: `1.5px solid ${card.color}22`,
+              cursor: card.label === 'Bonus Paid' ? 'pointer' : 'default',
+              transition: 'transform 0.2s',
+            }}
+            onMouseOver={(e) => { if (card.label === 'Bonus Paid') e.currentTarget.style.transform = 'translateY(-2px)' }}
+            onMouseOut={(e) => { if (card.label === 'Bonus Paid') e.currentTarget.style.transform = 'none' }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ fontSize: 20 }}>{card.icon}</span>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{card.label}</span>
@@ -5788,7 +5823,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#faf5ff', borderRadius: 10, border: '1px solid #e9d5ff' }}>
                   <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{m.label}</span>
                   <span style={{ fontSize: 13, fontWeight: 700, color: '#8b5cf6' }}>{fmt(m.amount)}</span>
-                  <button onClick={() => deleteMisc(m.id)} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+                  <button onClick={() => deleteMisc(m.id, m.dbId)} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>✕</button>
                 </div>
               ))}
             </div>
@@ -5978,6 +6013,34 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       {allProjectsThisMonth.some(p => !rateMap.has(extractClientCode(p.Project_ID || ''))) && (
         <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 12, fontSize: 13, color: '#92400e' }}>
           ⚠️ Some projects have unknown client codes. Go to <strong>⚙️ Client Rates</strong> above and add the missing client to include their revenue.
+        </div>
+      )}
+
+      {/* Bonus List Modal */}
+      {showBonusList && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: '90%', maxWidth: 500, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: '#111' }}>Bonuses - {selectedMonth}</h2>
+              <button onClick={() => setShowBonusList(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#9ca3af' }}>✕</button>
+            </div>
+            
+            {monthPayments.filter(p => Number(p.bonus) > 0).length === 0 ? (
+              <p style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', padding: '20px 0' }}>No bonuses paid for this month.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
+                {monthPayments.filter(p => Number(p.bonus) > 0).map((p, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#fdf2f8', borderRadius: 10, border: '1px solid #fbcfe8' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#be185d', fontSize: 14 }}>{p.Name}</div>
+                      <div style={{ fontSize: 11, color: '#9d174d', marginTop: 2 }}>ID: {p['Employee ID']}</div>
+                    </div>
+                    <div style={{ fontWeight: 800, color: '#be185d', fontSize: 16 }}>{fmt(Number(p.bonus))}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
