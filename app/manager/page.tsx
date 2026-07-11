@@ -5499,7 +5499,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   // Bonuses paid this month
   const monthPayments = payments.filter(p => {
     const pid = String(p['Project ID'] || '')
-    return pid === `Month: ${selectedMonth}` && String(p.Payment_Status || '').toLowerCase() === 'paid'
+    return pid === `Month: ${selectedMonth}`
   })
   const totalBonus = monthPayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
   const safeTotalBonus = isNaN(totalBonus) ? 0 : totalBonus
@@ -6862,9 +6862,14 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
           const finalSec = Math.round(rawSec)
           const isA = String(eid).toUpperCase().includes('A')
-          const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
-          // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
-          const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+          const clientCode = extractClientCode(p.Project_ID || '')
+          let amt = 0
+          if (clientCode === 'HN' || clientCode === 'WN') {
+            amt = 3000
+          } else {
+            const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
+            amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+          }
           totalVal += amt
           return {
             project_id: p.Project_ID,
@@ -6973,9 +6978,14 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
       const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
       const finalSec = Math.round(rawSec)
       const isA = String(eid).toUpperCase().includes('A')
-      const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
-      // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
-      const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+      const clientCode = extractClientCode(p.Project_ID || '')
+      let amt = 0
+      if (clientCode === 'HN' || clientCode === 'WN') {
+        amt = 3000
+      } else {
+        const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
+        amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+      }
       totalVal += amt
 
       return {
@@ -8503,8 +8513,13 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           calculatedGross += projSec * (1500 / 60)
         } else if (isAnim) {
           const isA = (eid || '').toUpperCase().includes('A')
-          const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
-          calculatedGross += projSec * (rate / 60)
+          const clientCode = extractClientCode(p.Project_ID || '')
+          if (clientCode === 'HN' || clientCode === 'WN') {
+            calculatedGross += 3000
+          } else {
+            const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
+            calculatedGross += projSec * (rate / 60)
+          }
         }
       })
       
