@@ -5248,8 +5248,11 @@ const DEFAULT_RATES: ClientRate[] = [
   { client_code: 'HN',   label: 'HN',   rate_inr: 6600,  rate_type: 'flat',       notes: '~$70/project' },
   { client_code: 'PGS',  label: 'PGS',  rate_inr: 10000, rate_type: 'per_minute', notes: '~$120/min' },
   { client_code: 'MDSC', label: 'MDSC', rate_inr: 7000,  rate_type: 'per_minute', notes: '~$85/min' },
-  { client_code: 'MRC',  label: 'MRC',  rate_inr: 7000,  rate_type: 'flat',       notes: '₹7000/project' },
+  { client_code: 'MRC',  label: 'MRC',  rate_inr: 7000,  rate_type: 'per_minute', notes: '₹7000/minute' },
   { client_code: 'WN',   label: 'WN',   rate_inr: 11200, rate_type: 'per_minute', notes: '~$120/min' },
+  { client_code: 'HIS',  label: 'HIS',  rate_inr: 6000,  rate_type: 'per_minute', notes: '₹6000/minute' },
+  { client_code: 'HER',  label: 'HER',  rate_inr: 6000,  rate_type: 'per_minute', notes: '₹6000/minute' },
+  { client_code: 'GLEE', label: 'GLEE', rate_inr: 8300,  rate_type: 'per_minute', notes: '₹8300/minute' },
 ]
 
 function extractClientCode(projectId: any): string {
