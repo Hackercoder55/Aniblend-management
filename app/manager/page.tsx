@@ -5526,7 +5526,34 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const totalBonus = monthPayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
   const safeTotalBonus = isNaN(totalBonus) ? 0 : totalBonus
 
-  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus
+  // Shared Profits
+  const shareEntries = payments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_') && String(p['Project ID']) === `Month: ${selectedMonth}`)
+  const totalShared = shareEntries.reduce((sum, p) => sum + Number(p.net_paid || 0), 0)
+
+  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus - totalShared
+
+  const handleShareProfit = async () => {
+    if (netProfit <= 0) {
+      addToast('No profit left to share!')
+      return
+    }
+    const newId = Date.now().toString()
+    const entryPayload = {
+      'Employee ID': `SHARE_${newId}`,
+      Name: 'Profit Share',
+      Payment_Status: 'Paid',
+      net_paid: netProfit,
+      Timestamp: new Date().toISOString(),
+      'Project ID': `Month: ${selectedMonth}`
+    }
+    setPayments(prev => [...prev, entryPayload])
+    try {
+      await apiClient.from('payments').insert([entryPayload])
+      addToast(`🎉 Successfully shared ${fmt(netProfit)}!`)
+    } catch (e: any) {
+      addToast(`Error sharing profit: ${e.message}`)
+    }
+  }
 
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
@@ -5737,21 +5764,25 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           { label: 'Editor Paid', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${projectsWithEditorPaid.length}` },
           { label: 'Bonus Paid', value: totalBonus, color: '#ec4899', bg: '#fdf2f8', icon: '🎁', sub: `${monthPayments.filter(p => Number(p.bonus) > 0).length} bonuses` },
           { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${monthMisc.length} entries` },
-          { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, totalRevenue)}%`, bold: true },
+          { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, safeTotalRevenue)}%`, bold: true },
+          { label: 'Shared (Per Person)', value: totalShared / 3, color: '#06b6d4', bg: '#ecfeff', icon: '🤝', sub: `Click to share ${fmt(netProfit)}`, bold: true },
         ].map(card => (
           <div 
             key={card.label} 
-            onClick={() => card.label === 'Bonus Paid' && setShowBonusList(true)}
+            onClick={() => {
+              if (card.label === 'Bonus Paid') setShowBonusList(true)
+              if (card.label === 'Shared (Per Person)') handleShareProfit()
+            }}
             style={{ 
               background: card.bg, 
               borderRadius: 14, 
               padding: '16px 18px', 
               border: `1.5px solid ${card.color}22`,
-              cursor: card.label === 'Bonus Paid' ? 'pointer' : 'default',
+              cursor: (card.label === 'Bonus Paid' || card.label === 'Shared (Per Person)') ? 'pointer' : 'default',
               transition: 'transform 0.2s',
             }}
-            onMouseOver={(e) => { if (card.label === 'Bonus Paid') e.currentTarget.style.transform = 'translateY(-2px)' }}
-            onMouseOut={(e) => { if (card.label === 'Bonus Paid') e.currentTarget.style.transform = 'none' }}
+            onMouseOver={(e) => { if (card.label === 'Bonus Paid' || card.label === 'Shared (Per Person)') e.currentTarget.style.transform = 'translateY(-2px)' }}
+            onMouseOut={(e) => { if (card.label === 'Bonus Paid' || card.label === 'Shared (Per Person)') e.currentTarget.style.transform = 'none' }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ fontSize: 20 }}>{card.icon}</span>
@@ -10631,7 +10662,6 @@ export default function ManagerDashboard() {
             </button>
             <div>
               <h1 className="font-bold text-gray-800">{TABS.find(t => t.id === activeTab)?.label}</h1>
-              <p className="text-xs text-gray-400">{formatDate()}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
