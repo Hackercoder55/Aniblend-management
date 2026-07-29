@@ -5596,14 +5596,27 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Month selector */}
-          <select
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(e.target.value)}
-            style={{ padding: '8px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', cursor: 'pointer' }}
+          {/* Cashout Button */}
+          <button
+            onClick={handleShareProfit}
+            title="Share current Net Profit among 3 people"
+            style={{ 
+              padding: '8px 16px', 
+              borderRadius: 10, 
+              border: 'none', 
+              fontSize: 13, 
+              fontWeight: 700, 
+              color: '#fff', 
+              background: 'linear-gradient(135deg, #06b6d4, #3b82f6)', 
+              cursor: 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6,
+              boxShadow: '0 4px 6px -1px rgba(6, 182, 212, 0.2)'
+            }}
           >
-            {monthOptions.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
+            💸 Cashout Profit
+          </button>
           {/* Overhead per project */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fef3c7', borderRadius: 10, padding: '6px 12px', border: '1px solid #fcd34d' }}>
             <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>Overhead/project:</span>
