@@ -5296,7 +5296,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [loadingRates, setLoadingRates] = useState(true)
   const [payments, setPayments] = useState<any[]>([])
   const [overheadPerProject, setOverheadPerProject] = useState<number>(300)
-  const [selectedMonth, setSelectedMonth] = useState<string>('')
+  const [selectedCycle, setSelectedCycle] = useState<string>('Current Cycle')
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
   const [showRateEditor, setShowRateEditor] = useState(false)
   const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
   const [newRate, setNewRate] = useState<ClientRate>({ client_code: '', label: '', rate_inr: 0, rate_type: 'flat', notes: '' })
@@ -5309,24 +5310,22 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [addingMisc, setAddingMisc] = useState(false)
   const [showBonusList, setShowBonusList] = useState(false)
 
-  // Generate month options safely (avoid toLocaleDateString hydration mismatch)
-  const monthOptions = (() => {
-    const opts: string[] = []
-    const now = new Date()
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    for (let i = 0; i < 13; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      opts.push(`${months[d.getMonth()]} ${d.getFullYear()}`)
-    }
+  // Derive cashout options from payments table
+  const cashoutOptions = React.useMemo(() => {
+    const opts = ['Current Cycle', 'All Time']
+    const shareRecords = payments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_'))
+    // sort by timestamp descending
+    shareRecords.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime())
+    shareRecords.forEach(p => {
+      opts.push(p['Employee ID'])
+    })
     return opts
-  })()
+  }, [payments])
 
-  // Use useEffect to set selected month safely on client side
   const [isClient, setIsClient] = useState(false)
   useEffect(() => {
     setIsClient(true)
-    if (!selectedMonth && monthOptions.length > 0) setSelectedMonth(monthOptions[0])
-  }, [monthOptions])
+  }, [])
 
   // Load rates from Supabase
   useEffect(() => {
@@ -5397,7 +5396,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   }
 
   const addMisc = async () => {
-    if (!miscLabel || !miscAmount || !selectedMonth) return
+    if (!miscLabel || !miscAmount) return
     const newId = Date.now().toString()
     const entryPayload = {
       'Employee ID': `MISC_${newId}`,
@@ -5405,7 +5404,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       Payment_Status: 'Paid',
       net_paid: parseFloat(miscAmount),
       Timestamp: new Date().toISOString(),
-      'Project ID': `Month: ${selectedMonth}`
+      'Project ID': 'Cycle: Current'
     }
     setPayments(prev => [...prev, entryPayload])
     try {
@@ -5436,7 +5435,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       id: String(p['Employee ID']).replace('MISC_', ''),
       label: p.Name,
       amount: Number(p.net_paid),
-      month: String(p['Project ID']).replace('Month: ', ''),
+      cycle: String(p['Project ID']).replace('Cycle: ', '').replace('Month: ', ''),
       dbId: p.id
     }))
 
@@ -5465,18 +5464,57 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return { revenue: finalRevenue, clientCode, minutes }
   }
 
-  // Paid projects for selected month
-  const paidProjectsThisMonth = projects.filter(p => {
-    // Strictly filter based on the Client Paid date
-    if (!p.client_paid_date) return false
-    const isCorrectMonth = getProjectMonth(p) === selectedMonth
-    return isCorrectMonth
+  // All projects for selected cycle (including unpaid if Current Cycle)
+  const cycleProjects = projects.filter(p => {
+    if (selectedCycle === 'All Time') return true
+    
+    const parts = (p.client_paid_date || '').split('___')
+    const cashoutId = p.client_paid_date ? (parts[3] || null) : null
+
+    if (selectedCycle === 'Current Cycle') {
+      return !cashoutId
+    }
+    return cashoutId === selectedCycle
   })
 
-  const allProjectsThisMonth = projects.filter(p => getProjectMonth(p) === selectedMonth)
+  // Paid projects for selected cycle
+  const activeProjects = cycleProjects.filter(p => p.client_paid_date)
+
+  const sortedCycleProjects = React.useMemo(() => {
+    const arr = [...cycleProjects]
+    if (sortConfig) {
+      arr.sort((a, b) => {
+        let valA: any = ''
+        let valB: any = ''
+        if (sortConfig.key === 'Project ID') { valA = a.Project_ID; valB = b.Project_ID }
+        if (sortConfig.key === 'Title') { valA = a.Project_title; valB = b.Project_title }
+        if (sortConfig.key === 'Client') { valA = extractClientCode(a.Project_ID || ''); valB = extractClientCode(b.Project_ID || '') }
+        if (sortConfig.key === 'Duration') { valA = parseDurationMinutes(a.Duration, a.Project_ID); valB = parseDurationMinutes(b.Duration, b.Project_ID) }
+        if (sortConfig.key === 'Revenue') { valA = getProjectRevenue(a).revenue; valB = getProjectRevenue(b).revenue }
+        if (sortConfig.key === 'Status') { valA = a.Status; valB = b.Status }
+        if (sortConfig.key === 'Editor Paid') { valA = a.exclude_editor_paid ? 0 : 1; valB = b.exclude_editor_paid ? 0 : 1 }
+        if (sortConfig.key === 'Artist Pay') { valA = getExpectedArtistPay(a); valB = getExpectedArtistPay(b) }
+        if (sortConfig.key === 'Client Payment') { valA = a.client_paid_date ? 1 : 0; valB = b.client_paid_date ? 1 : 0 }
+
+        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1
+        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1
+        return 0
+      })
+    }
+    return arr
+  }, [cycleProjects, sortConfig])
+  
+  const handleSort = (key: string) => {
+    setSortConfig(prev => {
+      if (prev && prev.key === key) {
+        return prev.direction === 'asc' ? { key, direction: 'desc' } : null
+      }
+      return { key, direction: 'asc' }
+    })
+  }
 
   // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
-  const totalRevenue = paidProjectsThisMonth.reduce((sum, p) => {
+  const totalRevenue = activeProjects.reduce((sum, p) => {
     let rev = getProjectRevenue(p).revenue;
     const parts = (p.client_paid_date || '').split('___')
     const status = parts[1] || 'PAID'
@@ -5498,19 +5536,24 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return Math.round(minutes * 4000)
   }
 
-  // Artist payouts for this month (Expected based on fixed rates)
-  const totalArtistPayout = paidProjectsThisMonth.reduce((sum, p) => sum + getExpectedArtistPay(p), 0)
+  // Artist payouts for this cycle (Expected based on fixed rates)
+  const totalArtistPayout = activeProjects.reduce((sum, p) => sum + getExpectedArtistPay(p), 0)
   
   // Overhead (Editor Paid): ₹300 per paid project that hasn't excluded it
-  const projectsWithEditorPaid = paidProjectsThisMonth.filter(p => {
+  const projectsWithEditorPaid = activeProjects.filter(p => {
     const clientCode = extractClientCode(p.Project_ID || '')
     const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
     return p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
   })
   const totalOverhead = projectsWithEditorPaid.length * overheadPerProject
-  // Misc expenses for this month
-  const monthMisc = miscEntries.filter(m => m.month === selectedMonth)
-  const totalMisc = monthMisc.reduce((sum, m) => sum + m.amount, 0)
+  
+  // Misc expenses for this cycle
+  const activeMisc = miscEntries.filter(m => {
+    if (selectedCycle === 'All Time') return true
+    if (selectedCycle === 'Current Cycle') return m.cycle === 'Current'
+    return m.cycle === selectedCycle
+  })
+  const totalMisc = activeMisc.reduce((sum, m) => sum + m.amount, 0)
 
   // Net Profit
   const safeTotalRevenue = isNaN(totalRevenue) ? 0 : totalRevenue
@@ -5518,16 +5561,23 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const safeTotalOverhead = isNaN(totalOverhead) ? 0 : totalOverhead
   const safeTotalMisc = isNaN(totalMisc) ? 0 : totalMisc
   
-  // Bonuses paid this month
-  const monthPayments = payments.filter(p => {
-    const pid = String(p['Project ID'] || '')
-    return pid === `Month: ${selectedMonth}`
+  // Bonuses paid this cycle
+  const activePayments = payments.filter(p => {
+    const cycle = String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '')
+    if (selectedCycle === 'All Time') return true
+    if (selectedCycle === 'Current Cycle') return cycle === 'Current'
+    return cycle === selectedCycle
   })
-  const totalBonus = monthPayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
+  const totalBonus = activePayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
   const safeTotalBonus = isNaN(totalBonus) ? 0 : totalBonus
 
   // Shared Profits
-  const shareEntries = payments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_') && String(p['Project ID']) === `Month: ${selectedMonth}`)
+  const shareEntries = payments.filter(p => {
+    const cycle = String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '')
+    if (!String(p['Employee ID'] || '').startsWith('SHARE_')) return false
+    if (selectedCycle === 'All Time') return true
+    return cycle === selectedCycle
+  })
   const totalShared = shareEntries.reduce((sum, p) => sum + Number(p.net_paid || 0), 0)
 
   const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus - totalShared
@@ -5538,26 +5588,44 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       return
     }
     const newId = Date.now().toString()
-    const entryPayload = {
-      'Employee ID': `SHARE_${newId}`,
-      Name: 'Profit Share',
-      Payment_Status: 'Paid',
-      net_paid: netProfit,
-      Timestamp: new Date().toISOString(),
-      'Project ID': `Month: ${selectedMonth}`
-    }
-    setPayments(prev => [...prev, entryPayload])
+    const cashoutId = `SHARE_${newId}`
+
+    const projectsToUpdate = activeProjects.filter(p => !(p.client_paid_date || '').split('___')[3])
+    const paymentsToUpdate = activePayments.filter(p => String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '') === 'Current')
+
     try {
+      // Update projects
+      for (const p of projectsToUpdate) {
+        const newPaidDate = `${p.client_paid_date}___${cashoutId}`
+        await apiClient.from('projects').update({ client_paid_date: newPaidDate }).eq('Project_ID', p.Project_ID)
+      }
+      
+      // Update payments (misc, bonus)
+      for (const p of paymentsToUpdate) {
+        await apiClient.from('payments').update({ 'Project ID': `Cycle: ${cashoutId}` }).eq('id', p.id)
+      }
+
+      const entryPayload = {
+        'Employee ID': cashoutId,
+        Name: 'Profit Share',
+        Payment_Status: 'Paid',
+        net_paid: netProfit,
+        Timestamp: new Date().toISOString(),
+        'Project ID': `Cycle: ${cashoutId}`
+      }
+      
       await apiClient.from('payments').insert([entryPayload])
-      addToast(`🎉 Successfully shared ${fmt(netProfit)}!`)
+      
+      addToast(`🎉 Successfully cashed out ${fmt(netProfit)}!`)
+      if (onRefresh) onRefresh()
     } catch (e: any) {
-      addToast(`Error sharing profit: ${e.message}`)
+      addToast(`Error during cashout: ${e.message}`)
     }
   }
 
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
-  paidProjectsThisMonth.forEach(p => {
+  activeProjects.forEach(p => {
     let { revenue, clientCode, minutes } = getProjectRevenue(p)
     const parts = (p.client_paid_date || '').split('___')
     const status = parts[1] || 'PAID'
@@ -5596,6 +5664,23 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Cycle selector */}
+          <select
+            value={selectedCycle}
+            onChange={e => setSelectedCycle(e.target.value)}
+            style={{ padding: '8px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', cursor: 'pointer' }}
+          >
+            {cashoutOptions.map(m => {
+              let label = m
+              if (m.startsWith('SHARE_')) {
+                const p = payments.find(pay => pay['Employee ID'] === m)
+                if (p && p.Timestamp) {
+                  label = `Closed on ${new Date(p.Timestamp).toLocaleDateString('en-GB')}`
+                }
+              }
+              return <option key={m} value={m}>{label}</option>
+            })}
+          </select>
           {/* Cashout Button */}
           <button
             onClick={handleShareProfit}
@@ -5772,11 +5857,11 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       {/* ── P&L Summary Cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
         {[
-          { label: 'Gross Revenue', value: totalRevenue, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${paidProjectsThisMonth.length} paid projects` },
-          { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '💸', sub: `Expected pay for ${paidProjectsThisMonth.length} projects` },
+          { label: 'Gross Revenue', value: totalRevenue, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${activeProjects.length} paid projects` },
+          { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '💸', sub: `Expected pay for ${activeProjects.length} projects` },
           { label: 'Editor Paid', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${projectsWithEditorPaid.length}` },
-          { label: 'Bonus Paid', value: totalBonus, color: '#ec4899', bg: '#fdf2f8', icon: '🎁', sub: `${monthPayments.filter(p => Number(p.bonus) > 0).length} bonuses` },
-          { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${monthMisc.length} entries` },
+          { label: 'Bonus Paid', value: totalBonus, color: '#ec4899', bg: '#fdf2f8', icon: '🎁', sub: `${activePayments.filter(p => Number(p.bonus) > 0).length} bonuses` },
+          { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${activeMisc.length} entries` },
           { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, safeTotalRevenue)}%`, bold: true },
           { label: 'Shared (Per Person)', value: totalShared / 3, color: '#06b6d4', bg: '#ecfeff', icon: '🤝', sub: `Click to share ${fmt(netProfit)}`, bold: true },
         ].map(card => (
@@ -5810,9 +5895,9 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
         {/* ── Revenue by Client ── */}
         <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', marginBottom: 14, margin: '0 0 14px' }}>Revenue by Client — {selectedMonth}</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', marginBottom: 14, margin: '0 0 14px' }}>Revenue by Client</h3>
           {Object.keys(revenueByClient).length === 0 ? (
-            <p style={{ color: '#9ca3af', fontSize: 13 }}>No paid projects for {selectedMonth} yet.</p>
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No paid projects for this cycle yet.</p>
           ) : (
             <div style={{ display: 'grid', gap: 8 }}>
               {Object.entries(revenueByClient).sort((a, b) => b[1].revenue - a[1].revenue).map(([code, data]) => (
@@ -5859,11 +5944,11 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
             </div>
           )}
 
-          {monthMisc.length === 0 ? (
-            <p style={{ color: '#9ca3af', fontSize: 13 }}>No misc expenses for {selectedMonth}.</p>
+          {activeMisc.length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No misc expenses for this cycle.</p>
           ) : (
             <div style={{ display: 'grid', gap: 8 }}>
-              {monthMisc.map(m => (
+              {activeMisc.map(m => (
                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#faf5ff', borderRadius: 10, border: '1px solid #e9d5ff' }}>
                   <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{m.label}</span>
                   <span style={{ fontSize: 13, fontWeight: 700, color: '#8b5cf6' }}>{fmt(m.amount)}</span>
@@ -5878,23 +5963,25 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       {/* ── Project-level breakdown ── */}
       <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', overflow: 'hidden' }}>
         <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Project Breakdown — {selectedMonth}</h3>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>{allProjectsThisMonth.length} total · {paidProjectsThisMonth.length} paid</span>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Project Breakdown</h3>
+          <span style={{ fontSize: 12, color: '#9ca3af' }}>{cycleProjects.length} total · {activeProjects.length} paid</span>
         </div>
-        {allProjectsThisMonth.length === 0 ? (
-          <p style={{ padding: 20, color: '#9ca3af', fontSize: 13 }}>No projects for this month.</p>
+        {sortedCycleProjects.length === 0 ? (
+          <p style={{ padding: 20, color: '#9ca3af', fontSize: 13 }}>No projects for this cycle.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f8fafc', color: '#6b7280', fontSize: 12, fontWeight: 700 }}>
                   {['Project ID', 'Title', 'Client', 'Duration', 'Revenue', 'Status', 'Editor Paid', 'Artist Pay', 'Client Payment'].map(h => (
-                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                    <th key={h} onClick={() => handleSort(h)} style={{ padding: '10px 14px', textAlign: 'left', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}>
+                      {h} {sortConfig?.key === h ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {allProjectsThisMonth.map(p => {
+                {sortedCycleProjects.map(p => {
                   const { revenue, clientCode, minutes } = getProjectRevenue(p)
                   // For MDSC and PGS, Editor Paid applies by default unless excluded
                   const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
@@ -6054,7 +6141,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       </div>
 
       {/* Unknown client warning */}
-      {allProjectsThisMonth.some(p => !rateMap.has(extractClientCode(p.Project_ID || ''))) && (
+      {cycleProjects.some(p => !rateMap.has(extractClientCode(p.Project_ID || ''))) && (
         <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 12, fontSize: 13, color: '#92400e' }}>
           ⚠️ Some projects have unknown client codes. Go to <strong>⚙️ Client Rates</strong> above and add the missing client to include their revenue.
         </div>
@@ -6065,15 +6152,15 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: '90%', maxWidth: 500, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h2 style={{ fontSize: 18, fontWeight: 800, color: '#111' }}>Bonuses - {selectedMonth}</h2>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: '#111' }}>Bonuses</h2>
               <button onClick={() => setShowBonusList(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#9ca3af' }}>✕</button>
             </div>
             
-            {monthPayments.filter(p => Number(p.bonus) > 0).length === 0 ? (
-              <p style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', padding: '20px 0' }}>No bonuses paid for this month.</p>
+            {activePayments.filter(p => Number(p.bonus) > 0).length === 0 ? (
+              <p style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', padding: '20px 0' }}>No bonuses paid for this cycle.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
-                {monthPayments.filter(p => Number(p.bonus) > 0).map((p, i) => (
+                {activePayments.filter(p => Number(p.bonus) > 0).map((p, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#fdf2f8', borderRadius: 10, border: '1px solid #fbcfe8' }}>
                     <div>
                       <div style={{ fontWeight: 700, color: '#be185d', fontSize: 14 }}>{p.Name}</div>
