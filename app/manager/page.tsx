@@ -8206,6 +8206,22 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           .in('Project_ID', leadOwnProjects.map(p => p.Project_ID).filter(Boolean))
       }
 
+      // 1.5 Auto-mark Client Paid for projects that haven't been marked client paid yet
+      const projectsToAutoClientPaid = [...approvedProjects, ...ongoingProjects, ...leadOwnProjects]
+        .filter(p => !p.client_paid_date)
+        .map(p => p.Project_ID)
+        .filter(Boolean)
+        
+      if (projectsToAutoClientPaid.length > 0) {
+        try {
+          await apiClient.from('projects')
+            .update({ client_paid_date: new Date().toISOString() })
+            .in('Project_ID', projectsToAutoClientPaid)
+        } catch (autoClientErr) {
+          console.error('Failed to auto-mark client paid:', autoClientErr)
+        }
+      }
+
       // 1d. Find projects where OTHER people are lead — add ₹1000 to their others_amount
       try {
         const leadPayMap: Record<string, { name: string; amount: number; notes: string[] }> = {}
