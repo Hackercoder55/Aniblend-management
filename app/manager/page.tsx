@@ -5532,6 +5532,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const getExpectedArtistPay = (p: Project) => {
     const clientCode = extractClientCode(p.Project_ID || '')
     if (clientCode === 'HN' || clientCode === 'WN') return 3000
+    if (clientCode === 'INFI') return 5000
     const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
     return Math.round(minutes * 4000)
   }
@@ -8214,9 +8215,12 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
         
       if (projectsToAutoClientPaid.length > 0) {
         try {
-          await apiClient.from('projects')
-            .update({ client_paid_date: new Date().toISOString() })
-            .in('Project_ID', projectsToAutoClientPaid)
+          const baseDateStr = new Date().toISOString()
+          await Promise.all(projectsToAutoClientPaid.map(async pid => {
+            await apiClient.from('projects')
+              .update({ client_paid_date: `${baseDateStr}___PAID___` })
+              .eq('Project_ID', pid)
+          }))
         } catch (autoClientErr) {
           console.error('Failed to auto-mark client paid:', autoClientErr)
         }
