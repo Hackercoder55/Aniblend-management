@@ -5308,6 +5308,9 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [miscLabel, setMiscLabel] = useState('')
   const [miscAmount, setMiscAmount] = useState('')
   const [addingMisc, setAddingMisc] = useState(false)
+  const [extraRevLabel, setExtraRevLabel] = useState('')
+  const [extraRevAmount, setExtraRevAmount] = useState('')
+  const [addingExtraRev, setAddingExtraRev] = useState(false)
   const [showBonusList, setShowBonusList] = useState(false)
 
   // Derive cashout options from payments table
@@ -5321,6 +5324,45 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     })
     return opts
   }, [payments])
+
+  const deleteMisc = async (id: string, dbId?: string) => {
+    setPayments(prev => prev.filter(p => p.id !== dbId && String(p['Employee ID']).replace('MISC_', '') !== id))
+    try { 
+      if (dbId) await apiClient.from('payments').delete().eq('id', dbId)
+      addToast('Deleted misc expense')
+    } catch {}
+  }
+
+  const addExtraRev = async () => {
+    if (!extraRevLabel || !extraRevAmount) return
+    const newId = Date.now().toString()
+    const entryPayload = {
+      'Employee ID': `EXTRAREV_${newId}`,
+      Name: extraRevLabel,
+      Payment_Status: 'Paid',
+      net_paid: parseFloat(extraRevAmount),
+      Timestamp: new Date().toISOString(),
+      'Project ID': `Cycle: ${selectedCycle === 'All Time' ? 'Current' : selectedCycle}`
+    }
+    setPayments(prev => [...prev, entryPayload])
+    try {
+      await apiClient.from('payments').insert([entryPayload])
+    } catch (e: any) {
+      addToast(`Error adding extra revenue: ${e.message}`, 'error')
+    }
+    setExtraRevLabel('')
+    setExtraRevAmount('')
+    setAddingExtraRev(false)
+    addToast('✅ Extra payment added', 'success')
+  }
+
+  const deleteExtraRev = async (id: string, dbId?: string) => {
+    setPayments(prev => prev.filter(p => p.id !== dbId && String(p['Employee ID']).replace('EXTRAREV_', '') !== id))
+    try { 
+      if (dbId) await apiClient.from('payments').delete().eq('id', dbId)
+      addToast('Deleted extra payment')
+    } catch {}
+  }
 
   const [isClient, setIsClient] = useState(false)
   useEffect(() => {
@@ -5418,21 +5460,20 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     addToast('✅ Misc expense added')
   }
 
-  const deleteMisc = async (id: string, dbId?: string) => {
-    setPayments(prev => prev.filter(p => p.id !== dbId && String(p['Employee ID']).replace('MISC_', '') !== id))
-    try { 
-      if (dbId) {
-        await apiClient.from('payments').delete().match({ id: dbId })
-      } else {
-        await apiClient.from('payments').delete().match({ 'Employee ID': `MISC_${id}` }) 
-      }
-    } catch {}
-  }
-
   const miscEntries = payments
     .filter(p => String(p['Employee ID'] || '').startsWith('MISC_'))
     .map(p => ({
       id: String(p['Employee ID']).replace('MISC_', ''),
+      label: p.Name,
+      amount: Number(p.net_paid),
+      cycle: String(p['Project ID']).replace('Cycle: ', '').replace('Month: ', ''),
+      dbId: p.id
+    }))
+
+  const extraRevEntries = payments
+    .filter(p => String(p['Employee ID'] || '').startsWith('EXTRAREV_'))
+    .map(p => ({
+      id: String(p['Employee ID']).replace('EXTRAREV_', ''),
       label: p.Name,
       amount: Number(p.net_paid),
       cycle: String(p['Project ID']).replace('Cycle: ', '').replace('Month: ', ''),
@@ -5557,7 +5598,14 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const totalMisc = activeMisc.reduce((sum, m) => sum + m.amount, 0)
 
   // Net Profit
-  const safeTotalRevenue = isNaN(totalRevenue) ? 0 : totalRevenue
+  const activeExtraRev = extraRevEntries.filter(m => {
+    if (selectedCycle === 'All Time') return true
+    if (selectedCycle === 'Current Cycle') return m.cycle === 'Current'
+    return m.cycle === selectedCycle
+  })
+  const totalExtraRev = activeExtraRev.reduce((sum, m) => sum + m.amount, 0)
+
+  const safeTotalRevenue = (isNaN(totalRevenue) ? 0 : totalRevenue) + totalExtraRev
   const safeTotalArtistPayout = isNaN(totalArtistPayout) ? 0 : totalArtistPayout
   const safeTotalOverhead = isNaN(totalOverhead) ? 0 : totalOverhead
   const safeTotalMisc = isNaN(totalMisc) ? 0 : totalMisc
@@ -5858,7 +5906,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
       {/* ── P&L Summary Cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
         {[
-          { label: 'Gross Revenue', value: totalRevenue, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${activeProjects.length} paid projects` },
+          { label: 'Gross Revenue', value: totalRevenue + totalExtraRev, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${activeProjects.length} paid projects` },
           { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '💸', sub: `Expected pay for ${activeProjects.length} projects` },
           { label: 'Editor Paid', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${projectsWithEditorPaid.length}` },
           { label: 'Bonus Paid', value: totalBonus, color: '#ec4899', bg: '#fdf2f8', icon: '🎁', sub: `${activePayments.filter(p => Number(p.bonus) > 0).length} bonuses` },
@@ -5915,7 +5963,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           )}
         </div>
 
-        {/* ── Misc Expenses ── */}
+        {/* ── Misc Expenses and Extra Revenue ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Miscellaneous Expenses</h3>
@@ -5959,6 +6008,52 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
             </div>
           )}
         </div>
+
+        {/* ── Extra Payments ── */}
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Extra Payments</h3>
+            <button onClick={() => setAddingExtraRev(v => !v)}
+              style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f0ff', color: '#667eea', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+              + Add
+            </button>
+          </div>
+
+          {addingExtraRev && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <input
+                value={extraRevLabel}
+                onChange={e => setExtraRevLabel(e.target.value)}
+                placeholder="Description"
+                style={{ flex: 1, minWidth: 120, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <input
+                type="number"
+                value={extraRevAmount}
+                onChange={e => setExtraRevAmount(e.target.value)}
+                placeholder="Amount ₹"
+                style={{ width: 90, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <button onClick={addExtraRev} style={{ padding: '7px 14px', borderRadius: 8, background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>Add</button>
+              <button onClick={() => setAddingExtraRev(false)} style={{ padding: '7px 10px', borderRadius: 8, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 12, border: 'none', cursor: 'pointer' }}>✕</button>
+            </div>
+          )}
+
+          {activeExtraRev.length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No extra payments for this cycle.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {activeExtraRev.map(m => (
+                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#ecfdf5', borderRadius: 10, border: '1px solid #a7f3d0' }}>
+                  <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{m.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#059669' }}>{fmt(m.amount)}</span>
+                  <button onClick={() => deleteExtraRev(m.id, m.dbId)} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
       </div>
 
       {/* ── Project-level breakdown ── */}
