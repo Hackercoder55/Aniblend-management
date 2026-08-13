@@ -5336,13 +5336,14 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const addExtraRev = async () => {
     if (!extraRevLabel || !extraRevAmount) return
     const newId = Date.now().toString()
+    const cycleName = selectedCycle === 'All Time' || selectedCycle === 'Current Cycle' ? 'Current' : selectedCycle
     const entryPayload = {
       'Employee ID': `EXTRAREV_${newId}`,
       Name: extraRevLabel,
       Payment_Status: 'Paid',
       net_paid: parseFloat(extraRevAmount),
       Timestamp: new Date().toISOString(),
-      'Project ID': `Cycle: ${selectedCycle === 'All Time' ? 'Current' : selectedCycle}`
+      'Project ID': `Cycle: ${cycleName}`
     }
     setPayments(prev => [...prev, entryPayload])
     try {
