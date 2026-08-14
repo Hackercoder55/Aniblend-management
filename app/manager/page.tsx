@@ -5514,7 +5514,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     const cashoutId = p.client_paid_date ? (parts[3] || null) : null
     
     // Only include Approved, Paid, or Closed projects that haven't been cashed out yet
-    return !cashoutId && ['Approved', 'Paid', 'Closed'].includes(p.Status)
+    const status = (p.Status || '').trim().toLowerCase()
+    return !cashoutId && ['approved', 'paid', 'closed'].includes(status)
   })
 
   const availableClients = React.useMemo(() => {
@@ -5528,7 +5529,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   })
 
   const sortedCycleProjects = React.useMemo(() => {
-    const arr = [...cycleProjects]
+    const arr = [...activeProjects]
     if (sortConfig) {
       arr.sort((a, b) => {
         let valA: any = ''
