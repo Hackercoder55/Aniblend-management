@@ -5630,10 +5630,11 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   })
   const totalShared = shareEntries.reduce((sum, p) => sum + Number(p.net_paid || 0), 0)
 
-  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus - totalShared
+  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus
+  const remainingProfitToShare = netProfit - totalShared
 
   const handleShareProfit = async () => {
-    if (netProfit <= 0) {
+    if (remainingProfitToShare <= 0) {
       addToast('No profit left to share!')
       return
     }
@@ -5655,18 +5656,18 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
         await apiClient.from('payments').update({ 'Project ID': `Cycle: ${cashoutId}` }).eq('id', p.id)
       }
 
-      const entryPayload = {
+      const sharePayload = {
         'Employee ID': cashoutId,
-        Name: 'Profit Share',
+        Name: 'Shared Profit',
         Payment_Status: 'Paid',
-        net_paid: netProfit,
+        net_paid: remainingProfitToShare,
         Timestamp: new Date().toISOString(),
         'Project ID': `Cycle: ${cashoutId}`
       }
       
-      await apiClient.from('payments').insert([entryPayload])
+      await apiClient.from('payments').insert([sharePayload])
       
-      addToast(`🎉 Successfully cashed out ${fmt(netProfit)}!`)
+      addToast(`🎉 Successfully cashed out ${fmt(remainingProfitToShare)}!`)
       if (onRefresh) onRefresh()
     } catch (e: any) {
       addToast(`Error during cashout: ${e.message}`)
