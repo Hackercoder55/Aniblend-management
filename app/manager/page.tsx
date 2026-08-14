@@ -5298,6 +5298,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [overheadPerProject, setOverheadPerProject] = useState<number>(300)
   const [showCashoutModal, setShowCashoutModal] = useState(false)
   const [cashoutPin, setCashoutPin] = useState('')
+  const [clientFilter, setClientFilter] = useState<string>('All')
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
   const [showRateEditor, setShowRateEditor] = useState(false)
   const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
@@ -5516,8 +5517,15 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return !cashoutId && ['Approved', 'Paid', 'Closed'].includes(p.Status)
   })
 
-  // Paid projects for selected cycle
-  const activeProjects = cycleProjects.filter(p => p.client_paid_date)
+  const availableClients = React.useMemo(() => {
+    return Array.from(new Set(cycleProjects.map(p => extractClientCode(p.Project_ID || '')))).filter(Boolean).sort()
+  }, [cycleProjects])
+
+  // Paid projects for selected cycle (filtered by client)
+  const activeProjects = cycleProjects.filter(p => {
+    if (clientFilter !== 'All' && extractClientCode(p.Project_ID || '') !== clientFilter) return false
+    return true
+  })
 
   const sortedCycleProjects = React.useMemo(() => {
     const arr = [...cycleProjects]
@@ -5710,7 +5718,18 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Cycle selector REMOVED */}
+          {/* Client Filter */}
+          <select
+            value={clientFilter}
+            onChange={e => setClientFilter(e.target.value)}
+            style={{ padding: '8px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', cursor: 'pointer' }}
+          >
+            <option value="All">All Clients</option>
+            {availableClients.map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+
           {/* Cashout Button */}
           <button
             onClick={handleShareProfit}
