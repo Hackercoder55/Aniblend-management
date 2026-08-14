@@ -5296,7 +5296,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const [loadingRates, setLoadingRates] = useState(true)
   const [payments, setPayments] = useState<any[]>([])
   const [overheadPerProject, setOverheadPerProject] = useState<number>(300)
-  const [selectedCycle, setSelectedCycle] = useState<string>('Current Cycle')
+  const [showCashoutModal, setShowCashoutModal] = useState(false)
+  const [cashoutPin, setCashoutPin] = useState('')
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
   const [showRateEditor, setShowRateEditor] = useState(false)
   const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
@@ -5336,7 +5337,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const addExtraRev = async () => {
     if (!extraRevLabel || !extraRevAmount) return
     const newId = Date.now().toString()
-    const cycleName = selectedCycle === 'All Time' || selectedCycle === 'Current Cycle' ? 'Current' : selectedCycle
+    const cycleName = 'Current'
     const entryPayload = {
       'Employee ID': `EXTRAREV_${newId}`,
       Name: extraRevLabel,
@@ -5506,17 +5507,13 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return { revenue: finalRevenue, clientCode, minutes }
   }
 
-  // All projects for selected cycle (including unpaid if Current Cycle)
+  // All current projects for Profit Tracker
   const cycleProjects = projects.filter(p => {
-    if (selectedCycle === 'All Time') return true
-    
     const parts = (p.client_paid_date || '').split('___')
     const cashoutId = p.client_paid_date ? (parts[3] || null) : null
-
-    if (selectedCycle === 'Current Cycle') {
-      return !cashoutId
-    }
-    return cashoutId === selectedCycle
+    
+    // Only include Approved, Paid, or Closed projects that haven't been cashed out yet
+    return !cashoutId && ['Approved', 'Paid', 'Closed'].includes(p.Status)
   })
 
   // Paid projects for selected cycle
@@ -5591,19 +5588,11 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   const totalOverhead = projectsWithEditorPaid.length * overheadPerProject
   
   // Misc expenses for this cycle
-  const activeMisc = miscEntries.filter(m => {
-    if (selectedCycle === 'All Time') return true
-    if (selectedCycle === 'Current Cycle') return m.cycle === 'Current'
-    return m.cycle === selectedCycle
-  })
+  const activeMisc = miscEntries.filter(m => m.cycle === 'Current')
   const totalMisc = activeMisc.reduce((sum, m) => sum + m.amount, 0)
 
   // Net Profit
-  const activeExtraRev = extraRevEntries.filter(m => {
-    if (selectedCycle === 'All Time') return true
-    if (selectedCycle === 'Current Cycle') return m.cycle === 'Current'
-    return m.cycle === selectedCycle
-  })
+  const activeExtraRev = extraRevEntries.filter(m => m.cycle === 'Current')
   const totalExtraRev = activeExtraRev.reduce((sum, m) => sum + m.amount, 0)
 
   const safeTotalRevenue = (isNaN(totalRevenue) ? 0 : totalRevenue) + totalExtraRev
@@ -5614,30 +5603,32 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   // Bonuses paid this cycle
   const activePayments = payments.filter(p => {
     const cycle = String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '')
-    if (selectedCycle === 'All Time') return true
-    if (selectedCycle === 'Current Cycle') return cycle === 'Current'
-    return cycle === selectedCycle
+    return cycle === 'Current'
   })
   const totalBonus = activePayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
   const safeTotalBonus = isNaN(totalBonus) ? 0 : totalBonus
 
   // Shared Profits
-  const shareEntries = payments.filter(p => {
-    const cycle = String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '')
-    if (!String(p['Employee ID'] || '').startsWith('SHARE_')) return false
-    if (selectedCycle === 'All Time') return true
-    return cycle === selectedCycle
-  })
-  const totalShared = shareEntries.reduce((sum, p) => sum + Number(p.net_paid || 0), 0)
+  const totalShared = 0
 
   const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus
   const remainingProfitToShare = netProfit - totalShared
 
   const handleShareProfit = async () => {
     if (remainingProfitToShare <= 0) {
-      addToast('No profit left to share!')
+      addToast('No profit left to share!', 'error')
       return
     }
+    setShowCashoutModal(true)
+  }
+
+  const confirmCashout = async () => {
+    if (cashoutPin !== '1234') {
+      addToast('Incorrect PIN!', 'error')
+      return
+    }
+    setShowCashoutModal(false)
+    setCashoutPin('')
     const newId = Date.now().toString()
     const cashoutId = `SHARE_${newId}`
 
@@ -5660,14 +5651,18 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
         'Employee ID': cashoutId,
         Name: 'Shared Profit',
         Payment_Status: 'Paid',
-        net_paid: remainingProfitToShare,
+        net_paid: remainingProfitToShare / 2, // Split between 2 people
         Timestamp: new Date().toISOString(),
         'Project ID': `Cycle: ${cashoutId}`
       }
       
-      await apiClient.from('payments').insert([sharePayload])
+      // Insert two records (one for each person)
+      await apiClient.from('payments').insert([
+        { ...sharePayload, Name: 'Shared Profit - Bidyut' },
+        { ...sharePayload, Name: 'Shared Profit - Partner' }
+      ])
       
-      addToast(`🎉 Successfully cashed out ${fmt(remainingProfitToShare)}!`)
+      addToast(`🎉 Successfully cashed out ${fmt(remainingProfitToShare)} (split into 2)!`)
       if (onRefresh) onRefresh()
     } catch (e: any) {
       addToast(`Error during cashout: ${e.message}`)
@@ -5715,23 +5710,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Cycle selector */}
-          <select
-            value={selectedCycle}
-            onChange={e => setSelectedCycle(e.target.value)}
-            style={{ padding: '8px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', cursor: 'pointer' }}
-          >
-            {cashoutOptions.map(m => {
-              let label = m
-              if (m.startsWith('SHARE_')) {
-                const p = payments.find(pay => pay['Employee ID'] === m)
-                if (p && p.Timestamp) {
-                  label = `Closed on ${new Date(p.Timestamp).toLocaleDateString('en-GB')}`
-                }
-              }
-              return <option key={m} value={m}>{label}</option>
-            })}
-          </select>
+          {/* Cycle selector REMOVED */}
           {/* Cashout Button */}
           <button
             onClick={handleShareProfit}
@@ -6269,6 +6248,52 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {showCashoutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col p-6 animate-fade-in-up">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
+                🔒
+              </div>
+              <h2 className="text-xl font-bold text-gray-800">Confirm Cashout</h2>
+              <p className="text-sm text-gray-500 mt-2">
+                This will permanently move all current projects and profit to the Cashout Reports.
+              </p>
+            </div>
+            
+            <div className="mb-6">
+              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2 text-center">
+                Enter 4-Digit PIN
+              </label>
+              <input
+                type="password"
+                maxLength={4}
+                value={cashoutPin}
+                onChange={e => setCashoutPin(e.target.value.replace(/\D/g, ''))}
+                className="w-full text-center text-3xl tracking-[1em] font-black text-gray-800 bg-gray-50 border-2 border-gray-200 rounded-xl py-3 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                placeholder="••••"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex gap-3 mt-auto">
+              <button
+                onClick={() => { setShowCashoutModal(false); setCashoutPin(''); }}
+                className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmCashout}
+                disabled={cashoutPin.length !== 4}
+                className="flex-1 px-4 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cashout
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -6951,13 +6976,181 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
           </div>
         )}
       </div>
+
+    </div>
+  )
+}
+
+// ─── CashoutReportsTab ──────────────────────────────────────────────────────────
+function CashoutReportsTab({ projects }: { projects: Project[] }) {
+  const [payments, setPayments] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedCashoutId, setSelectedCashoutId] = useState<string | null>(null)
+
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      setPayments((data as any[]) || [])
+      setLoading(false)
+    })
+  }, [])
+
+  const cashouts = React.useMemo(() => {
+    const shareRecords = payments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_') && String(p.Name).includes('Shared Profit'))
+    const grouped = new Map<string, any>()
+    for (const record of shareRecords) {
+      const id = record['Employee ID']
+      if (!grouped.has(id)) {
+        grouped.set(id, { id, timestamp: record.Timestamp, total_shared: 0 })
+      }
+      grouped.get(id).total_shared += Number(record.net_paid || 0)
+    }
+    const arr = Array.from(grouped.values())
+    arr.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return arr
+  }, [payments])
+
+  if (loading) return <div className="p-8 text-center text-gray-400">Loading cashout history...</div>
+
+  if (selectedCashoutId) {
+    const cashoutInfo = cashouts.find(c => c.id === selectedCashoutId)
+    const includedProjects = projects.filter(p => (p.client_paid_date || '').split('___')[3] === selectedCashoutId)
+    
+    // Revenue calculations
+    let totalRev = 0
+    let totalArtist = 0
+    for (const p of includedProjects) {
+      let mins = 0
+      if (p.Project_ID?.toLowerCase().includes('reel')) mins = 1
+      else if (p.Project_ID?.toLowerCase().includes('shorts')) mins = 1
+      else {
+        const parts = (p.Duration || '').split(':')
+        if (parts.length === 2) mins = parseInt(parts[0]) + parseInt(parts[1])/60
+      }
+      totalRev += mins * 1350 // Approximate rate for simplicity in history (could be improved)
+      
+      const pId = p.Project_ID || ''
+      const isReel = pId.toLowerCase().includes('reel') || pId.toLowerCase().includes('shorts')
+      const pMins = parseDurationMinutes(p.Duration, pId)
+      let tier = 'T3' // Default
+      const rate = tier === 'T1' ? 700 : tier === 'T2' ? 600 : 500
+      let pay = isReel ? 1200 : (pMins * rate)
+      if (p.Status === 'Changes Requested') pay = pay * 0.5
+      totalArtist += pay
+    }
+
+    const includedExtraRev = payments.filter(p => p['Project ID'] === `Cycle: ${selectedCashoutId}` && String(p['Employee ID']).startsWith('EXTRAREV_'))
+    const includedMisc = payments.filter(p => p['Project ID'] === `Cycle: ${selectedCashoutId}` && String(p['Employee ID']).startsWith('MISC_'))
+    
+    const extraRevAmount = includedExtraRev.reduce((sum, p) => sum + Number(p.amount || p.net_paid || 0), 0)
+    const miscAmount = includedMisc.reduce((sum, p) => sum + Number(p.amount || p.net_paid || 0), 0)
+
+    return (
+      <div className="p-4 md:p-6 lg:p-8 animate-fade-in-up">
+        <button onClick={() => setSelectedCashoutId(null)} className="mb-6 text-sm font-bold text-indigo-600 flex items-center gap-2 hover:text-indigo-800 transition-colors">
+          ← Back to Cashouts
+        </button>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+          <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center flex-wrap gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">Cashout on {new Date(cashoutInfo.timestamp).toLocaleDateString('en-GB')}</h2>
+              <p className="text-sm text-gray-500">ID: {cashoutInfo.id}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Total Shared</p>
+              <p className="text-2xl font-black text-indigo-600">₹{cashoutInfo.total_shared.toLocaleString('en-IN')}</p>
+            </div>
+          </div>
+          
+          <div className="p-6">
+            <h3 className="font-bold text-gray-800 mb-4">Included Projects ({includedProjects.length})</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs text-gray-500 uppercase bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 rounded-tl-lg">Project ID</th>
+                    <th className="px-4 py-3">Animator</th>
+                    <th className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {includedProjects.map(p => (
+                    <tr key={p.Project_ID} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-3 font-semibold text-gray-800">{p.Project_ID}</td>
+                      <td className="px-4 py-3 text-gray-600">{p.Animator}</td>
+                      <td className="px-4 py-3"><span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold uppercase">{p.Status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            {(includedExtraRev.length > 0 || includedMisc.length > 0) && (
+              <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {includedExtraRev.length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-gray-800 mb-4 text-sm">Extra Revenue</h3>
+                    <ul className="space-y-2">
+                      {includedExtraRev.map(e => <li key={e.id} className="text-sm flex justify-between bg-emerald-50 text-emerald-700 px-3 py-2 rounded"><span>{e.Name}</span><span className="font-bold">₹{e.net_paid || e.amount}</span></li>)}
+                    </ul>
+                  </div>
+                )}
+                {includedMisc.length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-gray-800 mb-4 text-sm">Misc Expenses</h3>
+                    <ul className="space-y-2">
+                      {includedMisc.map(e => <li key={e.id} className="text-sm flex justify-between bg-red-50 text-red-700 px-3 py-2 rounded"><span>{e.Name}</span><span className="font-bold">₹{e.net_paid || e.amount}</span></li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-4 md:p-6 lg:p-8 animate-fade-in-up max-w-5xl mx-auto">
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">💰 Cashout Reports</h2>
+        <p className="text-sm text-gray-500 mt-1">History of all your finalized profit distributions</p>
+      </div>
+
+      {cashouts.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-2xl border border-gray-100 shadow-sm">
+          <div className="text-4xl mb-4 opacity-50">💸</div>
+          <p className="text-gray-500 font-medium">No cashout history found.</p>
+          <p className="text-sm text-gray-400 mt-1">When you cashout from the Profit Tracker, reports will appear here.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cashouts.map(c => (
+            <div key={c.id} onClick={() => setSelectedCashoutId(c.id)} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer group hover:border-indigo-200">
+              <div className="flex justify-between items-start mb-4">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-xl flex items-center justify-center text-lg group-hover:bg-indigo-100 transition-colors">
+                  💰
+                </div>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{new Date(c.timestamp).toLocaleDateString('en-GB')}</span>
+              </div>
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Total Shared</p>
+              <p className="text-2xl font-black text-gray-800 group-hover:text-indigo-600 transition-colors">₹{c.total_shared.toLocaleString('en-IN')}</p>
+              
+              <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between items-center">
+                <span className="text-xs text-gray-400 truncate w-32">{c.id}</span>
+                <span className="text-xs font-bold text-indigo-500 flex items-center gap-1 group-hover:gap-2 transition-all">View Details →</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit' | 'cashouts'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; leadOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
@@ -6971,6 +7164,7 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; l
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payouts', label: 'Payout Calculator', icon: '🧭', managerOnly: true },
   { id: 'profit', label: 'Profit Tracker', icon: '💹', managerOnly: true },
+  { id: 'cashouts', label: 'Cashout Reports', icon: '💰', managerOnly: true },
   { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
   { id: 'users', label: 'User Management', icon: '🔐', managerOnly: true },
@@ -10926,6 +11120,7 @@ export default function ManagerDashboard() {
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
               {activeTab === 'profit' && <ErrorBoundary><ProfitTrackerTab projects={projects} animators={animators} onRefresh={fetchData} /></ErrorBoundary>}
+              {activeTab === 'cashouts' && <ErrorBoundary><CashoutReportsTab projects={projects} /></ErrorBoundary>}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
