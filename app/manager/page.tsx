@@ -5558,7 +5558,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     })
   }
 
-  // Revenue from all active projects
+  // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
+  // ONLY calculated for projects that are marked as Client Paid (as requested by user)
   const totalRevenue = activeProjects.reduce((sum, p) => {
     let rev = getProjectRevenue(p).revenue;
     const parts = (p.client_paid_date || '').split('___')
@@ -5569,8 +5570,9 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
 
     if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum; // Revenue is 0 for these statuses
 
-    // Add revenue for all active projects, as soon as they are approved
-    return sum + rev;
+    if (p.client_paid_date) return sum + rev; // 100% paid
+    if (p.client_paid_50_date) return sum + (rev * 0.5); // 50% paid
+    return sum;
   }, 0)
 
   const getExpectedArtistPay = (p: Project) => {
@@ -5582,10 +5584,23 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   }
 
   // Artist payouts for this cycle (Expected based on fixed rates)
-  const totalArtistPayout = activeProjects.reduce((sum, p) => sum + getExpectedArtistPay(p), 0)
+  // ONLY calculated for projects that are Client Paid, to match Gross Revenue and avoid negative profit
+  const totalArtistPayout = activeProjects.reduce((sum, p) => {
+    if (!p.client_paid_date && !p.client_paid_50_date) return sum;
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum;
+    return sum + getExpectedArtistPay(p);
+  }, 0)
   
   // Overhead (Editor Paid): ₹300 per paid project that hasn't excluded it
+  // ONLY calculated for projects that are Client Paid, to match Gross Revenue
   const projectsWithEditorPaid = activeProjects.filter(p => {
+    if (!p.client_paid_date && !p.client_paid_50_date) return false;
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return false;
+    
     const clientCode = extractClientCode(p.Project_ID || '')
     const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
     return p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
