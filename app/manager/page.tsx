@@ -5719,18 +5719,56 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
           {(() => {
             const debugProj = projects.find(p => p.Project_ID === '3173_56_PGS')
-            if (!debugProj) return <div style={{color:'red'}}>3173_56_PGS NOT FOUND IN PROJECTS</div>
-            const statusStr = (debugProj.Status || '').trim().toLowerCase()
-            const parts = (debugProj.client_paid_date || '').split('___')
-            const cashoutId = debugProj.client_paid_date ? (parts[3] || null) : null
+            const statusStr = debugProj ? (debugProj.Status || '').trim().toLowerCase() : ''
+            const parts = debugProj ? (debugProj.client_paid_date || '').split('___') : []
+            const cashoutId = debugProj && debugProj.client_paid_date ? (parts[3] || null) : null
+            
+            // Function to restore all accidental cashouts
+            const handleRestoreCashouts = async () => {
+              if (!confirm('Are you sure you want to restore all previously cashed out projects back to the Profit Tracker?')) return;
+              try {
+                const projectsToRestore = projects.filter(p => p.client_paid_date && p.client_paid_date.includes('___SHARE_'));
+                await Promise.all(projectsToRestore.map(p => {
+                  const newPaidDate = p.client_paid_date?.split('___SHARE_')[0];
+                  return apiClient.from('projects').update({ client_paid_date: newPaidDate }).eq('Project_ID', p.Project_ID);
+                }));
+                // Also delete the cashout records from payments table
+                const paymentsToDelete = activePayments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_'));
+                await Promise.all(paymentsToDelete.map(p => {
+                  return apiClient.from('payments').delete().eq('id', p.id);
+                }));
+                alert(`Restored ${projectsToRestore.length} projects! Please Hard Refresh (Ctrl+Shift+R) to see them in Profit Tracker.`);
+                if (onRefresh) onRefresh();
+              } catch (err) {
+                alert('Error restoring projects: ' + err);
+              }
+            }
+
             return (
-              <div style={{ padding: 10, background: '#fee2e2', color: '#b91c1c', fontSize: 12, marginTop: 10 }}>
-                DEBUG 3173_56_PGS:<br/>
-                Status: "{debugProj.Status}" (parsed: "{statusStr}")<br/>
-                client_paid_date: "{debugProj.client_paid_date}"<br/>
-                cashoutId: "{cashoutId}"<br/>
-                included in cycleProjects? {!cashoutId && ['approved', 'paid', 'closed'].includes(statusStr) ? 'YES' : 'NO'}<br/>
-                projects array length: {projects.length}
+              <div style={{ padding: 15, background: '#fee2e2', color: '#b91c1c', fontSize: 13, marginTop: 10, borderRadius: 8, border: '1px solid #f87171' }}>
+                <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 14 }}>🕵️‍♂️ DEBUG INFO (WHY PROJECTS ARE MISSING):</div>
+                {debugProj ? (
+                  <>
+                    <div><strong>Project:</strong> 3173_56_PGS</div>
+                    <div><strong>Status:</strong> "{debugProj.Status}" (parsed: "{statusStr}")</div>
+                    <div><strong>client_paid_date:</strong> "{debugProj.client_paid_date}"</div>
+                    <div><strong>cashoutId:</strong> "{cashoutId}"</div>
+                    <div style={{ marginTop: 8 }}>
+                      <strong>Reason for exclusion:</strong> You mentioned you never clicked Cashout, but this project HAS a cashout ID ({cashoutId}) attached to it! This means someone accidentally clicked the "Cashout Profit" (or old "Share") button previously. The rule is that cashed-out projects are removed from this tab.
+                    </div>
+                  </>
+                ) : (
+                  <div style={{color:'red'}}>3173_56_PGS NOT FOUND IN PROJECTS</div>
+                )}
+                
+                <div style={{ marginTop: 15, paddingTop: 15, borderTop: '1px dashed #fca5a5' }}>
+                  <strong>Do you want to fix this and bring all those projects back?</strong><br/>
+                  <button 
+                    onClick={handleRestoreCashouts}
+                    style={{ marginTop: 10, background: '#dc2626', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 4px rgba(220,38,38,0.3)' }}>
+                    🚨 Undo All Previous Cashouts & Restore Projects
+                  </button>
+                </div>
               </div>
             )
           })()}
