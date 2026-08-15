@@ -5515,7 +5515,10 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     
     // Only include Approved, Paid, or Closed projects that haven't been cashed out yet
     const status = (p.Status || '').trim().toLowerCase()
-    return !cashoutId && ['approved', 'paid', 'closed'].includes(status)
+    
+    // Some statuses might have weird characters or casing. Just check if it includes the word.
+    const isApprovedOrPaid = status.includes('approved') || status.includes('paid') || status.includes('closed') || status === 'completed'
+    return !cashoutId && isApprovedOrPaid
   })
 
   const availableClients = React.useMemo(() => {
@@ -5741,7 +5744,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
             
             const approvedOrPaid = projects.filter(p => {
                const s = (p.Status || '').trim().toLowerCase();
-               return ['approved', 'paid', 'closed'].includes(s);
+               return s.includes('approved') || s.includes('paid') || s.includes('closed') || s === 'completed';
             })
             const inCycle = cycleProjects.length;
             const missing = approvedOrPaid.filter(p => !cycleProjects.some(cp => cp.Project_ID === p.Project_ID));
@@ -5752,7 +5755,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
               <div style={{ padding: 15, background: '#fee2e2', color: '#b91c1c', fontSize: 13, marginTop: 10, borderRadius: 8, border: '1px solid #f87171' }}>
                 <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 14 }}>🕵️‍♂️ DEBUG INFO (WHY PROJECTS ARE MISSING):</div>
                 <div><strong>Total Approved/Paid/Closed in Database:</strong> {approvedOrPaid.length}</div>
-                <div><strong>Currently showing in Profit Tracker:</strong> {inCycle}</div>
+                <div><strong>Currently showing in Profit Tracker:</strong> {inCycle} (Client Filter: {clientFilter})</div>
                 <div><strong>Missing from Profit Tracker:</strong> {missing.length}</div>
                 <div style={{ marginTop: 8 }}>
                    Of the {missing.length} missing projects:<br/>
