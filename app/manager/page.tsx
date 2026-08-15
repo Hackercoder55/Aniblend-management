@@ -5577,9 +5577,15 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
 
   const getExpectedArtistPay = (p: Project) => {
     const clientCode = extractClientCode(p.Project_ID || '')
-    if (clientCode === 'HN' || clientCode === 'WN') return 3000
+    if (clientCode === 'WN') return 4000
+    if (clientCode === 'HN') return 3000
     if (clientCode === 'INFI') return 5000
+    
+    if (clientCode === 'GLEE') return getProjectRevenue(p).revenue
+    
     const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
+    if (clientCode === 'MRC') return 4000 * minutes
+    
     return Math.round(minutes * 4000)
   }
 
