@@ -5509,16 +5509,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   }
 
   // All current projects for Profit Tracker
-  const cycleProjects = projects.filter(p => {
-    const status = (p.Status || '').trim().toLowerCase()
-    
-    // Some statuses might have weird characters or casing. Just check if it includes the word.
-    const isApprovedOrPaid = status.includes('approved') || status.includes('paid') || status.includes('closed') || status === 'completed'
-    
-    // User requested to assume we have NEVER cashed out in our entire life.
-    // So we completely ignore cashout IDs and show all approved projects.
-    return isApprovedOrPaid
-  })
+  // As requested, showing ALL projects regardless of status (Approved, Paid, Ongoing, etc.)
+  const cycleProjects = projects
 
   const availableClients = React.useMemo(() => {
     return Array.from(new Set(cycleProjects.map(p => extractClientCode(p.Project_ID || '')))).filter(Boolean).sort()
