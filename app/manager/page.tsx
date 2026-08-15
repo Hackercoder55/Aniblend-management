@@ -5717,6 +5717,23 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 800, color: '#111', margin: 0 }}>💹 Profit Tracker</h2>
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
+          {(() => {
+            const debugProj = projects.find(p => p.Project_ID === '3173_56_PGS')
+            if (!debugProj) return <div style={{color:'red'}}>3173_56_PGS NOT FOUND IN PROJECTS</div>
+            const statusStr = (debugProj.Status || '').trim().toLowerCase()
+            const parts = (debugProj.client_paid_date || '').split('___')
+            const cashoutId = debugProj.client_paid_date ? (parts[3] || null) : null
+            return (
+              <div style={{ padding: 10, background: '#fee2e2', color: '#b91c1c', fontSize: 12, marginTop: 10 }}>
+                DEBUG 3173_56_PGS:<br/>
+                Status: "{debugProj.Status}" (parsed: "{statusStr}")<br/>
+                client_paid_date: "{debugProj.client_paid_date}"<br/>
+                cashoutId: "{cashoutId}"<br/>
+                included in cycleProjects? {!cashoutId && ['approved', 'paid', 'closed'].includes(statusStr) ? 'YES' : 'NO'}<br/>
+                projects array length: {projects.length}
+              </div>
+            )
+          })()}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Client Filter */}
