@@ -5755,6 +5755,32 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+          
+          <button 
+            onClick={() => {
+              const text = cycleProjects
+                .map(p => `${p.Project_ID} | Client: ${extractClientCode(p.Project_ID||'')} | Status: ${p.Status}`)
+                .join('\n');
+              navigator.clipboard.writeText(text);
+              alert('Copied ' + cycleProjects.length + ' projects to clipboard! Paste it in Notepad to check the list.');
+            }}
+            style={{ 
+              padding: '8px 16px', 
+              borderRadius: 10, 
+              border: 'none', 
+              fontSize: 13, 
+              fontWeight: 700, 
+              color: '#fff', 
+              background: 'linear-gradient(135deg, #8b5cf6, #6366f1)', 
+              cursor: 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6,
+              boxShadow: '0 4px 6px -1px rgba(139, 92, 246, 0.2)'
+            }}
+          >
+            📋 Copy Project List
+          </button>
 
           {/* Cashout Button */}
           <button
