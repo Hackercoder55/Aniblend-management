@@ -5509,8 +5509,15 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   }
 
   // All current projects for Profit Tracker
-  // Only show Approved, Paid, Closed, Completed (DO NOT show Ongoing)
+  // Only show projects that haven't been cashed out.
+  // Include Approved, Paid, Closed, Completed, AND any project that has a client_paid_date (even if Ongoing).
   const cycleProjects = projects.filter(p => {
+    const parts = (p.client_paid_date || '').split('___')
+    const cashoutId = p.client_paid_date ? (parts[3] || null) : null
+    if (cashoutId) return false; // Hide cashed out projects
+    
+    if (p.client_paid_date || p.client_paid_50_date) return true; // Always show if client has paid
+    
     const status = (p.Status || '').trim().toLowerCase()
     return status.includes('approved') || status.includes('paid') || status.includes('closed') || status === 'completed'
   })
@@ -5734,70 +5741,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 800, color: '#111', margin: 0 }}>💹 Profit Tracker</h2>
           <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
-          {(() => {
-            // Function to restore all accidental cashouts
-            const handleRestoreCashouts = async () => {
-              if (!confirm('Are you sure you want to restore all previously cashed out projects back to the Profit Tracker?')) return;
-              try {
-                const projectsToRestore = projects.filter(p => p.client_paid_date && p.client_paid_date.includes('___SHARE_'));
-                await Promise.all(projectsToRestore.map(p => {
-                  const newPaidDate = p.client_paid_date?.split('___SHARE_')[0];
-                  return apiClient.from('projects').update({ client_paid_date: newPaidDate }).eq('Project_ID', p.Project_ID);
-                }));
-                // Also delete the cashout records from payments table
-                const paymentsToDelete = activePayments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_'));
-                await Promise.all(paymentsToDelete.map(p => {
-                  return apiClient.from('payments').delete().eq('id', p.id);
-                }));
-                alert(`Restored ${projectsToRestore.length} projects! Please Hard Refresh (Ctrl+Shift+R) to see them in Profit Tracker.`);
-                if (onRefresh) onRefresh();
-              } catch (err) {
-                alert('Error restoring projects: ' + err);
-              }
-            }
-            
-            const approvedOrPaid = projects.filter(p => {
-               const s = (p.Status || '').trim().toLowerCase();
-               return s.includes('approved') || s.includes('paid') || s.includes('closed') || s === 'completed';
-            })
-            const inCycle = cycleProjects.length;
-            const missing = approvedOrPaid.filter(p => !cycleProjects.some(cp => cp.Project_ID === p.Project_ID));
-            const missingWithCashout = missing.filter(p => p.client_paid_date?.includes('___SHARE_'));
-            const missingWithoutCashout = missing.filter(p => !p.client_paid_date?.includes('___SHARE_'));
-
-            return (
-              <div style={{ padding: 15, background: '#fee2e2', color: '#b91c1c', fontSize: 13, marginTop: 10, borderRadius: 8, border: '1px solid #f87171' }}>
-                <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 14 }}>🕵️‍♂️ DEBUG INFO (WHY PROJECTS ARE MISSING):</div>
-                <div><strong>Total Approved/Paid/Closed in Database:</strong> {approvedOrPaid.length}</div>
-                <div><strong>Currently showing in Profit Tracker:</strong> {inCycle} (Client Filter: {clientFilter})</div>
-                <div><strong>Missing from Profit Tracker:</strong> {missing.length}</div>
-                <div style={{ marginTop: 8 }}>
-                   Of the {missing.length} missing projects:<br/>
-                   - <strong>{missingWithCashout.length}</strong> have a Cashout ID attached (meaning they were cashed out previously).<br/>
-                   - <strong>{missingWithoutCashout.length}</strong> are missing for other reasons!
-                </div>
-                {missingWithoutCashout.length > 0 && (
-                   <div style={{ marginTop: 8, maxHeight: 150, overflowY: 'auto', background: '#fca5a5', padding: 10, borderRadius: 6, color: '#7f1d1d' }}>
-                     <strong>Other Missing Projects (First 10):</strong>
-                     {missingWithoutCashout.slice(0, 10).map(p => (
-                       <div key={p.Project_ID}>{p.Project_ID} - Status: "{p.Status}"</div>
-                     ))}
-                   </div>
-                )}
-                
-                {missingWithCashout.length > 0 && (
-                  <div style={{ marginTop: 15, paddingTop: 15, borderTop: '1px dashed #fca5a5' }}>
-                    <strong>Do you want to fix this and bring the {missingWithCashout.length} cashed-out projects back?</strong><br/>
-                    <button 
-                      onClick={handleRestoreCashouts}
-                      style={{ marginTop: 10, background: '#dc2626', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 4px rgba(220,38,38,0.3)' }}>
-                      🚨 Undo All Previous Cashouts & Restore {missingWithCashout.length} Projects
-                    </button>
-                  </div>
-                )}
-              </div>
-            )
-          })()}
+          {/* Removed Debug Box */}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Client Filter */}
