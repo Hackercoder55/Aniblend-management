@@ -5509,8 +5509,11 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   }
 
   // All current projects for Profit Tracker
-  // As requested, showing ALL projects regardless of status (Approved, Paid, Ongoing, etc.)
-  const cycleProjects = projects
+  // Only show Approved, Paid, Closed, Completed (DO NOT show Ongoing)
+  const cycleProjects = projects.filter(p => {
+    const status = (p.Status || '').trim().toLowerCase()
+    return status.includes('approved') || status.includes('paid') || status.includes('closed') || status === 'completed'
+  })
 
   const availableClients = React.useMemo(() => {
     return Array.from(new Set(cycleProjects.map(p => extractClientCode(p.Project_ID || '')))).filter(Boolean).sort()
@@ -5555,7 +5558,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     })
   }
 
-  // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
+  // Revenue from all active projects
   const totalRevenue = activeProjects.reduce((sum, p) => {
     let rev = getProjectRevenue(p).revenue;
     const parts = (p.client_paid_date || '').split('___')
@@ -5566,9 +5569,8 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
 
     if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum; // Revenue is 0 for these statuses
 
-    if (p.client_paid_date) return sum + rev; // 100% paid
-    if (p.client_paid_50_date) return sum + (rev * 0.5); // 50% paid
-    return sum;
+    // Add revenue for all active projects, as soon as they are approved
+    return sum + rev;
   }, 0)
 
   const getExpectedArtistPay = (p: Project) => {
