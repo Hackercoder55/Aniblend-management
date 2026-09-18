@@ -11233,7 +11233,11 @@ export default function ManagerDashboard() {
   useEffect(() => {
     const stored = localStorage.getItem('AniBlend_user')
     if (!stored) { router.push('/'); return }
-    setUser(JSON.parse(stored))
+    const parsedUser = JSON.parse(stored)
+    setUser(parsedUser)
+    if (parsedUser.role === 'reviewer') {
+      setActiveTab('infi')
+    }
   }, [router])
 
   const fetchData = useCallback(async () => {
