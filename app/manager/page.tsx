@@ -6971,7 +6971,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                   </button>
                   <button onClick={() => { setNameMode('manual'); setForm(f => ({ ...f, full_name: '', access_level: 'full' })) }}
                     className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-all ${nameMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                    ✏️ Manual (Full Access)
+                    ✏️ Enter Manually
                   </button>
                 </div>
                 {nameMode === 'lead' ? (
