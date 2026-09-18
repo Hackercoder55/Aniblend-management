@@ -256,6 +256,84 @@ function parseDurationSec(duration: string, projectId?: string): number {
   return n
 }
 
+export function getProjectRevenueGlobal(p: Project, rateMap?: Map<string, ClientRate>): { revenue: number; clientCode: string; minutes: number } {
+  const clientCode = extractClientCode(p.Project_ID || '')
+  const rate = rateMap?.get(clientCode) || DEFAULT_RATES.find(r => r.client_code === clientCode)
+  if (!rate) return { revenue: 0, clientCode, minutes: 0 }
+  const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
+  const revenue = rate.rate_type === 'flat' ? rate.rate_inr : rate.rate_inr * minutes
+  const finalRevenue = isNaN(revenue) ? 0 : Math.round(revenue);
+  return { revenue: finalRevenue, clientCode, minutes }
+}
+
+export function getProjectTotalExpense(p: Project, rateMap?: Map<string, ClientRate>): number {
+  const clientCode = extractClientCode(p.Project_ID || '');
+  
+  let totalExpense = 0;
+  if (p.Lead) totalExpense += 1000;
+  
+  if (clientCode === 'WN') return totalExpense + 4000;
+  if (clientCode === 'HN') return totalExpense + 3000;
+  if (clientCode === 'INFI') return totalExpense + 5000;
+  if (clientCode === 'GLEE') return totalExpense + getProjectRevenueGlobal(p, rateMap).revenue;
+
+  const sec = parseDurationSec(p.Duration || '', p.Project_ID);
+  if (clientCode === 'MRC') return Math.round(totalExpense + (sec * (4000 / 60)));
+
+  const isA = (p.Employee_ID || '').toUpperCase().includes('A');
+  const hasLighting = !!p.Lighting_Artist;
+  
+  const animRate = isA ? 2500 : (hasLighting ? 2500 : 4000);
+  totalExpense += sec * (animRate / 60);
+  
+  if (hasLighting) {
+    totalExpense += sec * (1500 / 60);
+  }
+  
+  return Math.round(totalExpense); 
+}
+
+export function getAnimatorProjectPayout(p: Project, eid: string, animName: string, rateMap?: Map<string, ClientRate>): number {
+  const clientCode = extractClientCode(p.Project_ID || '');
+  
+  const isAnim = p.Employee_ID === eid || 
+                 (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
+  const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
+  const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
+
+  let payout = 0;
+
+  if (clientCode === 'WN' || clientCode === 'HN' || clientCode === 'INFI' || clientCode === 'GLEE') {
+     if (isLead) payout += 1000;
+     if (isAnim) {
+       if (clientCode === 'WN') payout += 4000;
+       if (clientCode === 'HN') payout += 3000;
+       if (clientCode === 'INFI') payout += 5000;
+       if (clientCode === 'GLEE') payout += getProjectRevenueGlobal(p, rateMap).revenue;
+     }
+     return Math.round(payout); 
+  }
+
+  const sec = parseDurationSec(p.Duration || '', p.Project_ID);
+  
+  if (clientCode === 'MRC') {
+     if (isLead) payout += 1000;
+     if (isAnim) payout += sec * (4000 / 60);
+     return Math.round(payout);
+  }
+
+  if (isLead) payout += 1000;
+  if (isLighting) {
+    payout += sec * (1500 / 60);
+  } else if (isAnim) {
+    const isA = (eid || '').toUpperCase().includes('A');
+    const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
+    payout += sec * (rate / 60);
+  }
+  
+  return Math.round(payout);
+}
+
 /** Format seconds as "Xm Ys" or "Xs" */
 function formatSec(sec: number): string {
   if (!sec || sec <= 0) return '—'
@@ -5498,15 +5576,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return `${months[dt.getMonth()]} ${dt.getFullYear()}`
   }
 
-  const getProjectRevenue = (p: Project): { revenue: number; clientCode: string; minutes: number } => {
-    const clientCode = extractClientCode(p.Project_ID || '')
-    const rate = rateMap.get(clientCode)
-    if (!rate) return { revenue: 0, clientCode, minutes: 0 }
-    const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
-    const revenue = rate.rate_type === 'flat' ? rate.rate_inr : rate.rate_inr * minutes
-    const finalRevenue = isNaN(revenue) ? 0 : Math.round(revenue);
-    return { revenue: finalRevenue, clientCode, minutes }
-  }
+  // getProjectRevenueGlobal is now used directly
 
   // All current projects for Profit Tracker
   // Only show projects that haven't been cashed out.
@@ -5542,10 +5612,10 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
         if (sortConfig.key === 'Title') { valA = a.Project_title; valB = b.Project_title }
         if (sortConfig.key === 'Client') { valA = extractClientCode(a.Project_ID || ''); valB = extractClientCode(b.Project_ID || '') }
         if (sortConfig.key === 'Duration') { valA = parseDurationMinutes(a.Duration, a.Project_ID); valB = parseDurationMinutes(b.Duration, b.Project_ID) }
-        if (sortConfig.key === 'Revenue') { valA = getProjectRevenue(a).revenue; valB = getProjectRevenue(b).revenue }
+        if (sortConfig.key === 'Revenue') { valA = getProjectRevenueGlobal(a, rateMap).revenue; valB = getProjectRevenueGlobal(b, rateMap).revenue }
         if (sortConfig.key === 'Status') { valA = a.Status; valB = b.Status }
         if (sortConfig.key === 'Editor Paid') { valA = a.exclude_editor_paid ? 0 : 1; valB = b.exclude_editor_paid ? 0 : 1 }
-        if (sortConfig.key === 'Artist Pay') { valA = getExpectedArtistPay(a); valB = getExpectedArtistPay(b) }
+        if (sortConfig.key === 'Artist Pay') { valA = getProjectTotalExpense(a, rateMap); valB = getProjectTotalExpense(b, rateMap) }
         if (sortConfig.key === 'Client Payment') { valA = a.client_paid_date ? 1 : 0; valB = b.client_paid_date ? 1 : 0 }
 
         if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1
@@ -5568,7 +5638,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
   // ONLY calculated for projects that are marked as Client Paid (as requested by user)
   const totalRevenue = activeProjects.reduce((sum, p) => {
-    let rev = getProjectRevenue(p).revenue;
+    let rev = getProjectRevenueGlobal(p, rateMap).revenue;
     const parts = (p.client_paid_date || '').split('___')
     const status = parts[1] || 'PAID'
     if (parts[2] && !isNaN(parseFloat(parts[2]))) {
@@ -5582,19 +5652,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     return sum;
   }, 0)
 
-  const getExpectedArtistPay = (p: Project) => {
-    const clientCode = extractClientCode(p.Project_ID || '')
-    if (clientCode === 'WN') return 4000
-    if (clientCode === 'HN') return 3000
-    if (clientCode === 'INFI') return 5000
-    
-    if (clientCode === 'GLEE') return getProjectRevenue(p).revenue
-    
-    const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
-    if (clientCode === 'MRC') return 4000 * minutes
-    
-    return Math.round(minutes * 4000)
-  }
+  // getProjectTotalExpense is now used directly
 
   // Artist payouts for this cycle (Expected based on fixed rates)
   // ONLY calculated for projects that are Client Paid, to match Gross Revenue and avoid negative profit
@@ -5603,7 +5661,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
     const parts = (p.client_paid_date || '').split('___')
     const status = parts[1] || 'PAID'
     if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum;
-    return sum + getExpectedArtistPay(p);
+    return sum + getProjectTotalExpense(p, rateMap);
   }, 0)
   
   // Overhead (Editor Paid): ₹300 per paid project that hasn't excluded it
@@ -5705,7 +5763,7 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
   // Revenue breakdown by client
   const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
   activeProjects.forEach(p => {
-    let { revenue, clientCode, minutes } = getProjectRevenue(p)
+    let { revenue, clientCode, minutes } = getProjectRevenueGlobal(p, rateMap)
     const parts = (p.client_paid_date || '').split('___')
     const status = parts[1] || 'PAID'
     if (parts[2] && !isNaN(parseFloat(parts[2]))) {
@@ -6130,13 +6188,13 @@ function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Projec
               </thead>
               <tbody>
                 {sortedCycleProjects.map(p => {
-                  const { revenue, clientCode, minutes } = getProjectRevenue(p)
+                  const { revenue, clientCode, minutes } = getProjectRevenueGlobal(p, rateMap)
                   // For MDSC and PGS, Editor Paid applies by default unless excluded
                   const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
                   const hasEditorPaid = p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
                   
                   // Artist Pay lookup
-                  const artistPayAmount = getExpectedArtistPay(p)
+                  const artistPayAmount = getProjectTotalExpense(p, rateMap)
 
                   const unknownClient = !rateMap.has(clientCode)
                   const parts = (p.client_paid_date || '').split('___')
@@ -7221,11 +7279,12 @@ function CashoutReportsTab({ projects }: { projects: Project[] }) {
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit' | 'cashouts'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit' | 'cashouts' | 'infi'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; leadOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
   { id: 'lead_payments', label: 'My Payments', icon: '💰', leadOnly: true },
+  { id: 'infi', label: 'INFI Review', icon: '🎞️', managerOnly: true },
   { id: 'tiers', label: 'Animator Tiers', icon: '🏆', managerOnly: true },
   { id: 'assign', label: 'Assign Projects', icon: '🔗', managerOnly: true },
   { id: 'duplicates', label: 'Duplicate Threads', icon: '👯', managerOnly: true },
@@ -8436,15 +8495,8 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
 
       let totalGross = 0
       unpaidApproved.forEach(p => {
-        const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-        const animName = (a.Name || '').toLowerCase()
-        const isLead = p.Lead && p.Lead.toLowerCase() === animName
-        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
-        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
-        
-        if (isLead) totalGross += 1000
-        if (isLighting) totalGross += (sec / 60) * 1500
-        else if (isAnim) totalGross += (sec / 60) * (p.Lighting_Artist ? 3000 : 5000)
+        const animName = (a.Name || '')
+        totalGross += getAnimatorProjectPayout(p, a.Employee_ID || '', animName)
       })
 
       if (totalGross > 0) {
@@ -9091,32 +9143,14 @@ function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; p
           (p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()))
       )
       animatorProjectsForCalc.forEach(p => {
-        const projSec = parseDurationSec(p.Duration || '', p.Project_ID)
-        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()
-        const isAnim = p.Employee_ID === eid || (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()))
-        const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase()
-        
-        if (isLead) leadBonus += 1000
-        
-        if (isLighting) {
-          calculatedGross += projSec * (1500 / 60)
-        } else if (isAnim) {
-          const isA = (eid || '').toUpperCase().includes('A')
-          const clientCode = extractClientCode(p.Project_ID || '')
-          if (clientCode === 'HN' || clientCode === 'WN') {
-            calculatedGross += 3000
-          } else {
-            const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
-            calculatedGross += projSec * (rate / 60)
-          }
-        }
+        calculatedGross += getAnimatorProjectPayout(p, eid, animName)
       })
       
       // Nearest 100 round off
       const fallbackRate = (eid || '').toUpperCase().includes('L') ? 1500 : ((eid || '').toUpperCase().includes('A') ? 2500 : 4000);
       let baseGross = calculatedGross > 0 ? calculatedGross : currentMins * fallbackRate;
       const gross = Math.round(baseGross / 100) * 100;
-      const totalBonusParsed = bonusParsed + leadBonus
+      const totalBonusParsed = bonusParsed
       const totalAmount = gross + totalBonusParsed + othersAmt
       // TDS on gross only (bonus/others are not subject to TDS deduction in invoice)
       const tdsMath = Math.round(gross * tdsPct / 100)
@@ -10756,26 +10790,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                         else if (p.Status === 'Review') badgeColor = 'bg-amber-100 text-amber-700 border-amber-200'
                         else if (isProgress) badgeColor = 'bg-blue-100 text-blue-700 border-blue-200'
                         
-                        // Calculate specific project earnings for this animator
-                        let projEarn = 0;
-                        if (isApproved) {
-                           const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-                           const animName = selectedAnimatorForModal.Name;
-                           const eid = selectedAnimatorForModal.Employee_ID;
-                           const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
-                           const isAnim = p.Employee_ID === eid || (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
-                           const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
-                           
-                           if (isLead) projEarn += 1000;
-                           if (isLighting) {
-                              projEarn += projSec * (1500 / 60);
-                           } else if (isAnim) {
-                              const isA = (eid || '').toUpperCase().includes('A');
-                     const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
-                     projEarn += projSec * (rate / 60);
-                           }
-                           projEarn = Math.round(projEarn / 100) * 100;
-                        }
+                        let projEarn = isApproved ? getAnimatorProjectPayout(p, selectedAnimatorForModal.Employee_ID, selectedAnimatorForModal.Name) : 0;
 
                         return (
                           <tr key={i} className="hover:bg-gray-50 transition-colors">
@@ -10829,35 +10844,12 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
   // Calculate earnings
   const totalEarned = myProjects.reduce((sum, p) => {
     if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return sum;
-    let earn = 0;
-    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
-    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
-    
-    if (isLead) earn += 1000;
-    if (isOwn) {
-      const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
-      const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 1500 : (isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000));
-      const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-      earn += projSec * (rate / 60);
-    }
-    return sum + (Math.round(earn / 100) * 100);
+    return sum + getAnimatorProjectPayout(p, user.employee_id || '', user.full_name || '');
   }, 0);
 
   const totalPaid = myProjects.reduce((sum, p) => {
     if (p.Payment_Status !== 'Paid') return sum;
-    let earn = 0;
-    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
-    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
-    if (isLead) earn += 1000;
-    if (isOwn) {
-      const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
-      const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 1500 : (isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000));
-      const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-      earn += projSec * (rate / 60);
-    }
-    return sum + (Math.round(earn / 100) * 100);
+    return sum + getAnimatorProjectPayout(p, user.employee_id || '', user.full_name || '');
   }, 0);
 
   return (
@@ -10914,18 +10906,7 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
                 const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
                 const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status);
                 
-                let earn = 0;
-                if (isApproved) {
-                  if (isLead) earn += 1000;
-                  if (isOwn) {
-                    const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
-                    const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 1500 : (isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000));
-                    const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-                    earn += projSec * (rate / 60);
-                  }
-                  earn = Math.round(earn / 100) * 100;
-                }
+                let earn = isApproved ? getAnimatorProjectPayout(p, user.employee_id || '', user.full_name || '') : 0;
 
                 let roleBadge = [];
                 if (isOwn) roleBadge.push(<span key="anim" className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase mr-1">Animator</span>);
@@ -10953,6 +10934,189 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  )
+}
+
+
+function InfiReviewTab({ animators, projects }: { animators: Animator[], projects: Project[] }) {
+  const { addToast } = useToast()
+  const [selectedAnimator, setSelectedAnimator] = useState<string | null>(null)
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [messages, setMessages] = useState<any[]>([])
+  const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const [sending, setSending] = useState(false)
+
+  // Identify active INFI projects (not Closed or Paid)
+  const activeInfiProjects = projects.filter(p => p.Project_ID.includes('INFI') && p.Status !== 'Closed' && p.Status !== 'Paid')
+  
+  // Find animators working on these projects
+  const infiAnimatorsMap = new Map<string, Animator>()
+  activeInfiProjects.forEach(p => {
+    if (p.Employee_ID) {
+      const anim = animators.find(a => a.Employee_ID === p.Employee_ID)
+      if (anim) infiAnimatorsMap.set(anim.Employee_ID, anim)
+    }
+  })
+  const infiAnimators = Array.from(infiAnimatorsMap.values())
+  
+  // Projects for the selected animator
+  const selectedAnimatorProjects = selectedAnimator 
+    ? activeInfiProjects.filter(p => p.Employee_ID === selectedAnimator)
+    : []
+
+  useEffect(() => {
+    if (selectedProject?.Thread_ID) {
+      setLoadingMsgs(true)
+      fetch(`/api/discord/messages?threadId=${selectedProject.Thread_ID}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            // Discord returns messages in reverse chronological order
+            setMessages(data.data.reverse())
+          } else {
+            addToast(`Error fetching messages: ${data.error}`, 'error')
+          }
+          setLoadingMsgs(false)
+        })
+        .catch(err => {
+          addToast(`Failed to load messages`, 'error')
+          setLoadingMsgs(false)
+        })
+    } else {
+      setMessages([])
+    }
+  }, [selectedProject])
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !selectedProject?.Thread_ID) return
+    setSending(true)
+    try {
+      const res = await fetch('/api/discord/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: selectedProject.Thread_ID, message: chatInput })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setChatInput('')
+        addToast('Message sent to Discord!', 'success')
+        // Optimistically add message
+        setMessages([...messages, { id: Date.now(), content: chatInput, author: { username: 'Manager (You)', bot: true } }])
+      } else {
+        addToast(`Error: ${data.error}`, 'error')
+      }
+    } catch (err) {
+      addToast('Failed to send message', 'error')
+    }
+    setSending(false)
+  }
+
+  // Helper to check if a message is a submission
+  const isSubmission = (msg: any) => {
+    if (msg.attachments && msg.attachments.some((a: any) => a.content_type?.includes('video') || a.filename?.endsWith('.mp4'))) return true;
+    if (msg.content?.includes('.mp4') || msg.content?.includes('/draft') || msg.content?.includes('/submit')) return true;
+    return false;
+  }
+
+  return (
+    <div className="p-6 animate-fade-in-up max-w-7xl mx-auto flex gap-6 h-[80vh]">
+      {/* Pane 1: Animators */}
+      <div className="w-1/4 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <h2 className="font-bold text-gray-800">INFI Animators</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {infiAnimators.length === 0 && <p className="text-sm text-gray-400 p-4 text-center">No active INFI projects.</p>}
+          {infiAnimators.map(a => (
+            <button
+              key={a.Employee_ID}
+              onClick={() => { setSelectedAnimator(a.Employee_ID); setSelectedProject(null); }}
+              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedAnimator === a.Employee_ID ? 'bg-indigo-50 border-indigo-200 border text-indigo-700 font-bold' : 'hover:bg-gray-50 border border-transparent'}`}
+            >
+              {a.Name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Pane 2: Projects */}
+      <div className="w-1/4 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <h2 className="font-bold text-gray-800">Projects</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {!selectedAnimator && <p className="text-sm text-gray-400 p-4 text-center">Select an animator first.</p>}
+          {selectedAnimator && selectedAnimatorProjects.map(p => (
+            <button
+              key={p.Project_ID}
+              onClick={() => setSelectedProject(p)}
+              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedProject?.Project_ID === p.Project_ID ? 'bg-purple-50 border-purple-200 border text-purple-700 font-bold' : 'hover:bg-gray-50 border border-transparent'}`}
+            >
+              <div className="text-sm">{p.Project_ID}</div>
+              <div className="text-xs text-gray-500 truncate">{p.Project_title}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Pane 3: Chat / Review */}
+      <div className="w-2/4 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+          <h2 className="font-bold text-gray-800">Thread Review {selectedProject ? `(${selectedProject.Project_ID})` : ''}</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50 flex flex-col gap-4">
+          {!selectedProject && <p className="text-sm text-gray-400 text-center m-auto">Select a project to view thread.</p>}
+          {loadingMsgs && <p className="text-sm text-gray-400 text-center m-auto animate-pulse">Loading messages...</p>}
+          
+          {messages.map((msg: any) => {
+            const isSub = isSubmission(msg);
+            const isMe = msg.author.bot && msg.author.username.includes('Manager'); // Hacky check for optimistc ui
+            return (
+              <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`text-xs text-gray-400 mb-1 ${isMe ? 'mr-1' : 'ml-1'}`}>
+                  {msg.author.username} {isSub && '🎥 Submission'}
+                </div>
+                <div className={`p-3 rounded-2xl max-w-[85%] ${isSub ? 'bg-amber-50 border border-amber-200 text-amber-900' : isMe ? 'bg-indigo-500 text-white' : 'bg-white border border-gray-200 text-gray-800'}`}>
+                  {msg.content && <p className="whitespace-pre-wrap text-sm">{msg.content}</p>}
+                  
+                  {/* Render video attachments if any */}
+                  {msg.attachments?.map((att: any) => (
+                    att.content_type?.includes('video') || att.filename?.endsWith('.mp4') ? (
+                      <video key={att.id} src={att.url} controls className="mt-2 rounded-lg w-full max-h-64 bg-black/5" />
+                    ) : (
+                      <a key={att.id} href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline mt-1 block">
+                        📎 {att.filename}
+                      </a>
+                    )
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        
+        {selectedProject && (
+          <div className="p-3 border-t border-gray-100 bg-white flex gap-2">
+            <input 
+              type="text" 
+              placeholder="Type anonymous reply..." 
+              className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+            />
+            <button 
+              onClick={handleSendMessage}
+              disabled={sending || !chatInput.trim()}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm font-bold shadow-sm"
+            >
+              {sending ? '...' : 'Send'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -11192,6 +11356,7 @@ export default function ManagerDashboard() {
               {activeTab === 'payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
               {activeTab === 'profit' && <ErrorBoundary><ProfitTrackerTab projects={projects} animators={animators} onRefresh={fetchData} /></ErrorBoundary>}
               {activeTab === 'cashouts' && <ErrorBoundary><CashoutReportsTab projects={projects} /></ErrorBoundary>}
+              {activeTab === 'infi' && <InfiReviewTab animators={animators} projects={projects} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
