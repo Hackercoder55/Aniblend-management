@@ -7026,6 +7026,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
                   <option value="head">👤 Manager / Lead</option>
                   <option value="manager">👑 Head (Full Access)</option>
+                  <option value="reviewer">👁️ Reviewer (INFI Only)</option>
                 </select>
               </div>
             </div>
