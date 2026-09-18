@@ -134,7 +134,7 @@ export default function LoginPage() {
                       transition: 'all 0.15s',
                     }}
                   >
-                    {r === 'head' ? '👑 Head' : '🔧 Manager'}
+                    {r === 'head' ? '👑 Head' : r === 'manager' ? '🔧 Manager' : '👁️ Reviewer'}
                   </button>
                 ))}
               </div>
