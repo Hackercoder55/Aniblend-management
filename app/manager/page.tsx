@@ -10946,6 +10946,7 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [messages, setMessages] = useState<any[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [chatInput, setChatInput] = useState('')
   const [sending, setSending] = useState(false)
 
@@ -10970,6 +10971,7 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
   useEffect(() => {
     if (selectedProject?.Thread_ID) {
       setLoadingMsgs(true)
+      setErrorMsg(null)
       fetch(`/api/discord/messages?threadId=${selectedProject.Thread_ID}`)
         .then(res => res.json())
         .then(data => {
@@ -10977,16 +10979,23 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
             // Discord returns messages in reverse chronological order
             setMessages(data.data.reverse())
           } else {
+            setErrorMsg(data.error || 'Unknown error occurred')
             addToast(`Error fetching messages: ${data.error}`, 'error')
           }
           setLoadingMsgs(false)
         })
         .catch(err => {
+          setErrorMsg('Failed to fetch messages. Check network or console.')
           addToast(`Failed to load messages`, 'error')
           setLoadingMsgs(false)
         })
     } else {
       setMessages([])
+      if (selectedProject && !selectedProject.Thread_ID) {
+        setErrorMsg('No Thread ID is attached to this project.')
+      } else {
+        setErrorMsg(null)
+      }
     }
   }, [selectedProject])
 
@@ -11071,6 +11080,18 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
           {!selectedProject && <p className="text-sm text-gray-400 text-center m-auto">Select a project to view thread.</p>}
           {loadingMsgs && <p className="text-sm text-gray-400 text-center m-auto animate-pulse">Loading messages...</p>}
           
+          {errorMsg && !loadingMsgs && (
+            <div className="m-auto text-center max-w-sm">
+              <div className="text-red-500 text-4xl mb-2">⚠️</div>
+              <p className="text-sm text-red-600 font-semibold">{errorMsg}</p>
+              <p className="text-xs text-gray-500 mt-2">If you see "Discord bot token is missing", ensure DISCORD_BOT_TOKEN is set in your Vercel Environment Variables.</p>
+            </div>
+          )}
+
+          {!errorMsg && !loadingMsgs && messages.length === 0 && selectedProject && selectedProject.Thread_ID && (
+            <p className="text-sm text-gray-400 text-center m-auto">No messages in this thread yet.</p>
+          )}
+
           {messages.map((msg: any) => {
             const isSub = isSubmission(msg);
             const isMe = msg.author.bot && msg.author.username.includes('Manager'); // Hacky check for optimistc ui
