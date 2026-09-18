@@ -11023,6 +11023,24 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
     setSending(false)
   }
 
+  // Helpers to resolve Discord IDs/Usernames to Real Names
+  const resolveUserName = (discordId: string, discordUsername: string) => {
+    if (!discordId && !discordUsername) return 'Unknown'
+    const anim = animators.find(a => 
+      (discordId && a.Discord_ID === discordId) || 
+      (discordUsername && a.Discord_Username && a.Discord_Username.toLowerCase() === discordUsername.toLowerCase())
+    )
+    return anim ? anim.Name : discordUsername
+  }
+
+  const parseMentions = (content: string) => {
+    if (!content) return ''
+    return content.replace(/<@!?(\d+)>/g, (match, id) => {
+      const anim = animators.find(a => a.Discord_ID === id)
+      return anim ? `@${anim.Name}` : match
+    })
+  }
+
   // Helper to check if a message is a submission
   const isSubmission = (msg: any) => {
     if (msg.attachments && msg.attachments.some((a: any) => a.content_type?.includes('video') || a.filename?.endsWith('.mp4'))) return true;
@@ -11095,13 +11113,14 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
           {messages.map((msg: any) => {
             const isSub = isSubmission(msg);
             const isMe = msg.author.bot && msg.author.username.includes('Manager'); // Hacky check for optimistc ui
+            const realName = resolveUserName(msg.author.id, msg.author.username);
             return (
               <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                 <div className={`text-xs text-gray-400 mb-1 ${isMe ? 'mr-1' : 'ml-1'}`}>
-                  {msg.author.username} {isSub && '🎥 Submission'}
+                  {realName} {isSub && '🎥 Submission'}
                 </div>
                 <div className={`p-3 rounded-2xl max-w-[85%] ${isSub ? 'bg-amber-50 border border-amber-200 text-amber-900' : isMe ? 'bg-indigo-500 text-white' : 'bg-white border border-gray-200 text-gray-800'}`}>
-                  {msg.content && <p className="whitespace-pre-wrap text-sm">{msg.content}</p>}
+                  {msg.content && <p className="whitespace-pre-wrap text-sm">{parseMentions(msg.content)}</p>}
                   
                   {/* Render video attachments if any */}
                   {msg.attachments?.map((att: any) => (
