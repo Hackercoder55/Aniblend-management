@@ -10949,6 +10949,7 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [chatInput, setChatInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [unreadThreads, setUnreadThreads] = useState<Record<string, boolean>>({})
 
   // Identify active INFI projects (not Closed or Paid)
   const activeInfiProjects = projects.filter(p => p.Project_ID.includes('INFI') && p.Status !== 'Closed' && p.Status !== 'Paid')
@@ -10968,6 +10969,33 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
     ? activeInfiProjects.filter(p => p.Employee_ID === selectedAnimator)
     : []
 
+  // Fetch unread status for active threads on mount
+  useEffect(() => {
+    const threadIds = activeInfiProjects.map(p => p.Thread_ID).filter(Boolean);
+    if (threadIds.length === 0) return;
+
+    fetch('/api/discord/threads-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threadIds })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.data) {
+          const newUnread: Record<string, boolean> = {};
+          Object.keys(data.data).forEach(tid => {
+            const remoteLastMsgId = data.data[tid];
+            const localLastMsgId = localStorage.getItem(`read_thread_${tid}`);
+            if (remoteLastMsgId && remoteLastMsgId !== localLastMsgId) {
+              newUnread[tid] = true;
+            }
+          });
+          setUnreadThreads(newUnread);
+        }
+      })
+      .catch(console.error);
+  }, []); // Run once on mount
+
   useEffect(() => {
     if (selectedProject?.Thread_ID) {
       setLoadingMsgs(true)
@@ -10978,6 +11006,11 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
           if (data.success) {
             // Discord returns messages in reverse chronological order
             setMessages(data.data.reverse())
+            if (data.data.length > 0) {
+              const newestId = data.data[data.data.length - 1].id;
+              localStorage.setItem(`read_thread_${selectedProject.Thread_ID}`, newestId);
+              setUnreadThreads(prev => ({ ...prev, [selectedProject.Thread_ID as string]: false }));
+            }
           } else {
             setErrorMsg(data.error || 'Unknown error occurred')
             addToast(`Error fetching messages: ${data.error}`, 'error')
@@ -11057,15 +11090,18 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {infiAnimators.length === 0 && <p className="text-sm text-gray-400 p-4 text-center">No active INFI projects.</p>}
-          {infiAnimators.map(a => (
+          {infiAnimators.map(a => {
+            const hasUnread = activeInfiProjects.some(p => p.Employee_ID === a.Employee_ID && p.Thread_ID && unreadThreads[p.Thread_ID]);
+            return (
             <button
               key={a.Employee_ID}
               onClick={() => { setSelectedAnimator(a.Employee_ID); setSelectedProject(null); }}
-              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedAnimator === a.Employee_ID ? 'bg-indigo-50 border-indigo-200 border text-indigo-700 font-bold' : 'hover:bg-gray-50 border border-transparent'}`}
+              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedAnimator === a.Employee_ID ? 'bg-indigo-50 border-indigo-200 border text-indigo-700 font-bold' : hasUnread ? 'bg-red-50 border-red-200 border hover:bg-red-100' : 'hover:bg-gray-50 border border-transparent'} flex justify-between items-center`}
             >
-              {a.Name}
+              <span className={hasUnread ? 'text-red-700 font-bold' : ''}>{a.Name}</span>
+              {hasUnread && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>}
             </button>
-          ))}
+          )})}
         </div>
       </div>
 
@@ -11076,16 +11112,21 @@ function InfiReviewTab({ animators, projects }: { animators: Animator[], project
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {!selectedAnimator && <p className="text-sm text-gray-400 p-4 text-center">Select an animator first.</p>}
-          {selectedAnimator && selectedAnimatorProjects.map(p => (
+          {selectedAnimator && selectedAnimatorProjects.map(p => {
+            const isUnread = p.Thread_ID && unreadThreads[p.Thread_ID];
+            return (
             <button
               key={p.Project_ID}
               onClick={() => setSelectedProject(p)}
-              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedProject?.Project_ID === p.Project_ID ? 'bg-purple-50 border-purple-200 border text-purple-700 font-bold' : 'hover:bg-gray-50 border border-transparent'}`}
+              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedProject?.Project_ID === p.Project_ID ? 'bg-purple-50 border-purple-200 border text-purple-700 font-bold' : isUnread ? 'bg-red-50 border-red-200 border hover:bg-red-100' : 'hover:bg-gray-50 border border-transparent'} flex justify-between items-center`}
             >
-              <div className="text-sm">{p.Project_ID}</div>
-              <div className="text-xs text-gray-500 truncate">{p.Project_title}</div>
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm ${isUnread ? 'text-red-700 font-bold' : ''}`}>{p.Project_ID}</div>
+                <div className="text-xs text-gray-500 truncate">{p.Project_title}</div>
+              </div>
+              {isUnread && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-2 flex-shrink-0"></span>}
             </button>
-          ))}
+          )})}
         </div>
       </div>
 
@@ -11241,7 +11282,9 @@ export default function ManagerDashboard() {
   const filteredAnimators = hasFullAccess ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
   // managerOnly:true = show ONLY to Head (manager role)
   // leadOnly:true = show ONLY to Lead (head role)
+  const isReviewer = user.role === 'reviewer';
   const TABS = ALL_TABS.filter(t => {
+    if (isReviewer) return t.id === 'infi';
     if (t.managerOnly && !isHead) return false;
     if (t.leadOnly && isHead) return false;
     return true;

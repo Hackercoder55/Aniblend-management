@@ -7,7 +7,7 @@ export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [role, setRole] = useState<'manager' | 'head'>('manager')
+  const [role, setRole] = useState<'manager' | 'head' | 'reviewer'>('manager')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -116,8 +116,8 @@ export default function LoginPage() {
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#9ca3af', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
                 Login as
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {(['head', 'manager'] as const).map((r) => (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {(['head', 'manager', 'reviewer'] as const).map((r) => (
                   <button
                     key={r}
                     type="button"
