@@ -23,4 +23,3 @@ fs.mkdirSync(__dirname+'/artifacts',{recursive:true});
  await page.getByRole('button',{name:'Profit overview',exact:true}).click();await page.setViewportSize({width:390,height:844});await page.screenshot({path:__dirname+'/artifacts/wallet-mobile.png',fullPage:true});
  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+1);assert.equal(overflow,false,'Mobile document must not scroll horizontally');assert.deepEqual(errors,[]);await browser.close();console.log('PASS: desktop/mobile UI, saved draft, zero tax, cashout, unchanged revenue, one-time bonus, history, refresh persistence, no client errors or mobile overflow.');
 })().catch(e=>{console.error(e);process.exit(1)});
-

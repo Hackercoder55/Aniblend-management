@@ -55,6 +55,10 @@ const assert = require('node:assert/strict');
  received.entries.push({kind:'receipt',projectId:'P1',amount:-100000,date:'2026-03-02'});
  await db.query('select commit_finance_wallet($1,$2,null,$3)',[2,JSON.stringify(received),[]]);
  assert.equal((await db.query('select client_paid_date from projects')).rows[0].client_paid_date,null);
+ const legacyDate='2026-01-01___PAID___1000___SHARE_OLD';
+ await db.query('update projects set client_paid_date=$1',[legacyDate]);
+ await db.query('select commit_finance_wallet($1,$2,null,$3)',[3,JSON.stringify(received),[]]);
+ assert.equal((await db.query('select client_paid_date from projects')).rows[0].client_paid_date,legacyDate,'Existing cashout metadata must not be overwritten by wallet receipts');
  const walletBefore=(await db.query('select * from finance_wallet')).rows;
  const rowsBeforeRerun=await snapshotLegacy();
  await db.exec(sql);
@@ -64,5 +68,3 @@ const assert = require('node:assert/strict');
  console.log('PASS: migration rerun, payment + invoice + project atomicity, rollback, revision conflict, preserved client dates and denied anonymous access.');
  await db.close();
 })().catch(e=>{console.error(e);process.exit(1)});
-
-

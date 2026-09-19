@@ -76,7 +76,9 @@ begin
     lateral (select sum((e.value->>'amount')::numeric) as total, max(e.value->>'date') as last_date
       from jsonb_array_elements(coalesce(wallet_data->'entries', '[]'::jsonb)) e
       where e.value->>'kind' = 'receipt' and e.value->>'projectId' = fp.value->>'id') receipt
-  where p."Project_ID" = fp.value->>'id' and receipt.total is not null;
+  where p."Project_ID" = fp.value->>'id' and receipt.total is not null
+    -- Existing profit reports encode receipt state/cashout IDs here. Preserve it.
+    and position('___' in coalesce(p.client_paid_date, '')) = 0;
   next_revision := current_revision + 1;
   update public.finance_wallet set data = wallet_data, revision = next_revision, updated_at = now() where id = 1;
   return next_revision;

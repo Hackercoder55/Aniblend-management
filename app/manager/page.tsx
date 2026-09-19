@@ -84,6 +84,8 @@ interface Project {
   Lighting_Artist?: string
   Lighting_Discord_ID?: string
   stl_override?: boolean
+  client_paid_50_date?: string
+  exclude_editor_paid?: boolean
 }
 
 interface Animator {
@@ -197,7 +199,9 @@ function formatDate(d?: Date): string {
 }
 
 /** Parse "DD MMM YYYY" or "DD MMM YY" into a Date (local midnight, cross-browser safe) */
-function parseDate(s: string): Date {
+function parseDate(rawStr: string): Date {
+  if (!rawStr) return new Date(0)
+  const s = String(rawStr).split('___')[0]
   if (!s) return new Date(0)
   const MONTHS: Record<string, number> = {
     Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
@@ -253,6 +257,84 @@ function parseDurationSec(duration: string, projectId?: string): number {
   return n
 }
 
+function getProjectRevenueGlobal(p: Project, rateMap?: Map<string, ClientRate>): { revenue: number; clientCode: string; minutes: number } {
+  const clientCode = extractClientCode(p.Project_ID || '')
+  const rate = rateMap?.get(clientCode) || DEFAULT_RATES.find(r => r.client_code === clientCode)
+  if (!rate) return { revenue: 0, clientCode, minutes: 0 }
+  const minutes = parseDurationMinutes(p.Duration, p.Project_ID)
+  const revenue = rate.rate_type === 'flat' ? rate.rate_inr : rate.rate_inr * minutes
+  const finalRevenue = isNaN(revenue) ? 0 : Math.round(revenue);
+  return { revenue: finalRevenue, clientCode, minutes }
+}
+
+function getProjectTotalExpense(p: Project, rateMap?: Map<string, ClientRate>): number {
+  const clientCode = extractClientCode(p.Project_ID || '');
+  
+  let totalExpense = 0;
+  if (p.Lead) totalExpense += 1000;
+  
+  if (clientCode === 'WN') return totalExpense + 4000;
+  if (clientCode === 'HN') return totalExpense + 3000;
+  if (clientCode === 'INFI') return totalExpense + 5000;
+  if (clientCode === 'GLEE') return totalExpense + getProjectRevenueGlobal(p, rateMap).revenue;
+
+  const sec = parseDurationSec(p.Duration || '', p.Project_ID);
+  if (clientCode === 'MRC') return Math.round(totalExpense + (sec * (4000 / 60)));
+
+  const isA = (p.Employee_ID || '').toUpperCase().includes('A');
+  const hasLighting = !!p.Lighting_Artist;
+  
+  const animRate = isA ? 2500 : (hasLighting ? 2500 : 4000);
+  totalExpense += sec * (animRate / 60);
+  
+  if (hasLighting) {
+    totalExpense += sec * (1500 / 60);
+  }
+  
+  return Math.round(totalExpense); 
+}
+
+function getAnimatorProjectPayout(p: Project, eid: string, animName: string, rateMap?: Map<string, ClientRate>): number {
+  const clientCode = extractClientCode(p.Project_ID || '');
+  
+  const isAnim = p.Employee_ID === eid || 
+                 (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
+  const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
+  const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
+
+  let payout = 0;
+
+  if (clientCode === 'WN' || clientCode === 'HN' || clientCode === 'INFI' || clientCode === 'GLEE') {
+     if (isLead) payout += 1000;
+     if (isAnim) {
+       if (clientCode === 'WN') payout += 4000;
+       if (clientCode === 'HN') payout += 3000;
+       if (clientCode === 'INFI') payout += 5000;
+       if (clientCode === 'GLEE') payout += getProjectRevenueGlobal(p, rateMap).revenue;
+     }
+     return Math.round(payout); 
+  }
+
+  const sec = parseDurationSec(p.Duration || '', p.Project_ID);
+  
+  if (clientCode === 'MRC') {
+     if (isLead) payout += 1000;
+     if (isAnim) payout += sec * (4000 / 60);
+     return Math.round(payout);
+  }
+
+  if (isLead) payout += 1000;
+  if (isLighting) {
+    payout += sec * (1500 / 60);
+  } else if (isAnim) {
+    const isA = (eid || '').toUpperCase().includes('A');
+    const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
+    payout += sec * (rate / 60);
+  }
+  
+  return Math.round(payout);
+}
+
 /** Format seconds as "Xm Ys" or "Xs" */
 function formatSec(sec: number): string {
   if (!sec || sec <= 0) return '—'
@@ -292,10 +374,10 @@ function calculateAnimatorNetPay(animator: Animator, projects: Project[], paymen
     
     if (isLighting || isAnim) {
        if (isLighting && p.Payment_Status === 'Paid') {
-          amount += (sec / 60) * 2000
+          amount += (sec / 60) * 1500
        } else if (isAnim && p.Payment_Status === 'Paid') {
           const isA = (animator.Employee_ID || '').toUpperCase().includes('A')
-          const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
+          const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
           amount += (sec / 60) * rate
        }
     }
@@ -1763,6 +1845,21 @@ We will notify you here once the payment has been sent. Thank you for your excel
     setIsUpdating(false)
   }
 
+  const handleMarkClientPaid = async (project: Project) => {
+    setIsUpdating(true)
+    const { error } = await apiClient.from('projects').update({
+      client_paid_date: new Date().toISOString()
+    }).eq('Project_ID', project.Project_ID)
+
+    if (!error) {
+      addToast(`✅ Marked ${project.Project_ID} as Paid by Client`)
+      onRefresh()
+    } else {
+      addToast(`❌ Failed to mark as paid: ${error.message}`, 'error')
+    }
+    setIsUpdating(false)
+  }
+
   const statuses = ['All', 'Ongoing', 'Pending', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed']
 
   return (
@@ -1990,6 +2087,15 @@ We will notify you here once the payment has been sent. Thank you for your excel
                               style={{ backgroundColor: '#10b981' }}>
                               {approving === p.Project_ID ? '...' : 'Approve'}
                             </button>
+                          )}
+                          {!p.client_paid_date ? (
+                            <button onClick={() => handleMarkClientPaid(p)} disabled={isUpdating} className="px-3 py-1 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-medium border border-green-200 transition-colors whitespace-nowrap">
+                              💰 Mark Client Paid
+                            </button>
+                          ) : (
+                            <span className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-xs font-medium border border-green-200 whitespace-nowrap">
+                              ✅ Client Paid
+                            </span>
                           )}
                         </>
                       )}
@@ -3069,12 +3175,12 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
       byMonth[monthKey].leadPay += 1000;
     }
     if (isLighting) {
-      const earn = rawSec * (2000 / 60);
+      const earn = rawSec * (1500 / 60);
       projEarn += earn;
       byMonth[monthKey].lightingPay += earn;
     } else if (isAnim) {
       const isA = (animator.Employee_ID || '').toUpperCase().includes('A');
-      const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000);
+      const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
       const earn = rawSec * (rate / 60);
       projEarn += earn;
       byMonth[monthKey].basePay += earn;
@@ -5206,6 +5312,1141 @@ function NotesTab({ user }: { user: DashboardUser }) {
   )
 }
 
+// ─── Profit Tracker Tab ─────────────────────────────────────────────────
+
+interface ClientRate {
+  id?: string
+  client_code: string        // e.g. "HN", "PGS"
+  label: string              // Display name
+  rate_inr: number           // Rate in INR
+  rate_type: 'flat' | 'per_minute'  // flat = per project, per_minute = per minute of video
+  notes?: string
+}
+
+const DEFAULT_RATES: ClientRate[] = [
+  { client_code: 'HN',   label: 'HN',   rate_inr: 6600,  rate_type: 'flat',       notes: '~$70/project' },
+  { client_code: 'PGS',  label: 'PGS',  rate_inr: 10000, rate_type: 'per_minute', notes: '~$120/min' },
+  { client_code: 'MDSC', label: 'MDSC', rate_inr: 7000,  rate_type: 'per_minute', notes: '~$85/min' },
+  { client_code: 'MRC',  label: 'MRC',  rate_inr: 7000,  rate_type: 'per_minute', notes: '₹7000/minute' },
+  { client_code: 'WN',   label: 'WN',   rate_inr: 11200, rate_type: 'per_minute', notes: '~$120/min' },
+  { client_code: 'HIS',  label: 'HIS',  rate_inr: 6000,  rate_type: 'per_minute', notes: '₹6000/minute' },
+  { client_code: 'HER',  label: 'HER',  rate_inr: 6000,  rate_type: 'per_minute', notes: '₹6000/minute' },
+  { client_code: 'GLEE', label: 'GLEE', rate_inr: 8300,  rate_type: 'per_minute', notes: '₹8300/minute' },
+]
+
+function extractClientCode(projectId: any): string {
+  if (!projectId) return ''
+  // Project IDs like "1563_67_PGS" → last segment after underscore
+  const parts = String(projectId).split('_')
+  const last = parts[parts.length - 1] || ''
+  // Strip trailing digits (e.g. "PGS2" → "PGS")
+  return last.replace(/\d+$/, '').toUpperCase()
+}
+
+function parseDurationMinutes(duration: any, projectId: any): number {
+  if (duration === undefined || duration === null || duration === '') {
+    // Try to extract from project ID e.g. "1563_67_PGS" → 67 seconds
+    const parts = String(projectId || '').split('_')
+    if (parts.length >= 2) {
+      const sec = parseInt(parts[1], 10)
+      if (!isNaN(sec)) return sec / 60
+    }
+    return 0
+  }
+  if (typeof duration === 'number') return duration < 10 ? duration : duration / 60;
+  // Parse "1:23", "83s", "1m23s", "83"
+  const s = String(duration).trim()
+  if (s.includes(':')) {
+    const [m, sec] = s.split(':').map(Number)
+    return (m || 0) + (sec || 0) / 60
+  }
+  const secMatch = s.match(/(\d+)\s*s/i)
+  if (secMatch) return parseInt(secMatch[1]) / 60
+  const minMatch = s.match(/(\d+)\s*m/i)
+  if (minMatch) return parseInt(minMatch[1])
+  const num = parseFloat(s)
+  if (!isNaN(num)) return num < 10 ? num : num / 60  // if > 10, likely seconds
+  return 0
+}
+
+function ProfitTrackerTab({ projects, animators, onRefresh }: { projects: Project[]; animators: Animator[]; onRefresh?: () => void }) {
+  const { addToast } = useToast()
+  const [rates, setRates] = useState<ClientRate[]>(DEFAULT_RATES)
+  const [loadingRates, setLoadingRates] = useState(true)
+  const [payments, setPayments] = useState<any[]>([])
+  const [overheadPerProject, setOverheadPerProject] = useState<number>(300)
+  const [showCashoutModal, setShowCashoutModal] = useState(false)
+  const [cashoutPin, setCashoutPin] = useState('')
+  const [clientFilter, setClientFilter] = useState<string>('All')
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
+  const [showRateEditor, setShowRateEditor] = useState(false)
+  const [editingRate, setEditingRate] = useState<ClientRate | null>(null)
+  const [newRate, setNewRate] = useState<ClientRate>({ client_code: '', label: '', rate_inr: 0, rate_type: 'flat', notes: '' })
+  const [addingRate, setAddingRate] = useState(false)
+  const [editingRevId, setEditingRevId] = useState<string | null>(null)
+  const [tempRev, setTempRev] = useState<string>('')
+  const [savingRate, setSavingRate] = useState(false)
+  const [miscLabel, setMiscLabel] = useState('')
+  const [miscAmount, setMiscAmount] = useState('')
+  const [addingMisc, setAddingMisc] = useState(false)
+  const [extraRevLabel, setExtraRevLabel] = useState('')
+  const [extraRevAmount, setExtraRevAmount] = useState('')
+  const [addingExtraRev, setAddingExtraRev] = useState(false)
+  const [showBonusList, setShowBonusList] = useState(false)
+
+  // Derive cashout options from payments table
+  const cashoutOptions = React.useMemo(() => {
+    const opts = ['Current Cycle', 'All Time']
+    const shareRecords = payments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_'))
+    // sort by timestamp descending
+    shareRecords.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime())
+    shareRecords.forEach(p => {
+      opts.push(p['Employee ID'])
+    })
+    return opts
+  }, [payments])
+
+  const deleteMisc = async (id: string, dbId?: string) => {
+    setPayments(prev => prev.filter(p => p.id !== dbId && String(p['Employee ID']).replace('MISC_', '') !== id))
+    try { 
+      if (dbId) await apiClient.from('payments').delete().eq('id', dbId)
+      addToast('Deleted misc expense')
+    } catch {}
+  }
+
+  const addExtraRev = async () => {
+    if (!extraRevLabel || !extraRevAmount) return
+    const newId = Date.now().toString()
+    const cycleName = 'Current'
+    const entryPayload = {
+      'Employee ID': `EXTRAREV_${newId}`,
+      Name: extraRevLabel,
+      Payment_Status: 'Paid',
+      net_paid: parseFloat(extraRevAmount),
+      Timestamp: new Date().toISOString(),
+      'Project ID': `Cycle: ${cycleName}`
+    }
+    setPayments(prev => [...prev, entryPayload])
+    try {
+      await apiClient.from('payments').insert([entryPayload])
+    } catch (e: any) {
+      addToast(`Error adding extra revenue: ${e.message}`, 'error')
+    }
+    setExtraRevLabel('')
+    setExtraRevAmount('')
+    setAddingExtraRev(false)
+    addToast('✅ Extra payment added', 'success')
+  }
+
+  const deleteExtraRev = async (id: string, dbId?: string) => {
+    setPayments(prev => prev.filter(p => p.id !== dbId && String(p['Employee ID']).replace('EXTRAREV_', '') !== id))
+    try { 
+      if (dbId) await apiClient.from('payments').delete().eq('id', dbId)
+      addToast('Deleted extra payment')
+    } catch {}
+  }
+
+  const [isClient, setIsClient] = useState(false)
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
+
+  // Load rates from Supabase
+  useEffect(() => {
+    setLoadingRates(true)
+    apiClient.from('client_rates').select('*').then(({ data }: { data: any }) => {
+      if (data && data.length > 0) {
+        setRates(data as ClientRate[])
+      } else {
+        // First time — seed defaults
+        setRates(DEFAULT_RATES)
+      }
+      setLoadingRates(false)
+    })
+  }, [])
+
+  // Load payments + misc from DB
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      setPayments((data as any[]) || [])
+    })
+  }, [])
+
+  // Save/update a rate
+  const saveRate = async (rate: ClientRate) => {
+    setSavingRate(true)
+    try {
+      if (rate.id) {
+        const { error } = await apiClient.from('client_rates').update({
+          label: rate.label, rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
+        }).eq('id', rate.id)
+        if (error) throw new Error((error as any).message)
+        setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
+      } else {
+        const { data, error } = await apiClient.from('client_rates').insert({
+          client_code: String(rate.client_code || '').toUpperCase(), label: rate.label,
+          rate_inr: rate.rate_inr, rate_type: rate.rate_type, notes: rate.notes
+        }).select().single()
+        if (error) throw new Error((error as any).message)
+        setRates(prev => {
+          const filtered = prev.filter(r => r.client_code !== data.client_code)
+          return [...filtered, data as ClientRate]
+        })
+      }
+      addToast(`✅ Rate saved for ${rate.client_code}`)
+      setEditingRate(null)
+      setAddingRate(false)
+    } catch (e: any) {
+      addToast(`⚠️ Could not save to DB — using local only: ${e.message}`, 'error')
+      // Still update locally
+      if (rate.id) {
+        setRates(prev => prev.map(r => r.id === rate.id ? rate : r))
+      } else {
+        setRates(prev => [...prev, { ...rate, id: Date.now().toString(), client_code: String(rate.client_code || '').toUpperCase() }])
+      }
+      setEditingRate(null)
+      setAddingRate(false)
+    }
+    setSavingRate(false)
+  }
+
+  const deleteRate = async (rate: ClientRate) => {
+    if (!window.confirm(`Delete rate for ${rate.client_code}?`)) return
+    if (rate.id) {
+      await apiClient.from('client_rates').delete().match({ id: rate.id })
+    }
+    setRates(prev => prev.filter(r => r.client_code !== rate.client_code))
+    addToast(`Deleted rate for ${rate.client_code}`)
+  }
+
+  const addMisc = async () => {
+    if (!miscLabel || !miscAmount) return
+    const newId = Date.now().toString()
+    const entryPayload = {
+      'Employee ID': `MISC_${newId}`,
+      Name: miscLabel,
+      Payment_Status: 'Paid',
+      net_paid: parseFloat(miscAmount),
+      Timestamp: new Date().toISOString(),
+      'Project ID': 'Cycle: Current'
+    }
+    setPayments(prev => [...prev, entryPayload])
+    try {
+      await apiClient.from('payments').insert([entryPayload])
+    } catch (e: any) {
+      addToast(`Error adding misc: ${e.message}`)
+    }
+    setMiscLabel('')
+    setMiscAmount('')
+    setAddingMisc(false)
+    addToast('✅ Misc expense added')
+  }
+
+  const miscEntries = payments
+    .filter(p => String(p['Employee ID'] || '').startsWith('MISC_'))
+    .map(p => ({
+      id: String(p['Employee ID']).replace('MISC_', ''),
+      label: p.Name,
+      amount: Number(p.net_paid),
+      cycle: String(p['Project ID']).replace('Cycle: ', '').replace('Month: ', ''),
+      dbId: p.id
+    }))
+
+  const extraRevEntries = payments
+    .filter(p => String(p['Employee ID'] || '').startsWith('EXTRAREV_'))
+    .map(p => ({
+      id: String(p['Employee ID']).replace('EXTRAREV_', ''),
+      label: p.Name,
+      amount: Number(p.net_paid),
+      cycle: String(p['Project ID']).replace('Cycle: ', '').replace('Month: ', ''),
+      dbId: p.id
+    }))
+
+  // ── Compute monthly P&L ──────────────────────────────────────────────────
+  try {
+    const rateMap = new Map<string, ClientRate>()
+    rates.forEach(r => rateMap.set(String(r.client_code || '').toUpperCase(), r))
+
+  const getProjectMonth = (p: Project): string => {
+    const rawD = p.client_paid_date || p['Date Assigned'] || ''
+    const d = rawD.split('___')[0]
+    if (!d) return 'Unknown'
+    const dt = new Date(d)
+    if (isNaN(dt.getTime())) return 'Unknown'
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[dt.getMonth()]} ${dt.getFullYear()}`
+  }
+
+  // getProjectRevenueGlobal is now used directly
+
+  // All current projects for Profit Tracker
+  // Only show projects that haven't been cashed out.
+  // Include Approved, Paid, Closed, Completed, AND any project that has a client_paid_date (even if Ongoing).
+  const cycleProjects = projects.filter(p => {
+    const parts = (p.client_paid_date || '').split('___')
+    const cashoutId = p.client_paid_date ? (parts[3] || null) : null
+    if (cashoutId) return false; // Hide cashed out projects
+    
+    if (p.client_paid_date || p.client_paid_50_date) return true; // Always show if client has paid
+    
+    const status = (p.Status || '').trim().toLowerCase()
+    return status.includes('approved') || status.includes('paid') || status.includes('closed') || status === 'completed'
+  })
+
+  const availableClients = React.useMemo(() => {
+    return Array.from(new Set(cycleProjects.map(p => extractClientCode(p.Project_ID || '')))).filter(Boolean).sort()
+  }, [cycleProjects])
+
+  // Paid projects for selected cycle (filtered by client)
+  const activeProjects = cycleProjects.filter(p => {
+    if (clientFilter !== 'All' && extractClientCode(p.Project_ID || '') !== clientFilter) return false
+    return true
+  })
+
+  const sortedCycleProjects = React.useMemo(() => {
+    const arr = [...activeProjects]
+    if (sortConfig) {
+      arr.sort((a, b) => {
+        let valA: any = ''
+        let valB: any = ''
+        if (sortConfig.key === 'Project ID') { valA = a.Project_ID; valB = b.Project_ID }
+        if (sortConfig.key === 'Title') { valA = a.Project_title; valB = b.Project_title }
+        if (sortConfig.key === 'Client') { valA = extractClientCode(a.Project_ID || ''); valB = extractClientCode(b.Project_ID || '') }
+        if (sortConfig.key === 'Duration') { valA = parseDurationMinutes(a.Duration, a.Project_ID); valB = parseDurationMinutes(b.Duration, b.Project_ID) }
+        if (sortConfig.key === 'Revenue') { valA = getProjectRevenueGlobal(a, rateMap).revenue; valB = getProjectRevenueGlobal(b, rateMap).revenue }
+        if (sortConfig.key === 'Status') { valA = a.Status; valB = b.Status }
+        if (sortConfig.key === 'Editor Paid') { valA = a.exclude_editor_paid ? 0 : 1; valB = b.exclude_editor_paid ? 0 : 1 }
+        if (sortConfig.key === 'Artist Pay') { valA = getProjectTotalExpense(a, rateMap); valB = getProjectTotalExpense(b, rateMap) }
+        if (sortConfig.key === 'Client Payment') { valA = a.client_paid_date ? 1 : 0; valB = b.client_paid_date ? 1 : 0 }
+
+        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1
+        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1
+        return 0
+      })
+    }
+    return arr
+  }, [cycleProjects, sortConfig])
+  
+  const handleSort = (key: string) => {
+    setSortConfig(prev => {
+      if (prev && prev.key === key) {
+        return prev.direction === 'asc' ? { key, direction: 'desc' } : null
+      }
+      return { key, direction: 'asc' }
+    })
+  }
+
+  // Revenue from paid projects (Full revenue if fully paid, 50% if only 50% paid)
+  // ONLY calculated for projects that are marked as Client Paid (as requested by user)
+  const totalRevenue = activeProjects.reduce((sum, p) => {
+    let rev = getProjectRevenueGlobal(p, rateMap).revenue;
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (parts[2] && !isNaN(parseFloat(parts[2]))) {
+      rev = parseFloat(parts[2])
+    }
+
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum; // Revenue is 0 for these statuses
+
+    if (p.client_paid_date) return sum + rev; // 100% paid
+    if (p.client_paid_50_date) return sum + (rev * 0.5); // 50% paid
+    return sum;
+  }, 0)
+
+  // getProjectTotalExpense is now used directly
+
+  // Artist payouts for this cycle (Expected based on fixed rates)
+  // ONLY calculated for projects that are Client Paid, to match Gross Revenue and avoid negative profit
+  const totalArtistPayout = activeProjects.reduce((sum, p) => {
+    if (!p.client_paid_date && !p.client_paid_50_date) return sum;
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return sum;
+    return sum + getProjectTotalExpense(p, rateMap);
+  }, 0)
+  
+  // Overhead (Editor Paid): ₹300 per paid project that hasn't excluded it
+  // ONLY calculated for projects that are Client Paid, to match Gross Revenue
+  const projectsWithEditorPaid = activeProjects.filter(p => {
+    if (!p.client_paid_date && !p.client_paid_50_date) return false;
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return false;
+    
+    const clientCode = extractClientCode(p.Project_ID || '')
+    const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
+    return p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
+  })
+  const totalOverhead = projectsWithEditorPaid.length * overheadPerProject
+  
+  // Misc expenses for this cycle
+  const activeMisc = miscEntries.filter(m => m.cycle === 'Current')
+  const totalMisc = activeMisc.reduce((sum, m) => sum + m.amount, 0)
+
+  // Net Profit
+  const activeExtraRev = extraRevEntries.filter(m => m.cycle === 'Current')
+  const totalExtraRev = activeExtraRev.reduce((sum, m) => sum + m.amount, 0)
+
+  const safeTotalRevenue = (isNaN(totalRevenue) ? 0 : totalRevenue) + totalExtraRev
+  const safeTotalArtistPayout = isNaN(totalArtistPayout) ? 0 : totalArtistPayout
+  const safeTotalOverhead = isNaN(totalOverhead) ? 0 : totalOverhead
+  const safeTotalMisc = isNaN(totalMisc) ? 0 : totalMisc
+  
+  // Bonuses paid this cycle
+  const activePayments = payments.filter(p => {
+    const cycle = String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '')
+    return cycle === 'Current'
+  })
+  const totalBonus = activePayments.reduce((sum, p) => sum + (Number(p.bonus) || 0), 0)
+  const safeTotalBonus = isNaN(totalBonus) ? 0 : totalBonus
+
+  // Shared Profits
+  const totalShared = 0
+
+  const netProfit = safeTotalRevenue - safeTotalArtistPayout - safeTotalOverhead - safeTotalMisc - safeTotalBonus
+  const remainingProfitToShare = netProfit - totalShared
+
+  const handleShareProfit = async () => {
+    if (remainingProfitToShare <= 0) {
+      addToast('No profit left to share!', 'error')
+      return
+    }
+    setShowCashoutModal(true)
+  }
+
+  const confirmCashout = async () => {
+    if (cashoutPin !== '1234') {
+      addToast('Incorrect PIN!', 'error')
+      return
+    }
+    setShowCashoutModal(false)
+    setCashoutPin('')
+    const newId = Date.now().toString()
+    const cashoutId = `SHARE_${newId}`
+
+    const projectsToUpdate = activeProjects.filter(p => !(p.client_paid_date || '').split('___')[3])
+    const paymentsToUpdate = activePayments.filter(p => String(p['Project ID'] || '').replace('Cycle: ', '').replace('Month: ', '') === 'Current')
+
+    try {
+      // Update projects
+      for (const p of projectsToUpdate) {
+        const newPaidDate = `${p.client_paid_date}___${cashoutId}`
+        await apiClient.from('projects').update({ client_paid_date: newPaidDate }).eq('Project_ID', p.Project_ID)
+      }
+      
+      // Update payments (misc, bonus)
+      for (const p of paymentsToUpdate) {
+        await apiClient.from('payments').update({ 'Project ID': `Cycle: ${cashoutId}` }).eq('id', p.id)
+      }
+
+      const sharePayload = {
+        'Employee ID': cashoutId,
+        Name: 'Shared Profit',
+        Payment_Status: 'Paid',
+        net_paid: remainingProfitToShare / 2, // Split between 2 people
+        Timestamp: new Date().toISOString(),
+        'Project ID': `Cycle: ${cashoutId}`
+      }
+      
+      // Insert two records (one for each person)
+      await apiClient.from('payments').insert([
+        { ...sharePayload, Name: 'Shared Profit - Bidyut' },
+        { ...sharePayload, Name: 'Shared Profit - Partner' }
+      ])
+      
+      addToast(`🎉 Successfully cashed out ${fmt(remainingProfitToShare)} (split into 2)!`)
+      if (onRefresh) onRefresh()
+    } catch (e: any) {
+      addToast(`Error during cashout: ${e.message}`)
+    }
+  }
+
+  // Revenue breakdown by client
+  const revenueByClient: Record<string, { revenue: number; count: number; minutes: number }> = {}
+  activeProjects.forEach(p => {
+    let { revenue, clientCode, minutes } = getProjectRevenueGlobal(p, rateMap)
+    const parts = (p.client_paid_date || '').split('___')
+    const status = parts[1] || 'PAID'
+    if (parts[2] && !isNaN(parseFloat(parts[2]))) {
+      revenue = parseFloat(parts[2])
+    }
+    
+    if (status === 'NOT_PAID' || status === 'COMPENSATE') return; // Skip from Revenue by Client graph
+
+    if (!revenueByClient[clientCode]) revenueByClient[clientCode] = { revenue: 0, count: 0, minutes: 0 }
+    
+    if (p.client_paid_50_date && status !== 'PAID') {
+      revenue = revenue * 0.5
+    }
+    
+    revenueByClient[clientCode].revenue += revenue
+    revenueByClient[clientCode].count++
+    revenueByClient[clientCode].minutes += minutes
+  })
+
+  const fmt = (n: number) => {
+    if (isNaN(n) || n === undefined || n === null) return '₹0'
+    return `₹${Math.round(n).toLocaleString('en-IN')}`
+  }
+  const pct = (n: number, total: number) => (total > 0 && !isNaN(n) && !isNaN(total)) ? ((n / total) * 100).toFixed(1) : '0'
+
+  // Don't render complex UI until client-side hydration is complete
+  if (!isClient) return <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>Loading Profit Tracker...</div>
+
+  return (
+    <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto' }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: '#111', margin: 0 }}>💹 Profit Tracker</h2>
+          <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>Monthly revenue, payouts & net profit</p>
+          {/* Removed Debug Box */}
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Client Filter */}
+          <select
+            value={clientFilter}
+            onChange={e => setClientFilter(e.target.value)}
+            style={{ padding: '8px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 13, fontWeight: 600, color: '#374151', background: '#fff', cursor: 'pointer' }}
+          >
+            <option value="All">All Clients</option>
+            {availableClients.map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          
+          <button 
+            onClick={() => {
+              const text = cycleProjects
+                .map(p => `${p.Project_ID} | Client: ${extractClientCode(p.Project_ID||'')} | Status: ${p.Status}`)
+                .join('\n');
+              navigator.clipboard.writeText(text);
+              alert('Copied ' + cycleProjects.length + ' projects to clipboard! Paste it in Notepad to check the list.');
+            }}
+            style={{ 
+              padding: '8px 16px', 
+              borderRadius: 10, 
+              border: 'none', 
+              fontSize: 13, 
+              fontWeight: 700, 
+              color: '#fff', 
+              background: 'linear-gradient(135deg, #8b5cf6, #6366f1)', 
+              cursor: 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6,
+              boxShadow: '0 4px 6px -1px rgba(139, 92, 246, 0.2)'
+            }}
+          >
+            📋 Copy Project List
+          </button>
+
+          {/* Cashout Button */}
+          <button
+            onClick={handleShareProfit}
+            title="Share current Net Profit among 3 people"
+            style={{ 
+              padding: '8px 16px', 
+              borderRadius: 10, 
+              border: 'none', 
+              fontSize: 13, 
+              fontWeight: 700, 
+              color: '#fff', 
+              background: 'linear-gradient(135deg, #06b6d4, #3b82f6)', 
+              cursor: 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6,
+              boxShadow: '0 4px 6px -1px rgba(6, 182, 212, 0.2)'
+            }}
+          >
+            💸 Cashout Profit
+          </button>
+          {/* Overhead per project */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fef3c7', borderRadius: 10, padding: '6px 12px', border: '1px solid #fcd34d' }}>
+            <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>Overhead/project:</span>
+            <span style={{ fontSize: 12, color: '#92400e' }}>₹</span>
+            <input
+              type="number"
+              value={overheadPerProject}
+              onChange={e => setOverheadPerProject(Number(e.target.value))}
+              style={{ width: 60, border: 'none', background: 'transparent', fontSize: 13, fontWeight: 700, color: '#92400e', outline: 'none' }}
+            />
+          </div>
+          <button
+            onClick={() => setShowRateEditor(v => !v)}
+            style={{ padding: '8px 16px', borderRadius: 10, background: showRateEditor ? '#1e293b' : '#f1f5f9', color: showRateEditor ? '#fff' : '#374151', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer' }}
+          >
+            ⚙️ Client Rates
+          </button>
+        </div>
+      </div>
+
+      {/* ── Client Rates Editor ── */}
+      {showRateEditor && (
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20, marginBottom: 24, boxShadow: '0 4px 20px rgba(0,0,0,0.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 800, color: '#111', margin: 0 }}>Client Pricing Rates</h3>
+            <button
+              onClick={() => setAddingRate(true)}
+              style={{ padding: '7px 16px', borderRadius: 9, background: 'linear-gradient(135deg,#667eea,#764ba2)', color: '#fff', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer' }}
+            >
+              + New Client
+            </button>
+          </div>
+
+          {loadingRates ? (
+            <p style={{ color: '#9ca3af', fontSize: 14 }}>Loading rates...</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {rates.map(rate => (
+                <div key={rate.client_code} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: '#f8fafc', borderRadius: 12, border: '1px solid #e5e7eb' }}>
+                  {editingRate?.client_code === rate.client_code ? (
+                    <>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: '#667eea', minWidth: 60 }}>{rate.client_code}</span>
+                      <input
+                        value={editingRate.label}
+                        onChange={e => setEditingRate({ ...editingRate, label: e.target.value })}
+                        placeholder="Label"
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13, width: 90 }}
+                      />
+                      <input
+                        type="number"
+                        value={editingRate.rate_inr}
+                        onChange={e => setEditingRate({ ...editingRate, rate_inr: Number(e.target.value) })}
+                        placeholder="Rate (₹)"
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13, width: 100 }}
+                      />
+                      <select
+                        value={editingRate.rate_type}
+                        onChange={e => setEditingRate({ ...editingRate, rate_type: e.target.value as 'flat' | 'per_minute' })}
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13 }}
+                      >
+                        <option value="flat">Flat / project</option>
+                        <option value="per_minute">Per minute</option>
+                      </select>
+                      <input
+                        value={editingRate.notes || ''}
+                        onChange={e => setEditingRate({ ...editingRate, notes: e.target.value })}
+                        placeholder="Notes"
+                        style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: '5px 8px', fontSize: 13, flex: 1 }}
+                      />
+                      <button onClick={() => saveRate(editingRate)} disabled={savingRate}
+                        style={{ padding: '6px 14px', borderRadius: 8, background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        {savingRate ? '...' : 'Save'}
+                      </button>
+                      <button onClick={() => setEditingRate(null)}
+                        style={{ padding: '6px 12px', borderRadius: 8, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: '#667eea', minWidth: 60 }}>{rate.client_code}</span>
+                      <span style={{ fontSize: 14, color: '#374151', fontWeight: 600, flex: 1 }}>{fmt(rate.rate_inr)} <span style={{ color: '#9ca3af', fontSize: 12, fontWeight: 400 }}>/ {rate.rate_type === 'flat' ? 'project' : 'minute'}</span></span>
+                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{rate.notes}</span>
+                      <button onClick={() => setEditingRate({ ...rate })}
+                        style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f0ff', color: '#667eea', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        Edit
+                      </button>
+                      <button onClick={() => deleteRate(rate)}
+                        style={{ padding: '5px 10px', borderRadius: 8, background: '#fef2f2', color: '#ef4444', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+                        ✕
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+
+              {/* Add new rate form */}
+              {addingRate && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#f0f9ff', borderRadius: 12, border: '1.5px dashed #93c5fd', flexWrap: 'wrap' }}>
+                  <input
+                    value={newRate.client_code}
+                    onChange={e => setNewRate({ ...newRate, client_code: e.target.value.toUpperCase() })}
+                    placeholder="Code (e.g. XYZ)"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, width: 90, fontWeight: 700 }}
+                  />
+                  <input
+                    value={newRate.label}
+                    onChange={e => setNewRate({ ...newRate, label: e.target.value })}
+                    placeholder="Label"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, width: 90 }}
+                  />
+                  <input
+                    type="number"
+                    value={newRate.rate_inr || ''}
+                    onChange={e => setNewRate({ ...newRate, rate_inr: Number(e.target.value) })}
+                    placeholder="Rate ₹"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, width: 100 }}
+                  />
+                  <select
+                    value={newRate.rate_type}
+                    onChange={e => setNewRate({ ...newRate, rate_type: e.target.value as 'flat' | 'per_minute' })}
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13 }}
+                  >
+                    <option value="flat">Flat / project</option>
+                    <option value="per_minute">Per minute</option>
+                  </select>
+                  <input
+                    value={newRate.notes || ''}
+                    onChange={e => setNewRate({ ...newRate, notes: e.target.value })}
+                    placeholder="Notes (e.g. ~$120/min)"
+                    style={{ border: '1px solid #93c5fd', borderRadius: 7, padding: '6px 10px', fontSize: 13, flex: 1 }}
+                  />
+                  <button
+                    onClick={() => saveRate(newRate)}
+                    disabled={!newRate.client_code || !newRate.rate_inr || savingRate}
+                    style={{ padding: '7px 16px', borderRadius: 9, background: '#667eea', color: '#fff', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer', opacity: (!newRate.client_code || !newRate.rate_inr) ? 0.5 : 1 }}>
+                    {savingRate ? '...' : '✓ Add'}
+                  </button>
+                  <button onClick={() => { setAddingRate(false); setNewRate({ client_code: '', label: '', rate_inr: 0, rate_type: 'flat', notes: '' }) }}
+                    style={{ padding: '7px 12px', borderRadius: 9, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 13, border: 'none', cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 12 }}>
+            💡 Client code is matched from the last part of Project ID (e.g. <code>1563_67_PGS</code> → PGS). Rates are saved to database.
+          </p>
+        </div>
+      )}
+
+      {/* ── P&L Summary Cards ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+        {[
+          { label: 'Gross Revenue', value: totalRevenue + totalExtraRev, color: '#10b981', bg: '#ecfdf5', icon: '💰', sub: `${activeProjects.length} paid projects` },
+          { label: 'Artist Payouts', value: totalArtistPayout, color: '#ef4444', bg: '#fef2f2', icon: '💸', sub: `Expected pay for ${activeProjects.length} projects` },
+          { label: 'Editor Paid', value: totalOverhead, color: '#f59e0b', bg: '#fffbeb', icon: '🔧', sub: `₹${overheadPerProject} × ${projectsWithEditorPaid.length}` },
+          { label: 'Bonus Paid', value: totalBonus, color: '#ec4899', bg: '#fdf2f8', icon: '🎁', sub: `${activePayments.filter(p => Number(p.bonus) > 0).length} bonuses` },
+          { label: 'Misc Expenses', value: totalMisc, color: '#8b5cf6', bg: '#faf5ff', icon: '📋', sub: `${activeMisc.length} entries` },
+          { label: 'Net Profit', value: netProfit, color: netProfit >= 0 ? '#0ea5e9' : '#ef4444', bg: netProfit >= 0 ? '#f0f9ff' : '#fef2f2', icon: netProfit >= 0 ? '📈' : '📉', sub: `Margin: ${pct(netProfit, safeTotalRevenue)}%`, bold: true },
+          { label: 'Shared (Per Person)', value: totalShared / 3, color: '#06b6d4', bg: '#ecfeff', icon: '🤝', sub: `Click to share ${fmt(netProfit)}`, bold: true },
+        ].map(card => (
+          <div 
+            key={card.label} 
+            onClick={() => {
+              if (card.label === 'Bonus Paid') setShowBonusList(true)
+              if (card.label === 'Shared (Per Person)') handleShareProfit()
+            }}
+            style={{ 
+              background: card.bg, 
+              borderRadius: 14, 
+              padding: '16px 18px', 
+              border: `1.5px solid ${card.color}22`,
+              cursor: (card.label === 'Bonus Paid' || card.label === 'Shared (Per Person)') ? 'pointer' : 'default',
+              transition: 'transform 0.2s',
+            }}
+            onMouseOver={(e) => { if (card.label === 'Bonus Paid' || card.label === 'Shared (Per Person)') e.currentTarget.style.transform = 'translateY(-2px)' }}
+            onMouseOut={(e) => { if (card.label === 'Bonus Paid' || card.label === 'Shared (Per Person)') e.currentTarget.style.transform = 'none' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 20 }}>{card.icon}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{card.label}</span>
+            </div>
+            <div style={{ fontSize: card.bold ? 24 : 20, fontWeight: 800, color: card.color }}>{fmt(card.value)}</div>
+            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>{card.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        {/* ── Revenue by Client ── */}
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', marginBottom: 14, margin: '0 0 14px' }}>Revenue by Client</h3>
+          {Object.keys(revenueByClient).length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No paid projects for this cycle yet.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {Object.entries(revenueByClient).sort((a, b) => b[1].revenue - a[1].revenue).map(([code, data]) => (
+                <div key={code} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontWeight: 800, color: '#667eea', minWidth: 50, fontSize: 13 }}>{code}</span>
+                  <div style={{ flex: 1, background: '#f1f5f9', borderRadius: 8, height: 10, overflow: 'hidden' }}>
+                    <div style={{ width: `${pct(data.revenue, totalRevenue)}%`, height: '100%', background: 'linear-gradient(90deg,#667eea,#10b981)', borderRadius: 8, transition: 'width 0.5s' }} />
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#374151', minWidth: 80, textAlign: 'right' }}>{fmt(data.revenue)}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af', minWidth: 40 }}>{data.count}p{rateMap.get(code)?.rate_type === 'per_minute' ? ` · ${data.minutes.toFixed(1)}m` : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Misc Expenses and Extra Revenue ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Miscellaneous Expenses</h3>
+            <button onClick={() => setAddingMisc(v => !v)}
+              style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f0ff', color: '#667eea', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+              + Add
+            </button>
+          </div>
+
+          {addingMisc && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <input
+                value={miscLabel}
+                onChange={e => setMiscLabel(e.target.value)}
+                placeholder="Description"
+                style={{ flex: 1, minWidth: 120, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <input
+                type="number"
+                value={miscAmount}
+                onChange={e => setMiscAmount(e.target.value)}
+                placeholder="Amount ₹"
+                style={{ width: 90, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <button onClick={addMisc} style={{ padding: '7px 14px', borderRadius: 8, background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>Add</button>
+              <button onClick={() => setAddingMisc(false)} style={{ padding: '7px 10px', borderRadius: 8, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 12, border: 'none', cursor: 'pointer' }}>✕</button>
+            </div>
+          )}
+
+          {activeMisc.length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No misc expenses for this cycle.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {activeMisc.map(m => (
+                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#faf5ff', borderRadius: 10, border: '1px solid #e9d5ff' }}>
+                  <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{m.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#8b5cf6' }}>{fmt(m.amount)}</span>
+                  <button onClick={() => deleteMisc(m.id, m.dbId)} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Extra Payments ── */}
+        <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Extra Payments</h3>
+            <button onClick={() => setAddingExtraRev(v => !v)}
+              style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f0ff', color: '#667eea', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>
+              + Add
+            </button>
+          </div>
+
+          {addingExtraRev && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              <input
+                value={extraRevLabel}
+                onChange={e => setExtraRevLabel(e.target.value)}
+                placeholder="Description"
+                style={{ flex: 1, minWidth: 120, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <input
+                type="number"
+                value={extraRevAmount}
+                onChange={e => setExtraRevAmount(e.target.value)}
+                placeholder="Amount ₹"
+                style={{ width: 90, border: '1px solid #d1d5db', borderRadius: 8, padding: '7px 10px', fontSize: 13 }}
+              />
+              <button onClick={addExtraRev} style={{ padding: '7px 14px', borderRadius: 8, background: '#10b981', color: '#fff', fontWeight: 700, fontSize: 12, border: 'none', cursor: 'pointer' }}>Add</button>
+              <button onClick={() => setAddingExtraRev(false)} style={{ padding: '7px 10px', borderRadius: 8, background: '#f1f5f9', color: '#64748b', fontWeight: 600, fontSize: 12, border: 'none', cursor: 'pointer' }}>✕</button>
+            </div>
+          )}
+
+          {activeExtraRev.length === 0 ? (
+            <p style={{ color: '#9ca3af', fontSize: 13 }}>No extra payments for this cycle.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {activeExtraRev.map(m => (
+                <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#ecfdf5', borderRadius: 10, border: '1px solid #a7f3d0' }}>
+                  <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{m.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#059669' }}>{fmt(m.amount)}</span>
+                  <button onClick={() => deleteExtraRev(m.id, m.dbId)} style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      </div>
+
+      {/* ── Project-level breakdown ── */}
+      <div style={{ background: '#fff', borderRadius: 16, border: '1.5px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: '#111', margin: 0 }}>Project Breakdown</h3>
+          <span style={{ fontSize: 12, color: '#9ca3af' }}>{cycleProjects.length} total · {activeProjects.length} paid</span>
+        </div>
+        {sortedCycleProjects.length === 0 ? (
+          <p style={{ padding: 20, color: '#9ca3af', fontSize: 13 }}>No projects for this cycle.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', color: '#6b7280', fontSize: 12, fontWeight: 700 }}>
+                  {['Project ID', 'Title', 'Client', 'Duration', 'Revenue', 'Status', 'Editor Paid', 'Artist Pay', 'Client Payment'].map(h => (
+                    <th key={h} onClick={() => handleSort(h)} style={{ padding: '10px 14px', textAlign: 'left', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}>
+                      {h} {sortConfig?.key === h ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedCycleProjects.map(p => {
+                  const { revenue, clientCode, minutes } = getProjectRevenueGlobal(p, rateMap)
+                  // For MDSC and PGS, Editor Paid applies by default unless excluded
+                  const appliesEditorPaidDefault = clientCode === 'MDSC' || clientCode === 'PGS'
+                  const hasEditorPaid = p.exclude_editor_paid !== undefined ? !p.exclude_editor_paid : appliesEditorPaidDefault
+                  
+                  // Artist Pay lookup
+                  const artistPayAmount = getProjectTotalExpense(p, rateMap)
+
+                  const unknownClient = !rateMap.has(clientCode)
+                  const parts = (p.client_paid_date || '').split('___')
+                  const clientPaidStatus = parts[1] || (p.client_paid_date ? 'PAID' : '')
+                  let displayRev = revenue
+                  if (parts[2] && !isNaN(parseFloat(parts[2]))) {
+                    displayRev = parseFloat(parts[2])
+                  }
+                  const isFullyPaid = clientPaidStatus === 'PAID'
+                  const isNotPaid = clientPaidStatus === 'NOT_PAID'
+                  const isCompensate = clientPaidStatus === 'COMPENSATE'
+                  const is50Paid = !!p.client_paid_50_date
+                  const baseDateStr = p.client_paid_date ? parts[0] : new Date().toISOString()
+
+                  // Handlers
+                  const mark50 = async () => {
+                    await apiClient.from('projects').update({ client_paid_50_date: new Date().toISOString() }).eq('Project_ID', p.Project_ID)
+                    addToast(`✅ Marked 50% Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const markFull = async () => {
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___PAID___${displayRev}` }).eq('Project_ID', p.Project_ID)
+                    addToast(`✅ Marked Full Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const markNotPaid = async () => {
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___NOT_PAID___${displayRev}` }).eq('Project_ID', p.Project_ID)
+                    addToast(`⚠️ Marked Not Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const markCompensate = async () => {
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___COMPENSATE___${displayRev}` }).eq('Project_ID', p.Project_ID)
+                    addToast(`💸 Marked Compensate for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const saveCustomRev = async () => {
+                    if (!tempRev) return
+                    const currentStatus = clientPaidStatus || 'PAID'
+                    await apiClient.from('projects').update({ client_paid_date: `${baseDateStr}___${currentStatus}___${tempRev}` }).eq('Project_ID', p.Project_ID)
+                    setEditingRevId(null)
+                    addToast(`✅ Saved custom revenue for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+                  const toggleEditorPaid = async () => {
+                    await apiClient.from('projects').update({ exclude_editor_paid: hasEditorPaid }).eq('Project_ID', p.Project_ID)
+                    addToast(hasEditorPaid ? `Removed Editor Paid for ${p.Project_ID}` : `Added Editor Paid for ${p.Project_ID}`)
+                    if (onRefresh) onRefresh()
+                  }
+
+                  return (
+                    <tr key={p.Project_ID} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: '#667eea', fontFamily: 'monospace' }}>{p.Project_ID}</td>
+                      <td style={{ padding: '10px 14px', color: '#374151', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.Project_title || '—'}</td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{ fontWeight: 700, color: unknownClient ? '#ef4444' : '#374151', fontSize: 12, background: unknownClient ? '#fef2f2' : '#f1f5f9', padding: '2px 8px', borderRadius: 6 }}>
+                          {clientCode || '?'}{unknownClient && ' ⚠️'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px', color: '#6b7280' }}>
+                        {minutes > 0 ? `${minutes.toFixed(2)}m` : p.Duration || '—'}
+                      </td>
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: isFullyPaid ? '#10b981' : is50Paid ? '#f59e0b' : isNotPaid ? '#ef4444' : isCompensate ? '#9333ea' : '#9ca3af' }}>
+                        {editingRevId === p.Project_ID ? (
+                          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                            <input
+                              autoFocus
+                              type="number"
+                              value={tempRev}
+                              onChange={e => setTempRev(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveCustomRev()
+                                if (e.key === 'Escape') setEditingRevId(null)
+                              }}
+                              style={{ width: 60, padding: '2px 4px', fontSize: 12, borderRadius: 4, border: '1px solid #d1d5db' }}
+                            />
+                            <button onClick={saveCustomRev} style={{ padding: '2px 6px', background: '#10b981', color: 'white', border: 'none', borderRadius: 4, fontSize: 10, cursor: 'pointer' }}>✓</button>
+                            <button onClick={() => setEditingRevId(null)} style={{ padding: '2px 6px', background: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: 4, fontSize: 10, cursor: 'pointer' }}>✕</button>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => { setEditingRevId(p.Project_ID); setTempRev(String(displayRev)) }}
+                            style={{ cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}
+                            title="Click to tweak revenue"
+                          >
+                            {isFullyPaid ? fmt(displayRev) : isNotPaid ? `₹0 (Not Paid)` : isCompensate ? `₹0 (Compensated)` : is50Paid ? `${fmt(displayRev * 0.5)} (50%)` : fmt(displayRev)}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 6,
+                          background: isFullyPaid ? '#ecfdf5' : p.Status === 'Approved' ? '#eff6ff' : '#fef3c7',
+                          color: isFullyPaid ? '#059669' : p.Status === 'Approved' ? '#2563eb' : '#92400e'
+                        }}>
+                          {p.Status || 'Unknown'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px', fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {hasEditorPaid ? <span style={{ color: '#f59e0b' }}>-{fmt(overheadPerProject)}</span> : <span style={{ color: '#d1d5db' }}>—</span>}
+                          <button onClick={toggleEditorPaid} style={{ padding: '2px 6px', background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4, fontSize: 10, cursor: 'pointer', color: '#64748b' }}>
+                            {hasEditorPaid ? 'Remove' : 'Add'}
+                          </button>
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 14px', fontWeight: 600, color: artistPayAmount > 0 ? '#ef4444' : '#d1d5db' }}>
+                        {artistPayAmount > 0 ? `-${fmt(artistPayAmount)}` : '—'}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap' }}>
+                          {(clientCode === 'MDSC' || clientCode === 'PGS') ? (
+                            <>
+                              {!is50Paid && !isFullyPaid && !isNotPaid && !isCompensate && (
+                                <button onClick={mark50} style={{ padding: '4px 8px', background: '#fffbeb', border: '1px solid #fde68a', color: '#d97706', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>50% Done</button>
+                              )}
+                              {!isFullyPaid && (
+                                <button onClick={markFull} style={{ padding: '4px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Full Done</button>
+                              )}
+                              {!isNotPaid && (
+                                <button onClick={markNotPaid} style={{ padding: '4px 8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Not Paid</button>
+                              )}
+                              {!isCompensate && (
+                                <button onClick={markCompensate} style={{ padding: '4px 8px', background: '#faf5ff', border: '1px solid #e9d5ff', color: '#9333ea', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Compensate</button>
+                              )}
+                              {isFullyPaid && <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>}
+                            </>
+                          ) : (
+                            <>
+                              {!isFullyPaid && (
+                                <button onClick={markFull} style={{ padding: '4px 8px', background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#059669', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Mark Paid</button>
+                              )}
+                              {!isNotPaid && (
+                                <button onClick={markNotPaid} style={{ padding: '4px 8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#ef4444', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Not Paid</button>
+                              )}
+                              {!isCompensate && (
+                                <button onClick={markCompensate} style={{ padding: '4px 8px', background: '#faf5ff', border: '1px solid #e9d5ff', color: '#9333ea', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Compensate</button>
+                              )}
+                              {isFullyPaid && <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>✅ Paid</span>}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Unknown client warning */}
+      {cycleProjects.some(p => !rateMap.has(extractClientCode(p.Project_ID || ''))) && (
+        <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 12, fontSize: 13, color: '#92400e' }}>
+          ⚠️ Some projects have unknown client codes. Go to <strong>⚙️ Client Rates</strong> above and add the missing client to include their revenue.
+        </div>
+      )}
+
+      {/* Bonus List Modal */}
+      {showBonusList && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, width: '90%', maxWidth: 500, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: '#111' }}>Bonuses</h2>
+              <button onClick={() => setShowBonusList(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#9ca3af' }}>✕</button>
+            </div>
+            
+            {activePayments.filter(p => Number(p.bonus) > 0).length === 0 ? (
+              <p style={{ color: '#6b7280', fontSize: 14, textAlign: 'center', padding: '20px 0' }}>No bonuses paid for this cycle.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
+                {activePayments.filter(p => Number(p.bonus) > 0).map((p, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#fdf2f8', borderRadius: 10, border: '1px solid #fbcfe8' }}>
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#be185d', fontSize: 14 }}>{p.Name}</div>
+                      <div style={{ fontSize: 11, color: '#9d174d', marginTop: 2 }}>ID: {p['Employee ID']}</div>
+                    </div>
+                    <div style={{ fontWeight: 800, color: '#be185d', fontSize: 16 }}>{fmt(Number(p.bonus))}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {showCashoutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col p-6 animate-fade-in-up">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">
+                🔒
+              </div>
+              <h2 className="text-xl font-bold text-gray-800">Confirm Cashout</h2>
+              <p className="text-sm text-gray-500 mt-2">
+                This will permanently move all current projects and profit to the Cashout Reports.
+              </p>
+            </div>
+            
+            <div className="mb-6">
+              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2 text-center">
+                Enter 4-Digit PIN
+              </label>
+              <input
+                type="password"
+                maxLength={4}
+                value={cashoutPin}
+                onChange={e => setCashoutPin(e.target.value.replace(/\D/g, ''))}
+                className="w-full text-center text-3xl tracking-[1em] font-black text-gray-800 bg-gray-50 border-2 border-gray-200 rounded-xl py-3 focus:outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                placeholder="••••"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex gap-3 mt-auto">
+              <button
+                onClick={() => { setShowCashoutModal(false); setCashoutPin(''); }}
+                className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmCashout}
+                disabled={cashoutPin.length !== 4}
+                className="flex-1 px-4 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cashout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+  } catch (err: any) {
+    return (
+      <div style={{ padding: '40px 24px', maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ background: '#fee2e2', borderRadius: 16, border: '2px solid #ef4444', padding: 32 }}>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: '#991b1b', marginBottom: 12 }}>⚠️ Profit Tracker Crashed</h2>
+          <p style={{ fontSize: 16, color: '#b91c1c', marginBottom: 24 }}>An unexpected error occurred while calculating the profits.</p>
+          <div style={{ background: '#7f1d1d', color: '#fca5a5', padding: 16, borderRadius: 8, textAlign: 'left', overflowX: 'auto', fontFamily: 'monospace', fontSize: 13 }}>
+            <strong>Error Message:</strong> {err.message}
+            <br/><br/>
+            <strong>Stack Trace:</strong><br/>
+            {err.stack}
+          </div>
+        </div>
+      </div>
+    )
+  }
+}
+
 // ─── Progress Tracker Tab (Project Kanban) ──────────────────────────────
 
 function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefresh: () => void }) {
@@ -5306,23 +6547,18 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
   // ── Mark as Paid ──
   const handleMarkPaid = async (project: Project) => {
     setMarkingId(project.Project_ID)
-    try {
-      const currentResponse = await fetch('/api/finance', { cache: 'no-store' })
-      const current = await currentResponse.json()
-      if (!currentResponse.ok) throw new Error(current.error)
-      const saved = current.wallet.projects.find((p: { id: string }) => p.id === project.Project_ID)
-      if (!saved) throw new Error('Import this project in Profit & Wallet before recording client payment.')
-      const received = current.wallet.entries.filter((e: { kind: string; projectId: string }) => e.kind === 'receipt' && e.projectId === project.Project_ID).reduce((n: number, e: { amount: number }) => n + e.amount, 0)
-      const amount = (saved.revenue - received) / 100
-      if (amount <= 0) throw new Error('No outstanding client balance for this project.')
-      if (!window.confirm('Record the remaining client payment of ₹' + amount.toLocaleString('en-IN') + '? Team payouts will stay separate.')) return
-      const response = await fetch('/api/finance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'entry', requestId: crypto.randomUUID(), revision: current.revision, kind: 'receipt', date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }), projectId: project.Project_ID, amount, note: 'Client payment recorded from progress tracker' }) })
-      const result = await response.json()
-      if (!response.ok) throw new Error(result.error)
-      toast('Client payment saved to wallet. Team payout remains separate.')
+    const today = formatDate()
+    const { error } = await apiClient
+      .from('projects')
+      .update({ Payment_Status: 'Client Paid', Status: 'Paid', client_paid_date: today })
+      .eq('Project_ID', project.Project_ID)
+    if (error) {
+      toast('Failed to mark as paid: ' + error.message, 'error')
+    } else {
+      toast(`${project.Project_ID} marked as Paid ✅`, 'success')
       await onRefresh()
-    } catch (e) { toast((e as Error).message, 'error') }
-    finally { setMarkingId(null) }
+    }
+    setMarkingId(null)
   }
 
   const ProjectCard = ({ project, showMarkPaid = false, showRemoveSTL = false }: { project: Project; showMarkPaid?: boolean; showRemoveSTL?: boolean }) => {
@@ -5736,7 +6972,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                   </button>
                   <button onClick={() => { setNameMode('manual'); setForm(f => ({ ...f, full_name: '', access_level: 'full' })) }}
                     className={`px-2 py-0.5 text-[10px] rounded font-semibold transition-all ${nameMode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                    ✏️ Manual (Full Access)
+                    ✏️ Enter Manually
                   </button>
                 </div>
                 {nameMode === 'lead' ? (
@@ -5791,6 +7027,7 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
                   <option value="head">👤 Manager / Lead</option>
                   <option value="manager">👑 Head (Full Access)</option>
+                  <option value="reviewer">👁️ Reviewer (INFI Only)</option>
                 </select>
               </div>
             </div>
@@ -5870,17 +7107,186 @@ function UserManagementTab({ user }: { user: DashboardUser }) {
           </div>
         )}
       </div>
+
+    </div>
+  )
+}
+
+// ─── CashoutReportsTab ──────────────────────────────────────────────────────────
+function CashoutReportsTab({ projects }: { projects: Project[] }) {
+  const [payments, setPayments] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedCashoutId, setSelectedCashoutId] = useState<string | null>(null)
+
+  useEffect(() => {
+    apiClient.from('payments').select('*').then(({ data }: { data: any }) => {
+      setPayments((data as any[]) || [])
+      setLoading(false)
+    })
+  }, [])
+
+  const cashouts = React.useMemo(() => {
+    const shareRecords = payments.filter(p => String(p['Employee ID'] || '').startsWith('SHARE_') && String(p.Name).includes('Shared Profit'))
+    const grouped = new Map<string, any>()
+    for (const record of shareRecords) {
+      const id = record['Employee ID']
+      if (!grouped.has(id)) {
+        grouped.set(id, { id, timestamp: record.Timestamp, total_shared: 0 })
+      }
+      grouped.get(id).total_shared += Number(record.net_paid || 0)
+    }
+    const arr = Array.from(grouped.values())
+    arr.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return arr
+  }, [payments])
+
+  if (loading) return <div className="p-8 text-center text-gray-400">Loading cashout history...</div>
+
+  if (selectedCashoutId) {
+    const cashoutInfo = cashouts.find(c => c.id === selectedCashoutId)
+    const includedProjects = projects.filter(p => (p.client_paid_date || '').split('___')[3] === selectedCashoutId)
+    
+    // Revenue calculations
+    let totalRev = 0
+    let totalArtist = 0
+    for (const p of includedProjects) {
+      let mins = 0
+      if (p.Project_ID?.toLowerCase().includes('reel')) mins = 1
+      else if (p.Project_ID?.toLowerCase().includes('shorts')) mins = 1
+      else {
+        const parts = (p.Duration || '').split(':')
+        if (parts.length === 2) mins = parseInt(parts[0]) + parseInt(parts[1])/60
+      }
+      totalRev += mins * 1350 // Approximate rate for simplicity in history (could be improved)
+      
+      const pId = p.Project_ID || ''
+      const isReel = pId.toLowerCase().includes('reel') || pId.toLowerCase().includes('shorts')
+      const pMins = parseDurationMinutes(p.Duration, pId)
+      let tier = 'T3' // Default
+      const rate = tier === 'T1' ? 700 : tier === 'T2' ? 600 : 500
+      let pay = isReel ? 1200 : (pMins * rate)
+      if (p.Status === 'Changes Requested') pay = pay * 0.5
+      totalArtist += pay
+    }
+
+    const includedExtraRev = payments.filter(p => p['Project ID'] === `Cycle: ${selectedCashoutId}` && String(p['Employee ID']).startsWith('EXTRAREV_'))
+    const includedMisc = payments.filter(p => p['Project ID'] === `Cycle: ${selectedCashoutId}` && String(p['Employee ID']).startsWith('MISC_'))
+    
+    const extraRevAmount = includedExtraRev.reduce((sum, p) => sum + Number(p.amount || p.net_paid || 0), 0)
+    const miscAmount = includedMisc.reduce((sum, p) => sum + Number(p.amount || p.net_paid || 0), 0)
+
+    return (
+      <div className="p-4 md:p-6 lg:p-8 animate-fade-in-up">
+        <button onClick={() => setSelectedCashoutId(null)} className="mb-6 text-sm font-bold text-indigo-600 flex items-center gap-2 hover:text-indigo-800 transition-colors">
+          ← Back to Cashouts
+        </button>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+          <div className="p-6 bg-gray-50 border-b border-gray-100 flex justify-between items-center flex-wrap gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">Cashout on {new Date(cashoutInfo.timestamp).toLocaleDateString('en-GB')}</h2>
+              <p className="text-sm text-gray-500">ID: {cashoutInfo.id}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Total Shared</p>
+              <p className="text-2xl font-black text-indigo-600">₹{cashoutInfo.total_shared.toLocaleString('en-IN')}</p>
+            </div>
+          </div>
+          
+          <div className="p-6">
+            <h3 className="font-bold text-gray-800 mb-4">Included Projects ({includedProjects.length})</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs text-gray-500 uppercase bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 rounded-tl-lg">Project ID</th>
+                    <th className="px-4 py-3">Animator</th>
+                    <th className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {includedProjects.map(p => (
+                    <tr key={p.Project_ID} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-3 font-semibold text-gray-800">{p.Project_ID}</td>
+                      <td className="px-4 py-3 text-gray-600">{p.Animator}</td>
+                      <td className="px-4 py-3"><span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold uppercase">{p.Status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            {(includedExtraRev.length > 0 || includedMisc.length > 0) && (
+              <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {includedExtraRev.length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-gray-800 mb-4 text-sm">Extra Revenue</h3>
+                    <ul className="space-y-2">
+                      {includedExtraRev.map(e => <li key={e.id} className="text-sm flex justify-between bg-emerald-50 text-emerald-700 px-3 py-2 rounded"><span>{e.Name}</span><span className="font-bold">₹{e.net_paid || e.amount}</span></li>)}
+                    </ul>
+                  </div>
+                )}
+                {includedMisc.length > 0 && (
+                  <div>
+                    <h3 className="font-bold text-gray-800 mb-4 text-sm">Misc Expenses</h3>
+                    <ul className="space-y-2">
+                      {includedMisc.map(e => <li key={e.id} className="text-sm flex justify-between bg-red-50 text-red-700 px-3 py-2 rounded"><span>{e.Name}</span><span className="font-bold">₹{e.net_paid || e.amount}</span></li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-4 md:p-6 lg:p-8 animate-fade-in-up max-w-5xl mx-auto">
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">💰 Cashout Reports</h2>
+        <p className="text-sm text-gray-500 mt-1">History of all your finalized profit distributions</p>
+      </div>
+
+      {cashouts.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-2xl border border-gray-100 shadow-sm">
+          <div className="text-4xl mb-4 opacity-50">💸</div>
+          <p className="text-gray-500 font-medium">No cashout history found.</p>
+          <p className="text-sm text-gray-400 mt-1">When you cashout from the Profit Tracker, reports will appear here.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cashouts.map(c => (
+            <div key={c.id} onClick={() => setSelectedCashoutId(c.id)} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer group hover:border-indigo-200">
+              <div className="flex justify-between items-start mb-4">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-xl flex items-center justify-center text-lg group-hover:bg-indigo-100 transition-colors">
+                  💰
+                </div>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{new Date(c.timestamp).toLocaleDateString('en-GB')}</span>
+              </div>
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Total Shared</p>
+              <p className="text-2xl font-black text-gray-800 group-hover:text-indigo-600 transition-colors">₹{c.total_shared.toLocaleString('en-IN')}</p>
+              
+              <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between items-center">
+                <span className="text-xs text-gray-400 truncate w-32">{c.id}</span>
+                <span className="text-xs font-bold text-indigo-500 flex items-center gap-1 group-hover:gap-2 transition-all">View Details →</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit'
+type Tab = 'overview' | 'assign' | 'bank' | 'team' | 'create' | 'analytics' | 'submissions' | 'payments' | 'payouts' | 'invoices' | 'notes' | 'budget' | 'duplicates' | 'tiers' | 'users' | 'lead_payments' | 'profit' | 'cashouts' | 'infi' | 'wallet' | 'previous_payouts'
 
 const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; leadOnly?: boolean; headVisible?: boolean }[] = [
   { id: 'overview', label: 'Overview', icon: '📊' },
   { id: 'lead_payments', label: 'My Payments', icon: '💰', leadOnly: true },
+  { id: 'infi', label: 'INFI Review', icon: '🎞️', managerOnly: true },
   { id: 'tiers', label: 'Animator Tiers', icon: '🏆', managerOnly: true },
   { id: 'assign', label: 'Assign Projects', icon: '🔗', managerOnly: true },
   { id: 'duplicates', label: 'Duplicate Threads', icon: '👯', managerOnly: true },
@@ -5889,7 +7295,10 @@ const ALL_TABS: { id: Tab; label: string; icon: string; managerOnly?: boolean; l
   { id: 'create', label: 'Create Project', icon: '➕', managerOnly: true },
   { id: 'analytics', label: 'Analytics', icon: '📈' },
   { id: 'payouts', label: 'Payout Calculator', icon: '🧭', managerOnly: true },
-  { id: 'profit', label: 'Profit & Wallet', icon: '💼', managerOnly: true },
+  { id: 'wallet', label: 'Profit & Wallet', icon: '💼', managerOnly: true },
+  { id: 'previous_payouts', label: 'Previous Payouts', icon: '📚', managerOnly: true },
+  { id: 'profit', label: 'Profit Tracker', icon: '💹', managerOnly: true },
+  { id: 'cashouts', label: 'Cashout Reports', icon: '💰', managerOnly: true },
   { id: 'invoices', label: 'Invoices', icon: '📄', managerOnly: true },
   { id: 'budget', label: 'Progress Tracker', icon: '📈' },
   { id: 'users', label: 'User Management', icon: '🔐', managerOnly: true },
@@ -6030,7 +7439,8 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     for (const p of projects) {
       if (p.Status === 'Approved' && p.Payment_Status !== 'Paid' && !invoicedProjectIds.has(p.Project_ID)) {
         let eid = p.Employee_ID || ''
-        if (!eid && p.Animator) {
+        const isValidEid = animators.some(a => a.Employee_ID === eid)
+        if (!isValidEid && p.Animator) {
           const names = p.Animator.split(',').map((s: string) => s.trim().toLowerCase())
           const found = animators.find(a => names.includes((a.Name || '').toLowerCase()))
           if (found) eid = found.Employee_ID
@@ -6083,17 +7493,16 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
         let totalVal = 0
         const lineItems = projs.map(p => {
           const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-          const empSet = new Set<string>()
-          if (p.Employee_ID) empSet.add(p.Employee_ID)
-            ; (String(p.Animator || '')).split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-              const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
-              if (found) empSet.add(found.Employee_ID)
-            })
-          const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
+          const finalSec = Math.round(rawSec)
           const isA = String(eid).toUpperCase().includes('A')
-          const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
-          // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
-          const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+          const clientCode = extractClientCode(p.Project_ID || '')
+          let amt = 0
+          if (clientCode === 'HN' || clientCode === 'WN') {
+            amt = 3000
+          } else {
+            const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
+            amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+          }
           totalVal += amt
           return {
             project_id: p.Project_ID,
@@ -6200,17 +7609,16 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     let totalVal = 0
     const lineItems = projs.map(p => {
       const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
-      const empSet = new Set<string>()
-      if (p.Employee_ID) empSet.add(p.Employee_ID)
-        ; (String(p.Animator || '')).split(',').map((s: string) => s.trim()).filter(Boolean).forEach((name: string) => {
-          const found = animators.find(a => (a.Name || '').toLowerCase() === name.toLowerCase())
-          if (found) empSet.add(found.Employee_ID)
-        })
-      const finalSec = Math.round(rawSec / Math.max(1, empSet.size))
+      const finalSec = Math.round(rawSec)
       const isA = String(eid).toUpperCase().includes('A')
-      const perMin = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000)
-      // Use same formula as payout calculator: seconds × rate/60, then round to nearest ₹100
-      const amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+      const clientCode = extractClientCode(p.Project_ID || '')
+      let amt = 0
+      if (clientCode === 'HN' || clientCode === 'WN') {
+        amt = 3000
+      } else {
+        const perMin = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000)
+        amt = Math.round((finalSec * (perMin / 60)) / 100) * 100
+      }
       totalVal += amt
 
       return {
@@ -6385,11 +7793,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
               </div>
               <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
-                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>ANIBLEND STUDIO</div>
                 <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
-                  GSTIN: 07AAGCF2334M1ZJ<br />
-                  PAN: AAGCF2334M<br />
-                  New Delhi, India
+                  PAN: KUPPK9759D<br />
+                  Contact: Santosh Kumar | +91 6205789970<br />
+                  D-110 Bhagwati Vihar, Uttam Nagar East, New Delhi
                 </div>
               </div>
             </div>
@@ -6579,11 +7987,11 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
                       </div>
                       <div style={{ flex: 1, background: '#f9fafb', padding: 20, borderRadius: 12 }}>
                         <div style={{ fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', marginBottom: 8, letterSpacing: 1 }}>Billed To</div>
-                        <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>FUTURVERSE ANIMATION PVT LTD</div>
+                        <div style={{ fontWeight: 800, fontSize: 16, color: '#111', marginBottom: 4 }}>ANIBLEND STUDIO</div>
                         <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.5 }}>
-                          GSTIN: 07AAGCF2334M1ZJ<br />
-                          PAN: AAGCF2334M<br />
-                          New Delhi, India
+                          PAN: KUPPK9759D<br />
+                          Contact: Santosh Kumar | +91 6205789970<br />
+                          D-110 Bhagwati Vihar, Uttam Nagar East, New Delhi
                         </div>
                       </div>
                     </div>
@@ -7035,6 +8443,1624 @@ function InvoicesTab({ animators, projects }: { animators: Animator[]; projects:
     </div>
   )
 }
+
+function PayoutCalculatorTab({ animators, projects }: { animators: Animator[]; projects: Project[] }) {
+  const { addToast } = useToast()
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [invoices, setInvoices] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [manualMinutes, setManualMinutes] = useState<Record<string, string>>({})
+  const [search, setSearch] = useState('')
+  const [expandedAnimators, setExpandedAnimators] = useState<Set<string>>(new Set())
+  const [manuallyAddedAnimators, setManuallyAddedAnimators] = useState<Set<string>>(new Set())
+  const [showAddMenu, setShowAddMenu] = useState(false)
+  const [paidStatus, setPaidStatus] = useState<Record<string, 'Pending' | 'Paid'>>({})
+  const [paidNets, setPaidNets] = useState<Record<string, number>>({})
+  const [payingId, setPayingId] = useState<string | null>(null)
+  const [paidSelectedMonth, setPaidSelectedMonth] = useState<string>(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
+  
+  // Per-animator state for Payout calculation (saved to DB instead of global)
+  const [tdsPercents, setTdsPercents] = useState<Record<string, string>>({})
+    const [isTdsEnabled, setIsTdsEnabled] = useState(false) 
+  const [bonusAmounts, setBonusAmounts] = useState<Record<string, string>>({})
+  const [bonusNotes, setBonusNotes] = useState<Record<string, string>>({})
+  const [savingId, setSavingId] = useState<string | null>(null)
+  // Others "add" overlay state
+  const [othersAddOpen, setOthersAddOpen] = useState<string | null>(null)
+  const [othersAddAmt, setOthersAddAmt] = useState('')
+  const [othersAddNote, setOthersAddNote] = useState('')
+  const [othersAddSaving, setOthersAddSaving] = useState(false)
+
+  const [sendingInvoices, setSendingInvoices] = useState(false)
+  const [excludeNotify, setExcludeNotify] = useState<Set<string>>(new Set())
+
+  const handleSendInvoices = async () => {
+    if (!confirm('Are you sure you want to send invoices to all animators for unpaid approved projects?')) return
+    setSendingInvoices(true)
+    let count = 0
+    
+    // We only process animators with a valid Discord_ID
+    for (const a of animators) {
+      if (!a.Discord_ID) continue
+      if (excludeNotify.has(a.Employee_ID)) continue
+      
+      const unpaidApproved = projects.filter(p => {
+        const animName = (a.Name || '').toLowerCase()
+        const isAnim = p.Employee_ID === a.Employee_ID || (String(p.Animator || '')).toLowerCase().includes(animName)
+        const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName
+        const isLead = p.Lead && p.Lead.toLowerCase() === animName
+        return (isAnim || isLighting || isLead) && p.Status === 'Approved' && p.Payment_Status !== 'Paid'
+      })
+
+      if (unpaidApproved.length === 0) continue
+
+      let totalGross = 0
+      unpaidApproved.forEach(p => {
+        const animName = (a.Name || '')
+        totalGross += getAnimatorProjectPayout(p, a.Employee_ID || '', animName)
+      })
+
+      if (totalGross > 0) {
+        const othersAmt = parseFloat(String((a as any).others_amount || '0')) || 0
+        const bonusAmt = parseFloat(bonusAmounts[a.Employee_ID] || '0') || 0
+        
+        const finalGross = totalGross + bonusAmt + othersAmt
+        // Find TDS percent from animator or use 0
+        const tdsPct = (a as any).TDS || 0
+        const tdsAmount = Math.round(finalGross * (tdsPct / 100))
+        const netPayable = Math.round(finalGross - tdsAmount)
+        const currentMonthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' })
+        
+        try {
+          await fetch('/api/discord/send-invoice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channelId: a.Discord_ID,
+              invoiceNumber: Math.floor(Math.random() * 100000).toString(),
+              monthLabel: currentMonthLabel,
+              totalAmount: Math.round(finalGross),
+              bonusAmount: bonusAmt,
+              othersAmount: othersAmt,
+              tdsAmount,
+              netPayable,
+              legalName: (a as any)['Full Name'] || a.Name
+            })
+          })
+          count++
+        } catch (e) {
+          console.error('Failed to send invoice for', a.Name, e)
+        }
+      }
+    }
+    setSendingInvoices(false)
+    alert(`Successfully sent ${count} invoices!`)
+  }
+  // Month filter
+  const monthOptions = (() => {
+    const opts: string[] = ['All']
+    const now = new Date()
+    for (let i = 0; i < 13; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      opts.push(d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }))
+    }
+    return opts
+  })()
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[1]) // default to current month
+
+  // Per-project duration overrides (projectId -> seconds)
+  const [durationOverrides, setDurationOverrides] = useState<Record<string, string>>({})
+  const [editingDurationId, setEditingDurationId] = useState<string | null>(null)
+  // Manually linked projects per animator (empId -> Project[])
+  const [manualProjects, setManualProjects] = useState<Record<string, Project[]>>({})
+  const [addProjectSearch, setAddProjectSearch] = useState<Record<string, string>>({})
+  const [showAddProject, setShowAddProject] = useState<string | null>(null) // empId currently showing the picker
+  // Deferred projects excluded from current payout (stays Approved in DB, appears next month)
+  const [deferredProjects, setDeferredProjects] = useState<Set<string>>(new Set())
+  const deferProject = (projectId: string) => setDeferredProjects(prev => new Set(prev).add(projectId))
+  const undeferProject = (projectId: string) => setDeferredProjects(prev => { const s = new Set(prev); s.delete(projectId); return s })
+
+  const toggleExpand = (eid: string) => {
+    setExpandedAnimators(prev => {
+      const next = new Set(prev)
+      next.has(eid) ? next.delete(eid) : next.add(eid)
+      return next
+    })
+  }
+
+  const addManualAnimator = (eid: string) => {
+    setManuallyAddedAnimators(prev => new Set(prev).add(eid))
+    setShowAddMenu(false)
+  }
+
+  const [paidProjectsModal, setPaidProjectsModal] = useState<{ name: string; projects: Project[] } | null>(null)
+
+  const handleMarkPaid = async (eid: string, animatorName: string, net: number, animatorProjects: Project[] = [], bonus: number = 0, tds: number = 0, gross: number = 0, bonusNote: string = "", notify: boolean = true) => {
+    const targetMonth = window.prompt("Which month should this payment be recorded under?", selectedMonth || monthOptions[1])
+    if (!targetMonth) return // User cancelled
+    
+    setPayingId(eid)
+    try {
+      // Separate lead-only projects (emp_type === 'Lead') — these should NOT be marked Paid here;
+      // they belong in the lead's own payment cycle.
+      const approvedProjects = animatorProjects.filter(p => p.Status === 'Approved' && p.emp_type !== 'Lead')
+      const ongoingProjects = animatorProjects.filter(p => !['Approved', 'Paid', 'Closed'].includes(p.Status) && p.emp_type !== 'Lead')
+      // Lead-only approved projects for this animator as LEAD role (need to pay other leads)
+      const leadOwnProjects = animatorProjects.filter(p => p.Status === 'Approved' && p.emp_type === 'Lead')
+
+      if (approvedProjects.length === 0 && ongoingProjects.length === 0 && leadOwnProjects.length === 0) {
+        addToast(`⚠️ No projects found for ${animatorName}`, 'error')
+        setPayingId(null)
+        return
+      }
+
+      // 1a. Approved projects → Status=Paid + Payment_Status=Paid (exclude lead-only)
+      // NOTE: paid_at intentionally NOT set — bot sets it after Discord notification
+      // NOTE: Status="Closed" happens 12hrs later when bot locks the thread
+      if (approvedProjects.length > 0) {
+        const { error: e1 } = await apiClient.from('projects')
+          .update({ Payment_Status: 'Paid', Status: 'Paid', Thread_Archived: false })
+          .in('Project_ID', approvedProjects.map(p => p.Project_ID).filter(Boolean))
+        if (e1) throw new Error(e1.message || 'Failed to update approved projects')
+      }
+
+      // 1b. Ongoing/advance projects → only Payment_Status=Paid
+      if (ongoingProjects.length > 0) {
+        const { error: e2 } = await apiClient.from('projects')
+          .update({ Payment_Status: 'Paid' })
+          .in('Project_ID', ongoingProjects.map(p => p.Project_ID).filter(Boolean))
+        if (e2) throw new Error(e2.message || 'Failed to update ongoing projects')
+      }
+
+      // 1c. For each project where THIS animator is the Lead (but not the primary animator),
+      //     add ₹1000 to the actual lead animator's others_amount automatically.
+      //     These are already included in gross via leadBonus logic in the rows calculation.
+      //     We mark them paid too since the payment covers them.
+      if (leadOwnProjects.length > 0) {
+        await apiClient.from('projects')
+          .update({ Payment_Status: 'Paid', Status: 'Paid', Thread_Archived: false })
+          .in('Project_ID', leadOwnProjects.map(p => p.Project_ID).filter(Boolean))
+      }
+
+      // 1.5 Auto-mark Client Paid for projects that haven't been marked client paid yet
+      const projectsToAutoClientPaid = [...approvedProjects, ...ongoingProjects, ...leadOwnProjects]
+        .filter(p => !p.client_paid_date)
+        .map(p => p.Project_ID)
+        .filter(Boolean)
+        
+      if (projectsToAutoClientPaid.length > 0) {
+        try {
+          const baseDateStr = new Date().toISOString()
+          await Promise.all(projectsToAutoClientPaid.map(async pid => {
+            await apiClient.from('projects')
+              .update({ client_paid_date: `${baseDateStr}___PAID___` })
+              .eq('Project_ID', pid)
+          }))
+        } catch (autoClientErr) {
+          console.error('Failed to auto-mark client paid:', autoClientErr)
+        }
+      }
+
+      // 1d. Find projects where OTHER people are lead — add ₹1000 to their others_amount
+      try {
+        const leadPayMap: Record<string, { name: string; amount: number; notes: string[] }> = {}
+        ;[...approvedProjects, ...ongoingProjects].forEach(p => {
+          if (p.Lead && p.Lead.trim()) {
+            const leadName = p.Lead.trim().toLowerCase()
+            // Don't add to self
+            if (leadName === animatorName.toLowerCase()) return
+            if (!leadPayMap[leadName]) leadPayMap[leadName] = { name: p.Lead.trim(), amount: 0, notes: [] }
+            leadPayMap[leadName].amount += 1000
+            leadPayMap[leadName].notes.push(p.Project_ID)
+          }
+        })
+        for (const [, leadInfo] of Object.entries(leadPayMap)) {
+          const leadAnimRow = animators.find(a => (a.Name || '').toLowerCase() === leadInfo.name.toLowerCase())
+          if (!leadAnimRow) continue
+          const leadEid = leadAnimRow.Employee_ID
+          const { data: leadData } = await apiClient.from('animators').select('others_amount, others_notes').eq('Employee_ID', leadEid).single()
+          const existingOthers = Number((leadData as any)?.others_amount || 0)
+          const existingNotes = String((leadData as any)?.others_notes || '')
+          const newNotes = existingNotes
+            ? `${existingNotes}; Lead pay (${leadInfo.notes.join(', ')}): ₹${leadInfo.amount}`
+            : `Lead pay (${leadInfo.notes.join(', ')}): ₹${leadInfo.amount}`
+          await apiClient.from('animators')
+            .update({ others_amount: existingOthers + leadInfo.amount, others_notes: newNotes })
+            .eq('Employee_ID', leadEid)
+        }
+      } catch (leadErr) {
+        console.error('Failed to add lead pay to others:', leadErr)
+      }
+
+      const totalPaid = Math.round(net) // net already includes bonus - TDS
+
+      // 2. Mark payments row as Paid + store gross/tds/net, then reset bonus for next cycle
+      const payPayload = {
+        'Employee ID': eid,
+        Payment_Status: 'Paid',
+        gross: Math.round(gross || 0),
+        tds_percent: tds,
+        net_paid: totalPaid,
+        bonus: bonus > 0 ? bonus : 0,
+        others_amount: Math.round(parseFloat(String(animators.find(a => a.Employee_ID === eid)?.others_amount || '0')) || 0),
+        paid_date: formatDate(),
+        Timestamp: new Date().toISOString(),
+        'Project ID': `Month: ${targetMonth}`
+      };
+      // For upserting monthPay we check against targetMonth now
+      const monthPay = payments.find(p => p['Employee ID'] === eid && p['Project ID'] === `Month: ${targetMonth}`);
+      let payErr;
+      if (monthPay && monthPay.Payment_Status !== 'Paid') {
+        const { error } = await apiClient.from('payments').update(payPayload).match({ id: monthPay.id });
+        payErr = error;
+      } else {
+        const { error } = await apiClient.from('payments').insert(payPayload);
+        payErr = error;
+      }
+
+      if (payErr) {
+        console.error('[Mark Paid] payments update failed:', payErr)
+        throw new Error('Payments DB update failed: ' + (payErr.message || JSON.stringify(payErr)))
+      }
+
+      // 3. Increment total_earnings in animators table
+      try {
+        const { data: animData } = await apiClient.from('animators')
+          .select('total_earnings')
+          .eq('Employee_ID', eid)
+          .limit(1)
+        const existing = Number((animData && animData[0]?.total_earnings) || 0)
+        await apiClient.from('animators')
+          .update({ total_earnings: existing + totalPaid, others_amount: 0, others_notes: '' })
+          .eq('Employee_ID', eid)
+      } catch (earnErr) {
+        console.error('Failed to update total_earnings:', earnErr)
+      }
+
+      // 4. Auto-Generate Invoice as Draft for Discord Bot
+      try {
+        // Generate Invoice sequence
+        const { data: pastInvs } = await apiClient.from('invoices').select('invoice_number').eq('employee_id', eid)
+        let currentSeq = 0
+        if (pastInvs && pastInvs.length > 0) {
+           const highest = pastInvs.map((i: any) => {
+              const str = (i.invoice_number || '').toString().replace(eid, '')
+              return parseInt(str || '0', 10)
+           }).filter((n: number) => !isNaN(n)).sort((a: number, b: number) => b - a)[0]
+           
+           if (highest !== undefined) currentSeq = highest
+        }
+        const invoiceNumber = `${eid}${String(currentSeq + 1).padStart(2, '0')}`
+
+        // Create Line Items — round each project amount to nearest ₹100 (matches payout calculator)
+        const animRow = animators.find(a => a.Employee_ID === eid)
+        const lineItems = [...approvedProjects, ...ongoingProjects, ...leadOwnProjects].map(p => {
+          const rawSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+          let rate = 4000 / 60
+          if (p.emp_type === 'Lead') rate = 0 
+          else if (p.emp_type === 'Lighting') rate = 1500 / 60
+          else if (p.emp_type === 'Animator+Lighting') rate = 3000 / 60
+          
+          const baseAmtRaw = p.emp_type === 'Lead' ? 1000 : rawSec * rate
+          // Round to nearest ₹100 to match payout calculator
+          const baseAmt = p.emp_type === 'Lead' ? 1000 : Math.round(baseAmtRaw / 100) * 100
+          
+          // Note: Add p.Bonus and p.Other_Payment if they exist
+          const pBonus = Number((p as any).Bonus) || 0
+          const pOther = Number((p as any).Other_Payment) || 0
+          
+          return {
+            project_id: p.Project_ID,
+            title: p.Project_title,
+            seconds: rawSec,
+            amount: baseAmt + pBonus + pOther,
+            assigned_date: p['Date Assigned'] || 'Unknown',
+            approved_date: p.Approved_Date || p['Date Approved'] || 'Pending'
+          }
+        })
+
+        if (bonus > 0) {
+           lineItems.push({
+              project_id: 'BONUS',
+              title: `Performance/Monthly Bonus: ${bonusNote}`,
+              seconds: 0,
+              amount: bonus,
+              assigned_date: formatDate(),
+              approved_date: formatDate()
+           })
+        }
+
+        // Fix 2: Add others_amount as a line item in the invoice if > 0
+        const invoiceOthersAmt = parseFloat(String(animRow?.others_amount || '0')) || 0
+        const invoiceOthersNote = String((animRow as any)?.others_notes || '')
+        if (invoiceOthersAmt > 0) {
+           lineItems.push({
+              project_id: 'OTHERS',
+              title: invoiceOthersNote ? `Additional Payment: ${invoiceOthersNote}` : 'Additional Payment (Others)',
+              seconds: 0,
+              amount: invoiceOthersAmt,
+              assigned_date: formatDate(),
+              approved_date: formatDate()
+           })
+        }
+
+        const threadId = animRow?.Channel_ID || 'Unknown'
+
+        // Compute total_amount from actual project line items (each rounded to ₹100)
+        // so the invoice numbers are self-consistent (sum of items = gross total shown)
+        const projectLineItems = lineItems.filter(li => li.project_id !== 'BONUS' && li.project_id !== 'OTHERS')
+        const invoiceGross = projectLineItems.reduce((s, li) => s + (li.amount || 0), 0)
+        // TDS applies on gross (project amounts only, excluding bonus/others per accounting convention)
+        const invoiceTds = Math.round(invoiceGross * (tds / 100))
+        // Net = gross + bonus + others - TDS
+        const invoiceNet = invoiceGross + (bonus > 0 ? bonus : 0) + invoiceOthersAmt - invoiceTds
+
+        const insertPayload = {
+          invoice_number: invoiceNumber,
+          employee_id: eid,
+          legal_name: (animRow?.legal_name || animatorName).trim(),
+          month_label: targetMonth,
+          invoice_date: new Date().toISOString(),
+          line_items: lineItems,
+          total_amount: invoiceGross,
+          bonus_amount: bonus > 0 ? bonus : 0,
+          others_amount: invoiceOthersAmt,
+          tds_percent: tds,
+          tds_amount: invoiceTds,
+          net_payable: invoiceNet,
+          status: 'Paid',
+          thread_id: threadId,
+          sent_at: new Date().toISOString(),
+        }
+
+        const { data: invData, error: invErr } = await apiClient.from('invoices').insert(insertPayload).select().single()
+        if (invErr) {
+          console.error('[Mark Paid] invoice insert failed:', invErr)
+          addToast(`⚠️ Invoice creation failed: ${invErr.message}`, 'error')
+        } else {
+          try {
+             const othersAmt = parseFloat(String(animRow?.others_amount || '0')) || 0
+             const res = await fetch('/api/discord/send-invoice', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({
+                     channelId: threadId,
+                     invoiceNumber: invoiceNumber,
+                     monthLabel: targetMonth,
+                     totalAmount: insertPayload.total_amount,
+                     bonusAmount: bonus,
+                     othersAmount: othersAmt,
+                     tdsAmount: insertPayload.tds_amount,
+                     netPayable: insertPayload.net_payable,
+                     legalName: insertPayload.legal_name
+                 })
+             });
+             if (res.ok) {
+                 const dRes = await res.json();
+                 if (dRes.success) {
+                     await apiClient.from('invoices').update({
+                         thread_id: dRes.threadId,
+                         discord_msg_id: dRes.messageId
+                     }).eq('id', invData.id);
+                 }
+             }
+          } catch (discordErr) {
+             console.error("Failed to send invoice to Discord:", discordErr);
+          }
+          addToast(`✅ Invoice generated and sent to Discord!`, 'success')
+        }
+      } catch (e) {
+        console.error('Invoice generation error:', e)
+      }
+
+      // 4. Mark the animator's open invoice as Paid
+      try {
+        let q = apiClient.from('invoices')
+          .update({ status: 'Paid' })
+          .eq('employee_id', eid)
+          .in('status', ['Sent', 'Acknowledged', 'Edit Requested', 'Awaiting Details']);
+        
+        // We shouldn't restrict the invoice paid update by selectedMonth since it's an overall list now,
+        // but let's update invoices that match the targetMonth if needed, or just all open invoices.
+        // The user said "paid krte hi woh paid wale me chale jaye jis month me pay hua h".
+        // Let's update any pending invoices for this targetMonth.
+        q = q.eq('month_label', targetMonth);
+        await q;
+      } catch (invErr) {
+        console.error('Failed to update invoice status:', invErr)
+      }
+
+      // 5. Reset bonus in UI for next cycle
+      setBonusAmounts(prev => ({ ...prev, [eid]: '' }))
+      setBonusNotes(prev => ({ ...prev, [eid]: '' }))
+
+      // Discord notification logic is handled by agency_bot.py check_dashboard_paid loop now
+      setPaidStatus(prev => ({ ...prev, [eid]: 'Paid' as const }))
+      setPaidNets(prev => ({ ...prev, [eid]: totalPaid }))
+      addToast(`✅ Marked ${animatorName} as Paid${bonus > 0 ? ` + ₹${bonus.toLocaleString()} bonus` : ''} (Bot will notify)`)
+    } catch (err: any) {
+      addToast(`❌ Failed to mark paid: ${err?.message || 'Unknown error'}`, 'error')
+    }
+    setPayingId(null)
+  }
+
+
+  // Effect removed: Don't prepopulate paidStatus from DB based on ANY historical paid project.
+  // This ensures an animator with a past paid project still shows up for NEW approved projects.
+  // paidStatus is now just UI state for the current session's "Mark Paid" clicks.
+
+  useEffect(() => {
+    Promise.all([
+      apiClient.from('payments').select('*'),
+      apiClient.from('invoices').select('employee_id, month_label, status, updated_at')
+    ]).then(([{ data: pData }, { data: iData }]) => {
+      // Sort to get the latest payment details per animator
+      const sorted = ((pData as Payment[]) || []).sort((a, b) => {
+        const ta = a.Timestamp ? new Date(a.Timestamp).getTime() : 0
+        const tb = b.Timestamp ? new Date(b.Timestamp).getTime() : 0
+        return tb - ta
+      })
+      setPayments(sorted)
+      setInvoices((iData as any[]) || [])
+      setLoading(false)
+    })
+  }, [])
+
+  // 1. Group payment details: globally for bank info, and specifically for the selected month
+  const latestPaymentByEmpId: Record<string, Payment> = {}
+  const paymentForMonthByEmpId: Record<string, Payment> = {}
+
+  payments.forEach(p => {
+    const empId = p['Employee ID'] || (p as any).Employee_ID || ''
+    if (empId && !latestPaymentByEmpId[empId]) {
+      latestPaymentByEmpId[empId] = p
+    }
+    if (empId && p['Project ID'] === `Month: ${selectedMonth}`) {
+      if (!paymentForMonthByEmpId[empId]) {
+         paymentForMonthByEmpId[empId] = p;
+      }
+    }
+  })
+
+  // Initialize TDS from global fallback, Bonus from month-specific payment
+  useEffect(() => {
+    if (payments.length > 0) {
+      setTdsPercents(prev => {
+        const next = { ...prev };
+        let changed = false;
+        Object.keys(latestPaymentByEmpId).forEach(eid => {
+           const monthPay = paymentForMonthByEmpId[eid];
+           const globalPay = latestPaymentByEmpId[eid];
+           const val = monthPay?.tds_percent ?? globalPay?.tds_percent ?? 10;
+           if (next[eid] !== val.toString()) {
+              next[eid] = val.toString();
+              changed = true;
+           }
+        });
+        return changed ? next : prev;
+      });
+
+      setBonusAmounts(prev => {
+        const next = { ...prev };
+        let changed = false;
+        animators.forEach(a => {
+           const eid = a.Employee_ID;
+           const monthPay = paymentForMonthByEmpId[eid];
+           const isPaid = monthPay?.Payment_Status?.toLowerCase() === 'paid';
+           const val = monthPay ? (isPaid ? '' : (monthPay.bonus || 0).toString()) : '';
+           const finalVal = val === '0' ? '' : val;
+           if (next[eid] !== finalVal) {
+              next[eid] = finalVal;
+              changed = true;
+           }
+        });
+        return changed ? next : prev;
+      });
+
+      setBonusNotes(prev => {
+        const next = { ...prev };
+        let changed = false;
+        animators.forEach(a => {
+           const eid = a.Employee_ID;
+           const monthPay = paymentForMonthByEmpId[eid];
+           const isPaid = monthPay?.Payment_Status?.toLowerCase() === 'paid';
+           const val = monthPay ? (isPaid ? '' : (monthPay.bonus_note || '')) : '';
+           if (next[eid] !== val) {
+              next[eid] = val;
+              changed = true;
+           }
+        });
+        return changed ? next : prev;
+      });
+    }
+  }, [payments, selectedMonth, animators]);
+
+  const handleSavePayout = async (eid: string, animatorName: string, gross: number, tdsPct: number, bonus: number, net: number, bonusNote: string) => {
+    setSavingId(eid);
+    try {
+      const now = new Date().toISOString();
+      const animator = animators.find(a => a.Employee_ID === eid);
+
+      const payload = {
+        'Employee ID': eid,
+        Name: animatorName,
+        Discord_ID: animator?.Discord_ID || null,
+        Discord_Username: animator?.Discord_Username || null,
+        Payment_Status: 'Pending',
+        gross: Math.round(gross),
+        tds_percent: tdsPct,
+        net_paid: Math.round(net),
+        bonus: bonus,
+        Timestamp: now,
+        'Project ID': `Month: ${selectedMonth}`
+      };
+
+      const monthPay = paymentForMonthByEmpId[eid];
+      let upsertErr;
+
+      if (monthPay && monthPay.Payment_Status !== 'Paid') {
+        const { error } = await apiClient.from('payments').update(payload).match({ id: monthPay.id });
+        upsertErr = error;
+      } else {
+        const { error } = await apiClient.from('payments').insert(payload);
+        upsertErr = error;
+      }
+
+      if (upsertErr) {
+        addToast(`❌ Could not save payout for ${animatorName}: ${upsertErr.message}`, 'error');
+      } else {
+        addToast(`✅ Saved payout details for ${animatorName}`);
+      }
+    } catch (e: any) {
+      addToast(`❌ Save failed: ${e.message}`, 'error');
+    }
+    setSavingId(null);
+  };
+
+
+
+  // 2. Aggregate approved seconds per animator (Only Approved status — Closed=already paid, skip deferred)
+  const approvedSecondsByEmpId: Record<string, number> = {}
+  projects.filter(p => 
+    p.Status === 'Approved' && 
+    !deferredProjects.has(p.Project_ID)
+    // Month filter removed for overall view
+  ).forEach(p => {
+    // Collect all unique Employee IDs for this project (both primary and shared group animators)
+    const empIds = new Set<string>()
+    if (p.Employee_ID) empIds.add(p.Employee_ID)
+
+    // Check output_history first
+    let mappedFromHistory = false
+    if (Array.isArray(p.output_history) && p.output_history.length > 0) {
+      (Array.isArray(p.output_history) ? p.output_history : []).forEach(h => {
+        if (!approvedSecondsByEmpId[h.empId]) approvedSecondsByEmpId[h.empId] = 0
+        approvedSecondsByEmpId[h.empId] += h.seconds
+      })
+      mappedFromHistory = true
+    }
+
+    if (!mappedFromHistory) {
+      // Fallback to splitting base duration equally among group members
+      const baseSec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+      const anims = (String(p.Animator || '')).split(',').map(s => s.trim()).filter(Boolean)
+
+      // Match animator names back to Employee_IDs if needed
+      anims.forEach(animName => {
+        const found = animators.find(a => (a.Name || '').toLowerCase() === animName.toLowerCase())
+        if (found) empIds.add(found.Employee_ID)
+      })
+
+      const finalEmpIds = Array.from(empIds)
+      if (finalEmpIds.length > 0) {
+        const splitSec = Math.round(baseSec / finalEmpIds.length)
+        finalEmpIds.forEach(eid => {
+          if (!approvedSecondsByEmpId[eid]) approvedSecondsByEmpId[eid] = 0
+          approvedSecondsByEmpId[eid] += splitSec
+        })
+      }
+    }
+  })
+
+  // Add manually linked projects contribution (skip deferred)
+  Object.entries(manualProjects).forEach(([eid, projs]) => {
+    projs.filter(p => !deferredProjects.has(p.Project_ID)).forEach(p => {
+      const overrideStr = durationOverrides[`${eid}__${p.Project_ID}`]
+      const secs = overrideStr !== undefined
+        ? (parseFloat(overrideStr) || 0)
+        : parseDurationSec(p.Duration || '', p.Project_ID)
+      if (!approvedSecondsByEmpId[eid]) approvedSecondsByEmpId[eid] = 0
+      approvedSecondsByEmpId[eid] += secs
+    })
+  })
+
+  // Apply per-project duration overrides to auto-detected approved projects
+  // For each override key (empId__projectId), subtract the original contribution and add the new value
+  Object.entries(durationOverrides).forEach(([key, newSecStr]) => {
+    const sep = key.indexOf('__')
+    if (sep < 0) return
+    const eid = key.slice(0, sep)
+    const projectId = key.slice(sep + 2)
+    // Only handle auto-detected projects (manual ones are already handled above)
+    const isManual = (manualProjects[eid] || []).some(p => p.Project_ID === projectId)
+    if (isManual) return
+    const proj = projects.find(p => 
+      p.Project_ID === projectId && 
+      p.Status === 'Approved' && 
+      !deferredProjects.has(p.Project_ID)
+      // Month filter removed
+    )
+    if (!proj) return
+
+    const newSec = parseFloat(newSecStr) || 0
+
+    // Compute original contribution of this project to this emp
+    const histEntry = (proj.output_history || []).find((h: any) => h.empId === eid)
+    let originalSec: number
+    if (histEntry) {
+      originalSec = histEntry.seconds || 0
+    } else {
+      const rawSec = parseDurationSec(proj.Duration || '', proj.Project_ID)
+      originalSec = Math.round(rawSec)
+    }
+
+    // Adjust: remove original, add override
+    if (approvedSecondsByEmpId[eid] !== undefined) {
+      approvedSecondsByEmpId[eid] = Math.max(0, approvedSecondsByEmpId[eid] - originalSec + newSec)
+    }
+  })
+
+  // Helper: check if animator has any approved project overall
+  const animatorInMonth = (eid: string, animName: string) => {
+    return projects.some(p =>
+      p.Status === 'Approved' &&
+      (p.Employee_ID === eid || (String(p.Animator || '')).toLowerCase().includes(animName.toLowerCase()))
+    )
+  }
+
+  // 3. Build data rows — hide paid (Closed+Paid in DB), filter by month
+  const rows = animators
+    .filter(a => (approvedSecondsByEmpId[a.Employee_ID] > 0 || manuallyAddedAnimators.has(a.Employee_ID)))
+    .filter(a => paidStatus[a.Employee_ID] !== 'Paid')
+    .filter(a => animatorInMonth(a.Employee_ID, a.Name))
+    .filter(a => !search || (a.Name || '').toLowerCase().includes(search.toLowerCase()) || (a.Employee_ID || '').toLowerCase().includes(search.toLowerCase()))
+    .map(a => {
+      const eid = a.Employee_ID
+      const autoMins = (approvedSecondsByEmpId[eid] || 0) / 60
+      const currentMinsStr = manualMinutes[eid] !== undefined ? manualMinutes[eid] : autoMins.toFixed(2)
+      const currentMins = parseFloat(currentMinsStr) || 0
+
+      const tdsPct = isTdsEnabled ? (parseFloat(tdsPercents[eid] || '10') || 10) : 0
+      const othersAmt = parseFloat(String(a.others_amount || '0')) || 0
+      const bonusParsed = parseFloat(bonusAmounts[eid] || '0') || 0
+      // Gross calculation: check each approved project for lighting split pricing
+      const animName = animators.find(an => an.Employee_ID === eid)?.Name || ''
+      let calculatedGross = 0
+      let leadBonus = 0
+      const animatorProjectsForCalc = projects.filter(p =>
+        p.Status === 'Approved' &&
+        (p.Employee_ID === eid ||
+          (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase())) ||
+          (p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase()))
+      )
+      animatorProjectsForCalc.forEach(p => {
+        calculatedGross += getAnimatorProjectPayout(p, eid, animName)
+      })
+      
+      // Nearest 100 round off
+      const fallbackRate = (eid || '').toUpperCase().includes('L') ? 1500 : ((eid || '').toUpperCase().includes('A') ? 2500 : 4000);
+      let baseGross = calculatedGross > 0 ? calculatedGross : currentMins * fallbackRate;
+      const gross = Math.round(baseGross / 100) * 100;
+      const totalBonusParsed = bonusParsed
+      const totalAmount = gross + totalBonusParsed + othersAmt
+      // TDS on gross only (bonus/others are not subject to TDS deduction in invoice)
+      const tdsMath = Math.round(gross * tdsPct / 100)
+      const net = Math.round(totalAmount - tdsMath)
+
+      const payInfo = latestPaymentByEmpId[eid]
+
+      // Filter this animator's approved projects (exact name match, not substring)
+      const animatorProjects = [
+        ...projects.filter(p =>
+          p.Status === 'Approved' &&
+          (p.Employee_ID === eid ||
+            (animName && (String(p.Animator || '')).split(',').map((s: string) => s.trim().toLowerCase()).includes(animName.toLowerCase())))
+        ),
+        ...(manualProjects[eid] || [])
+      ]
+
+      let bankDisplay = <span className="text-gray-400 italic">No details found</span>
+      if (payInfo) {
+        if (payInfo['UPI ID']) {
+          bankDisplay = (
+            <div className="flex items-center gap-1">
+              <span className="font-semibold text-gray-800">UPI:</span>
+              <span className="font-mono text-indigo-600">{payInfo['UPI ID']}</span>
+              <CopyButton value={payInfo['UPI ID']} />
+            </div>
+          )
+        } else if (payInfo['Account Number']) {
+          bankDisplay = (
+            <div className="text-[10px] text-gray-600 space-y-0.5">
+              <div className="flex justify-between"><span>A/C:</span> <span className="font-mono font-bold text-gray-800">{payInfo['Account Number']}</span></div>
+              <div className="flex justify-between"><span>IFSC:</span> <span className="font-mono">{payInfo['IFSC CODE']}</span></div>
+              <div className="flex justify-between"><span>Name:</span> <span>{payInfo['Account Holder Name']}</span></div>
+              <div className="flex justify-between"><span>PAN:</span> <span className="font-mono">{payInfo['PAN Number']}</span></div>
+            </div>
+          )
+        }
+      }
+
+      return {
+        animator: a,
+        autoMins,
+        currentMinsStr,
+        gross,
+        net,
+        tdsPct,
+        bonusAmt: totalBonusParsed,
+        othersAmt,
+        totalAmount,
+        animatorProjects: animatorProjects as Project[]
+      }
+    })
+
+  const availableToAdd = animators.filter(a => !approvedSecondsByEmpId[a.Employee_ID] && !manuallyAddedAnimators.has(a.Employee_ID))
+  // paidRows: animators who have ANY project with Payment_Status='Paid' (both old Status='Paid' and new 'Closed')
+  const paidEmpIds = new Set(
+    projects
+      .filter(p => p.Payment_Status === 'Paid' && (p.Status === 'Closed' || p.Status === 'Paid') && p.Employee_ID)
+      .map(p => p.Employee_ID)
+  )
+  const paidRows = animators
+    .filter(a => paidEmpIds.has(a.Employee_ID) || paidStatus[a.Employee_ID] === 'Paid')
+    .sort((a, b) => {
+      // Sort by latest Timestamp descending (most recently paid first)
+      const getLatestPaidDate = (animator: Animator) => {
+        const pay = payments
+          .filter(p => p['Employee ID'] === animator.Employee_ID && (p.Timestamp || p.paid_date))
+          .sort((x, y) => new Date(y.Timestamp || y.paid_date!).getTime() - new Date(x.Timestamp || x.paid_date!).getTime())[0]
+        return pay ? new Date(pay.Timestamp || pay.paid_date!).getTime() : 0
+      }
+      return getLatestPaidDate(b) - getLatestPaidDate(a)
+    })
+
+  // For each paid animator, get their paid projects
+  const getPaidProjects = (a: Animator) =>
+    projects.filter(p =>
+      p.Payment_Status === 'Paid' &&
+      (p.Status === 'Closed' || p.Status === 'Paid') &&
+      (p.Employee_ID === a.Employee_ID ||
+        (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase()))
+    )
+
+  const [payoutSubTab, setPayoutSubTab] = useState<'animators' | 'lighting'>('animators')
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">Payout Calculator</h2>
+            <p className="text-xs text-gray-500">Calculates payouts based on <b>Approved</b> projects at ₹4000/minute.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-full border border-gray-200 shadow-sm mr-2">
+              <span className="text-sm font-medium text-gray-700">Apply TDS</span>
+              <input type="checkbox" checked={isTdsEnabled} onChange={e => setIsTdsEnabled(e.target.checked)} className="form-checkbox h-4 w-4 text-indigo-600 transition duration-150 ease-in-out cursor-pointer" />
+            </label>
+            <button onClick={handleSendInvoices} disabled={sendingInvoices}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border-2 border-green-100 text-green-600 hover:bg-green-50 flex-shrink-0 transition-colors disabled:opacity-50">
+              {sendingInvoices ? 'Sending...' : '🟢 Send Invoices'}
+            </button>
+          </div>
+        </div>
+
+        {/* Sub-tab switcher */}
+        <div className="flex gap-2 mb-4 border-b border-gray-100 pb-3">
+          <button onClick={() => setPayoutSubTab('animators')}
+            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${payoutSubTab === 'animators' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-indigo-600 hover:bg-indigo-50'}`}>
+            🎬 Animators
+          </button>
+          <button onClick={() => setPayoutSubTab('lighting')}
+            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${payoutSubTab === 'lighting' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:text-amber-600 hover:bg-amber-50'}`}>
+            💡 Lighting Artists
+          </button>
+        </div>
+
+        {/* Lighting Artists Tab */}
+        {payoutSubTab === 'lighting' && (() => {
+          // Build lighting artists rows: group approved projects by Lighting_Artist
+          const lightingMap: Record<string, { name: string; eid: string; discordId: string; projects: Project[] }> = {}
+          projects.filter(p => p.Lighting_Artist && p.Lighting_Artist.trim() && p.Status === 'Approved' && p.Payment_Status !== 'Paid')
+            .forEach(p => {
+              const laName = (p.Lighting_Artist || '').trim()
+              const laKey = laName.toLowerCase()
+              if (!lightingMap[laKey]) {
+                // Find animator record for this lighting artist
+                const laAnim = animators.find(a => (a.Name || '').toLowerCase() === laKey)
+                lightingMap[laKey] = {
+                  name: laName,
+                  eid: (p as any).Lighting_Employee_ID || laAnim?.Employee_ID || '—',
+                  discordId: (p as any).Lighting_Discord_ID || laAnim?.Discord_ID || '',
+                  projects: []
+                }
+              }
+              lightingMap[laKey].projects.push(p)
+            })
+
+          const lightingRows = Object.values(lightingMap)
+
+          if (lightingRows.length === 0) return (
+            <div className="text-center py-12">
+              <p className="text-3xl mb-2">💡</p>
+              <p className="text-gray-500 font-medium">No Lighting Artists with pending payout</p>
+              <p className="text-xs text-gray-400 mt-1">Use /lighting in a project thread to assign a Lighting Artist</p>
+            </div>
+          )
+
+          return (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="bg-amber-50 border-y border-amber-100 text-amber-700 text-xs uppercase font-semibold">
+                    <th className="px-4 py-3">Lighting Artist</th>
+                    <th className="px-4 py-3">Project ID</th>
+                    <th className="px-4 py-3">Title</th>
+                    <th className="px-4 py-3">Main Animator</th>
+                    <th className="px-4 py-3 text-right">Duration (min)</th>
+                    <th className="px-4 py-3 text-right">Amount (₹2k/min)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lightingRows.map((la, idx) => (
+                    la.projects.map((p, pi) => {
+                      const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                      const mins = sec / 60
+                      const amount = Math.round(mins * 2000)
+                      return (
+                        <tr key={`${la.eid}-${p.Project_ID}`} className={`border-b border-gray-50 hover:bg-amber-50/40 ${pi === 0 && idx > 0 ? 'border-t-2 border-amber-100' : ''}`}>
+                          <td className="px-4 py-3">
+                            {pi === 0 ? (
+                              <div>
+                                <p className="font-bold text-amber-800">💡 {la.name}</p>
+                                <p className="text-[10px] text-gray-400 font-mono">{la.eid}</p>
+                              </div>
+                            ) : <span className="text-gray-300">↳</span>}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{p.Project_ID}</td>
+                          <td className="px-4 py-3 text-gray-700 max-w-[200px] truncate">{p.Project_title || '—'}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{p.Animator || '—'}</td>
+                          <td className="px-4 py-3 text-right font-mono text-gray-700">{mins.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-right font-bold text-amber-700">₹{amount.toLocaleString('en-IN')}</td>
+                        </tr>
+                      )
+                    })
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-amber-50 font-bold">
+                    <td colSpan={5} className="px-4 py-3 text-amber-800">Total Lighting Payout</td>
+                    <td className="px-4 py-3 text-right text-amber-900 text-base">
+                      ₹{lightingRows.reduce((sum, la) => {
+                        return sum + la.projects.reduce((s, p) => {
+                          const sec = parseDurationSec(p.Duration || extractDuration(p.Project_ID) || '0', p.Project_ID)
+                          return s + Math.round((sec / 60) * 1500)
+                        }, 0)
+                      }, 0).toLocaleString('en-IN')}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )
+        })()}
+
+        {/* Main Animators Tab */}
+        {payoutSubTab === 'animators' && (<>
+        <div className="relative mb-4">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input type="text" placeholder="Search by name or ID..." value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full max-w-sm pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none text-gray-800" />
+        </div>
+
+        {loading ? (
+          <p className="text-center text-sm text-gray-400 py-10">Loading payment data...</p>
+        ) : rows.length === 0 ? (
+          <p className="text-center text-sm text-gray-400 py-10">No approved projects found for payout.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead>
+                <tr className="bg-gray-50 border-y border-gray-100 text-gray-500 text-xs uppercase font-semibold">
+                  <th className="px-4 py-3">Animator</th>
+                  <th className="px-4 py-3">Total Minutes</th>
+                  <th className="px-4 py-3 text-right">Gross (₹)</th>
+                  <th className="px-4 py-3 text-right">Bonus (₹)</th>
+                  <th className="px-4 py-3 text-right">Others (₹)</th>
+                  <th className="px-4 py-3 text-right">Total (₹)</th>
+                  {isTdsEnabled && <th className="px-4 py-3 text-right">TDS %</th>}
+                  <th className="px-4 py-3 text-right">Net (₹)</th>
+                  <th className="px-4 py-3 text-center">Save / Pay</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <Fragment key={r.animator.Employee_ID}>
+                    <tr className={`border-b border-gray-50 hover:bg-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => toggleExpand(r.animator.Employee_ID)} className="text-gray-400 hover:text-indigo-600 transition-colors">
+                            <svg className={`w-5 h-5 transform transition-transform ${expandedAnimators.has(r.animator.Employee_ID) ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+                            {(r.animator.Name || '?')[0]}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-800 flex items-center gap-2">
+                              {r.animator.Name}
+                              {(r.animator.Tier || r.animator.Role) && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{r.animator.Tier || r.animator.Role}</span>}
+                              {(() => {
+                                const inv = invoices.find(i => i.employee_id === r.animator.Employee_ID && i.month_label === selectedMonth)
+                                if (!inv) return null
+                                const s = inv.status
+                                const color = s === 'Acknowledged' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : s === 'Edit Requested' ? 'bg-amber-50 text-amber-600 border-amber-100' : s === 'Draft' ? 'bg-gray-50 text-gray-600 border-gray-100' : 'bg-indigo-50 text-indigo-600 border-indigo-100'
+                                return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${color}`}>{s}</span>
+                              })()}
+                            </p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">{r.animator.Employee_ID}</p>
+                            <label className="flex items-center gap-1 mt-1 cursor-pointer select-none">
+                              <input 
+                                type="checkbox" 
+                                className="w-3 h-3 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                                checked={!excludeNotify.has(r.animator.Employee_ID)}
+                                onChange={(e) => {
+                                  setExcludeNotify(prev => {
+                                    const next = new Set(prev)
+                                    if (e.target.checked) next.delete(r.animator.Employee_ID)
+                                    else next.add(r.animator.Employee_ID)
+                                    return next
+                                  })
+                                }}
+                              />
+                              <span className="text-[9px] text-gray-500 uppercase font-semibold">Notify Bot</span>
+                            </label>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={r.currentMinsStr}
+                            onChange={e => setManualMinutes(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                            className="w-20 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none font-mono focus:border-indigo-500 transition-colors"
+                          />
+                          <span className="text-xs text-gray-400">min</span>
+                          {r.autoMins > 0 && r.currentMinsStr !== r.autoMins.toFixed(2) && (
+                            <span className="text-[10px] text-orange-500 bg-orange-50 px-1.5 rounded" title={`Auto calculated: ${r.autoMins.toFixed(2)} min`}>Modified</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-gray-600">
+                        ₹{r.gross.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={bonusAmounts[r.animator.Employee_ID] ?? ''}
+                              onChange={e => setBonusAmounts(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                              className="w-20 px-2 py-1 border border-amber-300 rounded text-sm focus:outline-none font-mono focus:border-amber-500 transition-colors text-right bg-amber-50"
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-gray-500">
+                        <div className="flex items-center justify-end gap-1 group relative">
+                          {/* Hover tooltip showing notes */}
+                          {(r.animator as any)?.others_notes && (
+                            <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 hidden group-hover:block z-20 w-52 bg-gray-800 text-white text-[10px] rounded-lg p-2 shadow-lg leading-relaxed">
+                              {String((r.animator as any).others_notes)}
+                            </div>
+                          )}
+                          <span className={`${r.othersAmt > 0 ? 'text-sky-600 font-semibold' : 'text-gray-400'}`}>
+                            ₹{(r.othersAmt || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                          {/* + button to add to others */}
+                          <button
+                            title="Add to Others"
+                            onClick={() => { setOthersAddOpen(r.animator.Employee_ID); setOthersAddAmt(''); setOthersAddNote('') }}
+                            className="w-5 h-5 rounded-full bg-sky-100 text-sky-600 hover:bg-sky-200 flex items-center justify-center text-[11px] font-bold transition-colors flex-shrink-0"
+                          >+</button>
+                          {/* Add Others mini-form */}
+                          {othersAddOpen === r.animator.Employee_ID && (
+                            <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-sky-200 rounded-xl shadow-xl p-3 w-56">
+                              <p className="text-[10px] font-bold text-sky-700 uppercase tracking-wider mb-2">Add to Others</p>
+                              <input
+                                type="number" min="0" placeholder="Amount ₹" value={othersAddAmt}
+                                onChange={e => setOthersAddAmt(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm font-mono mb-1 focus:outline-none"
+                                autoFocus
+                              />
+                              <input
+                                type="text" placeholder="Note (optional)" value={othersAddNote}
+                                onChange={e => setOthersAddNote(e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-xs mb-2 focus:outline-none"
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  disabled={othersAddSaving || !othersAddAmt}
+                                  onClick={async () => {
+                                    setOthersAddSaving(true)
+                                    const eid = r.animator.Employee_ID
+                                    const { data: cur } = await apiClient.from('animators').select('others_amount, others_notes').eq('Employee_ID', eid).single()
+                                    const existing = Number((cur as any)?.others_amount || 0)
+                                    const existNotes = String((cur as any)?.others_notes || '')
+                                    const addAmt = Number(othersAddAmt) || 0
+                                    const addNote = othersAddNote.trim()
+                                    const newNotes = existNotes
+                                      ? (addNote ? `${existNotes}; ${addNote}: ₹${addAmt}` : existNotes)
+                                      : (addNote ? `${addNote}: ₹${addAmt}` : '')
+                                    await apiClient.from('animators')
+                                      .update({ others_amount: existing + addAmt, others_notes: newNotes })
+                                      .eq('Employee_ID', eid)
+                                    setOthersAddOpen(null)
+                                    setOthersAddSaving(false)
+                                    addToast(`✅ Added ₹${addAmt} to ${r.animator.Name}'s others`)
+                                    // Force refresh by re-fetching
+                                    window.location.reload()
+                                  }}
+                                  className="flex-1 py-1 rounded-lg text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors"
+                                >Save</button>
+                                <button onClick={() => setOthersAddOpen(null)} className="px-3 py-1 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition-colors">✕</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-semibold text-gray-800">
+                        ₹{(r.totalAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="10"
+                            value={tdsPercents[r.animator.Employee_ID] ?? '10'}
+                            onChange={e => setTdsPercents(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                            className="w-14 px-1 py-1 border border-red-300 rounded text-sm focus:outline-none font-mono focus:border-red-500 transition-colors text-right bg-red-50"
+                          />
+                          <span className="text-xs text-red-400">%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="font-mono font-bold text-lg text-emerald-600">
+                          ₹{r.net.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex flex-col gap-2 items-center">
+                          <button
+                            onClick={() => handleSavePayout(r.animator.Employee_ID, r.animator.Name, r.gross, r.tdsPct, r.bonusAmt, r.net, bonusNotes[r.animator.Employee_ID] || '')}
+                            disabled={savingId === r.animator.Employee_ID}
+                            className="w-full px-2 py-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 rounded transition-all disabled:opacity-50">
+                            {savingId === r.animator.Employee_ID ? 'Saving...' : '💾 Save details'}
+                          </button>
+                          
+                          {paidStatus[r.animator.Employee_ID] === 'Paid' ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold w-full justify-center">
+                              ✅ Paid
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleMarkPaid(r.animator.Employee_ID, r.animator.Name, r.net, r.animatorProjects, r.bonusAmt, r.tdsPct, r.gross, bonusNotes[r.animator.Employee_ID] || '', !excludeNotify.has(r.animator.Employee_ID))}
+                              disabled={payingId === r.animator.Employee_ID}
+                              className="w-full px-3 py-1 text-xs font-semibold text-white rounded-full transition-all disabled:opacity-50"
+                              style={{ background: payingId === r.animator.Employee_ID ? '#9ca3af' : 'linear-gradient(135deg, #10b981, #059669)' }}>
+                              {payingId === r.animator.Employee_ID ? 'Sending...' : 'Mark Paid / Lock'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {expandedAnimators.has(r.animator.Employee_ID) && (
+                      <tr className="bg-gray-50/80">
+                        <td colSpan={9} className="px-10 py-4 border-b border-gray-100">
+                          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-inner">
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-xs font-bold text-gray-700 uppercase">Projects ({r.animatorProjects.length})</h4>
+                              <button
+                                onClick={() => setShowAddProject(showAddProject === r.animator.Employee_ID ? null : r.animator.Employee_ID)}
+                                className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                Add Project
+                              </button>
+                            </div>
+
+                            {/* Add Project search panel */}
+                            {showAddProject === r.animator.Employee_ID && (
+                              <div className="mb-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  placeholder="Search project name or ID..."
+                                  value={addProjectSearch[r.animator.Employee_ID] || ''}
+                                  onChange={e => setAddProjectSearch(prev => ({ ...prev, [r.animator.Employee_ID]: e.target.value }))}
+                                  className="w-full px-3 py-1.5 text-xs border border-indigo-200 rounded-lg bg-white focus:outline-none mb-2"
+                                />
+                                <div className="max-h-40 overflow-y-auto space-y-1">
+                                  {projects
+                                    .filter(p => {
+                                      const q = (addProjectSearch[r.animator.Employee_ID] || '').toLowerCase()
+                                      if (!q) return true
+                                      return (p.Project_title || '').toLowerCase().includes(q) || (p.Project_ID || '').toLowerCase().includes(q)
+                                    })
+                                    .filter(p => !r.animatorProjects.find(ap => ap.Project_ID === p.Project_ID))
+                                    .slice(0, 20)
+                                    .map(p => (
+                                      <button
+                                        key={p.Project_ID}
+                                        onClick={() => {
+                                          setManualProjects(prev => ({
+                                            ...prev,
+                                            [r.animator.Employee_ID]: [...(prev[r.animator.Employee_ID] || []), p]
+                                          }))
+                                          setShowAddProject(null)
+                                          setAddProjectSearch(prev => ({ ...prev, [r.animator.Employee_ID]: '' }))
+                                        }}
+                                        className="w-full text-left flex justify-between items-center px-2 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors">
+                                        <div className="min-w-0">
+                                          <span className="text-xs text-gray-800 font-medium truncate max-w-[180px] block">{p.Project_title || p.Project_ID}</span>
+                                          <span className="text-[9px] text-gray-400 font-mono">{p.Project_ID}</span>
+                                        </div>
+                                        <span className="text-[10px] text-indigo-600 font-mono flex-shrink-0 ml-2">{formatDurationDisplay(p.Duration, p.Project_ID)}</span>
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {r.animatorProjects.length === 0 ? (
+                              <p className="text-xs text-gray-500">No projects found. Use Add Project above.</p>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2">
+                                {r.animatorProjects.map((p: Project) => {
+                                  const overrideKey = `${r.animator.Employee_ID}__${p.Project_ID}`
+                                  const isEditing = editingDurationId === overrideKey
+                                  const rawSec = parseDurationSec(p.Duration || '', p.Project_ID)
+                                  const splitSec = Math.round(rawSec)
+                                  const displaySec = durationOverrides[overrideKey] !== undefined ? durationOverrides[overrideKey] : String(splitSec)
+                                  const isManual = (manualProjects[r.animator.Employee_ID] || []).find(mp => mp.Project_ID === p.Project_ID)
+                                  const isDeferred = deferredProjects.has(p.Project_ID)
+                                  return (
+                                    <div key={p.Project_ID} className={`flex justify-between items-start rounded-lg px-3 py-2 border transition-all ${isDeferred ? 'bg-red-50 border-red-100 opacity-60' : 'bg-gray-50 border-gray-100'}`}>
+                                      <div className="min-w-0 pr-3 flex-1">
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          <p className={`text-xs font-semibold truncate ${isDeferred ? 'line-through text-gray-400' : 'text-gray-800'}`}>{p.Project_title}</p>
+                                          {isManual && <span className="text-[9px] bg-indigo-100 text-indigo-600 px-1 rounded">manual</span>}
+                                          {isDeferred && <span className="text-[9px] bg-red-100 text-red-500 px-1 rounded">deferred</span>}
+                                        </div>
+                                        <p className="text-[10px] text-gray-400 font-mono mt-0.5">{p.Project_ID}</p>
+                                      </div>
+                                      <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
+                                        {isDeferred ? (
+                                          <button onClick={() => undeferProject(p.Project_ID)}
+                                            className="text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold">↩ Undo</button>
+                                        ) : (
+                                          <>
+                                            {isEditing ? (
+                                              <div className="flex items-center gap-1">
+                                                <input
+                                                  type="number"
+                                                  autoFocus
+                                                  value={displaySec}
+                                                  onChange={e => setDurationOverrides(prev => ({ ...prev, [overrideKey]: e.target.value }))}
+                                                  onBlur={() => setEditingDurationId(null)}
+                                                  onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') setEditingDurationId(null) }}
+                                                  className="w-16 px-1 py-0.5 text-xs border border-indigo-400 rounded font-mono text-right focus:outline-none"
+                                                />
+                                                <span className="text-[10px] text-gray-400">sec</span>
+                                              </div>
+                                            ) : (
+                                              <button
+                                                onClick={() => setEditingDurationId(overrideKey)}
+                                                title="Click to edit duration"
+                                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline underline-offset-2 transition-colors cursor-pointer">
+                                                {durationOverrides[overrideKey] !== undefined ? `${durationOverrides[overrideKey]} sec` : formatDurationDisplay(p.Duration, p.Project_ID)}
+                                                {durationOverrides[overrideKey] !== undefined && <span className="text-[9px] text-orange-500 ml-1">✎</span>}
+                                              </button>
+                                            )}
+                                            <p className="text-[10px] text-gray-400">{p['Date Approved'] || '—'}</p>
+                                            <div className="flex items-center gap-2">
+                                              <button onClick={() => deferProject(p.Project_ID)}
+                                                className="text-[9px] text-orange-400 hover:text-orange-600 font-semibold">⏸ Defer</button>
+                                              {isManual && (
+                                                <button
+                                                  onClick={() => setManualProjects(prev => ({ ...prev, [r.animator.Employee_ID]: (prev[r.animator.Employee_ID] || []).filter(mp => mp.Project_ID !== p.Project_ID) }))}
+                                                  className="text-[9px] text-red-400 hover:text-red-600">✕ remove</button>
+                                              )}
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-100 border-t-2 border-gray-200">
+                  <td colSpan={3} className="px-4 py-3 text-sm font-bold text-gray-700 uppercase tracking-wide">Total Pending Payout</td>
+                  <td className="px-4 py-3 text-right font-mono text-gray-600 font-semibold">
+                    ₹{rows.reduce((s, r) => s + r.gross, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </td>
+                  <td />
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono font-bold text-xl text-indigo-700">
+                      ₹{rows.reduce((s, r) => s + r.net, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono font-bold text-amber-600">
+                      +₹{rows.reduce((s, r) => s + r.bonusAmt, 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        {/* Mark Paid info */}
+        <div className="mt-4 flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+          <span className="text-lg mt-0.5">💬</span>
+          <div className="text-xs text-blue-700">
+            <p className="font-bold mb-1">What happens when you click “Mark Paid”?</p>
+            <ul className="list-disc list-inside space-y-0.5 text-blue-600">
+              <li><b>Supabase DB:</b> Sets <code className="bg-blue-100 px-1 rounded">Payment_Status = Paid</code> on all their Approved projects</li>
+              <li><b>Discord:</b> Sends a payment confirmation message to their project thread</li>
+              <li><b>Tab:</b> Row moves from this table to the “🟢 Paid” section below</li>
+              <li><b>On refresh:</b> Row stays in Paid (persisted in DB)</li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Manual Add Button */}
+        <div className="mt-5 border-t border-gray-100 pt-5">
+          <div className="relative inline-block">
+            <button
+              onClick={() => setShowAddMenu(!showAddMenu)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-sm font-semibold transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Animator Manually
+            </button>
+
+            {showAddMenu && (
+              <div className="absolute left-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-lg z-10 max-h-60 overflow-y-auto">
+                {availableToAdd.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-gray-500">All animators already in list.</p>
+                ) : (
+                  availableToAdd.map(a => (
+                    <button
+                      key={a.Employee_ID}
+                      onClick={() => addManualAnimator(a.Employee_ID)}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 border-b border-gray-50 last:border-0 text-gray-700">
+                      {a.Name} <span className="text-xs text-gray-400">({a.Employee_ID})</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        </>)}
+      </div>
+
+      {/* ── Paid History ─────────────────────────────── */}
+      {paidRows.length > 0 && (() => {
+        const escCsv = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
+
+        // Helper: convert "04 Jun 2026" or ISO "2026-06-04" → "2026-06"
+        const toMonthKey = (dateStr: string): string => {
+          if (!dateStr) return ''
+          // ISO format: 2026-06-04T... or 2026-06-04
+          if (/^\d{4}-\d{2}/.test(dateStr)) return dateStr.substring(0, 7)
+          // "DD MMM YYYY" format from formatDate()
+          const MONTHS: Record<string, string> = {
+            jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+            jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'
+          }
+          const parts = dateStr.trim().split(/\s+/)
+          if (parts.length >= 3) {
+            const mon = MONTHS[parts[1].toLowerCase().substring(0,3)] || '01'
+            const yr = parts[2].length === 2 ? '20' + parts[2] : parts[2]
+            return `${yr}-${mon}`
+          }
+          return ''
+        }
+
+        // Filter paidRows by paidSelectedMonth using payments.paid_date
+        const paidMonthStr = paidSelectedMonth // e.g. "2026-06"
+        const paymentsByEmpForMonth: Record<string, Payment> = {}
+        payments
+          .filter(p => p.Payment_Status === 'Paid' && toMonthKey(p.paid_date || p.Timestamp || '') === paidMonthStr)
+          .sort((a, b) => new Date(b.Timestamp || b.paid_date || '').getTime() - new Date(a.Timestamp || a.paid_date || '').getTime())
+          .forEach(p => {
+            // payments table uses 'Employee ID' (with space), animators use Employee_ID (underscore)
+            const empId = p['Employee ID'] || (p as any).Employee_ID || ''
+            if (empId && !paymentsByEmpForMonth[empId]) {
+              paymentsByEmpForMonth[empId] = p
+            }
+          })
+
+        const filteredPaidRows = paidRows.filter(a => paymentsByEmpForMonth[a.Employee_ID])
+
+        // Generate available months from payments (using toMonthKey)
+        const availableMonths = [...new Set(
+          payments
+            .filter(p => p.Payment_Status === 'Paid' && (p.paid_date || p.Timestamp))
+            .map(p => toMonthKey(p.paid_date || p.Timestamp || ''))
+            .filter(Boolean)
+        )].sort((a, b) => b.localeCompare(a)) // newest first
+
+        const downloadCsv = () => {
+          const headers = ['Month', 'Name', 'Employee ID', 'PAN Number', 'Gross (₹)', 'TDS %', 'TDS Amount (₹)', 'Bonus (₹)', 'Others (₹)', 'Net Payment (₹)']
+          const csvRows: string[] = []
+          filteredPaidRows.forEach(a => {
+            const payInfo = paymentsByEmpForMonth[a.Employee_ID] || latestPaymentByEmpId[a.Employee_ID]
+            const storedTds = payInfo?.tds_percent || 0
+            const bonus = payInfo?.bonus || 0
+            const others = payInfo?.others_amount || 0
+            const net = payInfo?.net_paid || paidNets[a.Employee_ID] || 0
+            const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+            const tdsAmt = gross - (net - bonus - others)
+            csvRows.push([
+              escCsv(paidMonthStr),
+              escCsv(payInfo?.['Account Holder Name'] || a.Name),
+              escCsv(a.Employee_ID),
+              escCsv(payInfo?.['PAN Number'] || ''),
+              escCsv(Math.round(gross)),
+              escCsv(storedTds),
+              escCsv(Math.round(tdsAmt)),
+              escCsv(bonus),
+              escCsv(others),
+              escCsv(Math.round(net)),
+            ].join(','))
+          })
+          const csv = [headers.map(h => escCsv(h)).join(','), ...csvRows].join('\n')
+          const blob = new Blob([csv], { type: 'text/csv' })
+          const url = URL.createObjectURL(blob)
+          const el = document.createElement('a')
+          el.href = url
+          el.download = `payout_paid_${paidMonthStr}.csv`
+          el.click()
+          URL.revokeObjectURL(url)
+        }
+
+        const displayMonth = (() => {
+          const [y, m] = paidMonthStr.split('-').map(Number)
+          return new Date(y, m - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+        })()
+
+        return (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-base font-bold text-gray-800">🟢 Paid — {displayMonth}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{filteredPaidRows.length} animator(s) paid this month</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Month toggle */}
+                <select
+                  value={paidSelectedMonth}
+                  onChange={e => setPaidSelectedMonth(e.target.value)}
+                  className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                >
+                  {availableMonths.length === 0 && <option value={paidMonthStr}>{displayMonth}</option>}
+                  {availableMonths.map(m => {
+                    const [y, mo] = m.split('-').map(Number)
+                    const label = new Date(y, mo - 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+                    return <option key={m} value={m}>{label}</option>
+                  })}
+                </select>
+                <button onClick={downloadCsv}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download CSV
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-emerald-50 border-y border-emerald-100 text-emerald-700 text-xs uppercase font-semibold">
+                    <th className="px-4 py-3 text-left">Animator</th>
+                    <th className="px-4 py-3 text-right">Gross (₹)</th>
+                    <th className="px-4 py-3 text-right">TDS / Bonus</th>
+                    <th className="px-4 py-3 text-right">Net Paid (₹)</th>
+                    <th className="px-4 py-3 text-center">Projects</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {filteredPaidRows.map((a, i) => {
+                    const payInfo = paymentsByEmpForMonth[a.Employee_ID] || latestPaymentByEmpId[a.Employee_ID]
+                    const storedTds = payInfo?.tds_percent || 0
+                    const bonus = payInfo?.bonus || 0
+                    const others = payInfo?.others_amount || 0
+                    const net = payInfo?.net_paid || paidNets[a.Employee_ID] || 0
+                    const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+                    const tdsAmt = gross - (net - bonus - others)
+                    const isExpanded = expandedAnimators.has(a.Employee_ID + '_paid')
+                    // Show projects approved within 2 months before the payment month
+                    // e.g. June payment → show projects approved May or June (not Feb/March)
+                    const [paidYr, paidMon] = paidMonthStr.split('-').map(Number)
+                    const paidMonthDate = new Date(paidYr, paidMon - 1, 1) // 1st of payment month
+                    const cutoffDate = new Date(paidYr, paidMon - 3, 1)    // 2 months before payment month
+
+                    const animProjects = projects.filter(p => {
+                      const matchesAnimator = p.Employee_ID === a.Employee_ID ||
+                        (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes((a.Name || '').toLowerCase())
+                      if (!matchesAnimator) return false
+                      // Check Date Approved is within range (>= 2 months before payment, <= payment month)
+                      const approvedStr = p['Date Approved'] || p.Approved_Date || ''
+                      const approvedDate = approvedStr ? parseDate(approvedStr) : null
+                      const withinRange = approvedDate
+                        ? (approvedDate >= cutoffDate && approvedDate <= new Date(paidYr, paidMon, 0)) // up to last day of payment month
+                        : true // no date → show anyway
+                      return p.Payment_Status === 'Paid' && withinRange
+                    })
+                    return (
+                      <Fragment key={a.Employee_ID}>
+                        <tr className={`border-b border-gray-50 hover:bg-emerald-50/30 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/20'}`}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  const key = a.Employee_ID + '_paid'
+                                  setExpandedAnimators(prev => {
+                                    const next = new Set(prev)
+                                    if (next.has(key)) next.delete(key); else next.add(key)
+                                    return next
+                                  })
+                                }}
+                                className="text-gray-400 hover:text-emerald-600 transition-colors"
+                              >
+                                <svg className={`w-4 h-4 transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+                                style={{ background: `hsl(${(a.Name || '').charCodeAt(0) * 37 % 360}, 65%, 55%)` }}>
+                                {(a.Name || '?')[0].toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-gray-800 text-xs">{payInfo?.['Account Holder Name'] || a.Name}</p>
+                                <p className="text-[10px] text-gray-400 font-mono">{a.Employee_ID}</p>
+                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">✓ PAID</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-xs text-gray-600">₹{Math.round(gross).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono text-xs">
+                            <p className="text-red-500">−₹{Math.round(tdsAmt).toLocaleString()} <span className="text-[9px] text-red-300">({storedTds}%)</span></p>
+                            {bonus > 0 && <p className="text-amber-500 mt-0.5">+₹{Math.round(bonus).toLocaleString()} <span className="text-[9px] text-amber-300">(Bonus)</span></p>}
+                            {others > 0 && <p className="text-blue-500 mt-0.5">+₹{Math.round(others).toLocaleString()} <span className="text-[9px] text-blue-300">(Others)</span></p>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className="font-mono font-bold text-emerald-600 text-sm">₹{Math.round(net).toLocaleString()}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{animProjects.length} project(s)</span>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-emerald-50/30">
+                            <td colSpan={5} className="px-8 py-3">
+                              <div className="rounded-xl border border-emerald-100 overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="bg-emerald-50 text-emerald-700 uppercase font-semibold">
+                                      <th className="px-3 py-2 text-left">Project ID</th>
+                                      <th className="px-3 py-2 text-left">Title</th>
+                                      <th className="px-3 py-2 text-right">Duration</th>
+                                      <th className="px-3 py-2 text-right">Date Approved</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {animProjects.length === 0 ? (
+                                      <tr><td colSpan={4} className="px-3 py-3 text-center text-gray-400">No projects found</td></tr>
+                                    ) : animProjects.map((p, pi) => (
+                                      <tr key={p.Project_ID} className={`border-t border-emerald-50 ${pi % 2 === 0 ? 'bg-white' : 'bg-emerald-50/20'}`}>
+                                        <td className="px-3 py-2 font-mono text-gray-500">{p.Project_ID}</td>
+                                        <td className="px-3 py-2 text-gray-700 max-w-[200px] truncate">{p.Project_title || '—'}</td>
+                                        <td className="px-3 py-2 text-right font-mono text-gray-600">{formatDurationDisplay(p.Duration, p.Project_ID)}</td>
+                                        <td className="px-3 py-2 text-right text-gray-500">{p['Date Approved'] || '—'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-emerald-50">
+                    <td className="px-4 py-3 text-xs font-bold text-emerald-800 uppercase">Total</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-800 text-xs">
+                      ₹{Math.round(paidRows.reduce((s, a) => {
+                        const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                        const storedTds = payInfo?.tds_percent || 0
+                        const bonus = payInfo?.bonus || 0
+                        const others = (payInfo as any)?.others_amount || 0
+                        const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                        const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+                        return s + gross;
+                      }, 0)).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600 text-xs">
+                      −₹{Math.round(paidRows.reduce((s, a) => {
+                        const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                        const storedTds = payInfo?.tds_percent || 0
+                        const bonus = payInfo?.bonus || 0
+                        const others = (payInfo as any)?.others_amount || 0
+                        const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                        const gross = net - bonus - others > 0 ? (net - bonus - others) / (1 - storedTds / 100) : 0
+                        return s + gross - (net - bonus - others);
+                      }, 0)).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-800">
+                      ₹{Math.round(paidRows.reduce((s, a) => {
+                        const payInfo = latestPaymentByEmpId[a.Employee_ID]
+                        const net = paidNets[a.Employee_ID] !== undefined ? paidNets[a.Employee_ID] : (payInfo?.net_paid || 0)
+                        return s + net;
+                      }, 0)).toLocaleString()}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+// ─── DuplicatesTab ───────────────────────────────────────────────────────────
 
 function DuplicatesTab({ projects }: { projects: Project[] }) {
   const { addToast } = useToast()
@@ -7688,10 +10714,10 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                   
                   if (isLead) projEarn += 1000;
                   if (isLighting) {
-                     projEarn += projSec * (2000 / 60);
+                     projEarn += projSec * (1500 / 60);
                   } else if (isAnim) {
                      const isA = (eid || '').toUpperCase().includes('A');
-                     const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000);
+                     const rate = isA ? 2500 : (p.Lighting_Artist ? 2500 : 4000);
                      projEarn += projSec * (rate / 60);
                   }
                   projEarn = Math.round(projEarn / 100) * 100;
@@ -7768,26 +10794,7 @@ function TiersTab({ animators, projects, onRefresh }: { animators: Animator[]; p
                         else if (p.Status === 'Review') badgeColor = 'bg-amber-100 text-amber-700 border-amber-200'
                         else if (isProgress) badgeColor = 'bg-blue-100 text-blue-700 border-blue-200'
                         
-                        // Calculate specific project earnings for this animator
-                        let projEarn = 0;
-                        if (isApproved) {
-                           const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-                           const animName = selectedAnimatorForModal.Name;
-                           const eid = selectedAnimatorForModal.Employee_ID;
-                           const isLighting = p.Lighting_Artist && p.Lighting_Artist.toLowerCase() === animName.toLowerCase();
-                           const isAnim = p.Employee_ID === eid || (animName && (String(p.Animator || '')).split(',').map(s => s.trim().toLowerCase()).includes(animName.toLowerCase()));
-                           const isLead = p.Lead && p.Lead.toLowerCase() === animName.toLowerCase();
-                           
-                           if (isLead) projEarn += 1000;
-                           if (isLighting) {
-                              projEarn += projSec * (2000 / 60);
-                           } else if (isAnim) {
-                              const isA = (eid || '').toUpperCase().includes('A');
-                     const rate = isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000);
-                     projEarn += projSec * (rate / 60);
-                           }
-                           projEarn = Math.round(projEarn / 100) * 100;
-                        }
+                        let projEarn = isApproved ? getAnimatorProjectPayout(p, selectedAnimatorForModal.Employee_ID, selectedAnimatorForModal.Name) : 0;
 
                         return (
                           <tr key={i} className="hover:bg-gray-50 transition-colors">
@@ -7841,35 +10848,12 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
   // Calculate earnings
   const totalEarned = myProjects.reduce((sum, p) => {
     if (!['Approved', 'Paid', 'Closed'].includes(p.Status)) return sum;
-    let earn = 0;
-    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
-    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
-    
-    if (isLead) earn += 1000;
-    if (isOwn) {
-      const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
-      const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 2000 : (isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000));
-      const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-      earn += projSec * (rate / 60);
-    }
-    return sum + (Math.round(earn / 100) * 100);
+    return sum + getAnimatorProjectPayout(p, user.employee_id || '', user.full_name || '');
   }, 0);
 
   const totalPaid = myProjects.reduce((sum, p) => {
     if (p.Payment_Status !== 'Paid') return sum;
-    let earn = 0;
-    const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
-    const isOwn = (String(p.Animator || '')).toLowerCase().includes(leadName.toLowerCase()) || p.Employee_ID === user.employee_id;
-    if (isLead) earn += 1000;
-    if (isOwn) {
-      const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
-      const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 2000 : (isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000));
-      const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-      earn += projSec * (rate / 60);
-    }
-    return sum + (Math.round(earn / 100) * 100);
+    return sum + getAnimatorProjectPayout(p, user.employee_id || '', user.full_name || '');
   }, 0);
 
   return (
@@ -7926,18 +10910,7 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
                 const isLead = (String(p.Lead || '')).toLowerCase() === leadName.toLowerCase();
                 const isApproved = ['Approved', 'Paid', 'Closed'].includes(p.Status);
                 
-                let earn = 0;
-                if (isApproved) {
-                  if (isLead) earn += 1000;
-                  if (isOwn) {
-                    const isLighting = (String(p.Lighting_Artist || '')).toLowerCase() === leadName.toLowerCase();
-                    const isA = (user.employee_id || '').toUpperCase().includes('A');
-                    const rate = isLighting ? 2000 : (isA ? 3000 : (p.Lighting_Artist ? 3000 : 5000));
-                    const projSec = parseDurationSec(p.Duration || '', p.Project_ID);
-                    earn += projSec * (rate / 60);
-                  }
-                  earn = Math.round(earn / 100) * 100;
-                }
+                let earn = isApproved ? getAnimatorProjectPayout(p, user.employee_id || '', user.full_name || '') : 0;
 
                 let roleBadge = [];
                 if (isOwn) roleBadge.push(<span key="anim" className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase mr-1">Animator</span>);
@@ -7965,6 +10938,270 @@ function LeadPaymentsTab({ projects, user }: { projects: Project[]; user: Dashbo
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  )
+}
+
+
+function InfiReviewTab({ animators, projects }: { animators: Animator[], projects: Project[] }) {
+  const { addToast } = useToast()
+  const [selectedAnimator, setSelectedAnimator] = useState<string | null>(null)
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [messages, setMessages] = useState<any[]>([])
+  const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [chatInput, setChatInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [unreadThreads, setUnreadThreads] = useState<Record<string, boolean>>({})
+
+  // Identify active INFI projects (not Closed or Paid)
+  const activeInfiProjects = projects.filter(p => p.Project_ID.includes('INFI') && p.Status !== 'Closed' && p.Status !== 'Paid')
+  
+  // Find animators working on these projects
+  const infiAnimatorsMap = new Map<string, Animator>()
+  activeInfiProjects.forEach(p => {
+    if (p.Employee_ID) {
+      const anim = animators.find(a => a.Employee_ID === p.Employee_ID)
+      if (anim) infiAnimatorsMap.set(anim.Employee_ID, anim)
+    }
+  })
+  const infiAnimators = Array.from(infiAnimatorsMap.values())
+  
+  // Projects for the selected animator
+  const selectedAnimatorProjects = selectedAnimator 
+    ? activeInfiProjects.filter(p => p.Employee_ID === selectedAnimator)
+    : []
+
+  // Fetch unread status for active threads on mount
+  useEffect(() => {
+    const threadIds = activeInfiProjects.map(p => p.Thread_ID).filter(Boolean);
+    if (threadIds.length === 0) return;
+
+    fetch('/api/discord/threads-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threadIds })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.data) {
+          const newUnread: Record<string, boolean> = {};
+          Object.keys(data.data).forEach(tid => {
+            const remoteLastMsgId = data.data[tid];
+            const localLastMsgId = localStorage.getItem(`read_thread_${tid}`);
+            if (remoteLastMsgId && remoteLastMsgId !== localLastMsgId) {
+              newUnread[tid] = true;
+            }
+          });
+          setUnreadThreads(newUnread);
+        }
+      })
+      .catch(console.error);
+  }, []); // Run once on mount
+
+  useEffect(() => {
+    if (selectedProject?.Thread_ID) {
+      setLoadingMsgs(true)
+      setErrorMsg(null)
+      fetch(`/api/discord/messages?threadId=${selectedProject.Thread_ID}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            // Discord returns messages in reverse chronological order
+            setMessages(data.data.reverse())
+            if (data.data.length > 0) {
+              const newestId = data.data[data.data.length - 1].id;
+              localStorage.setItem(`read_thread_${selectedProject.Thread_ID}`, newestId);
+              setUnreadThreads(prev => ({ ...prev, [selectedProject.Thread_ID as string]: false }));
+            }
+          } else {
+            setErrorMsg(data.error || 'Unknown error occurred')
+            addToast(`Error fetching messages: ${data.error}`, 'error')
+          }
+          setLoadingMsgs(false)
+        })
+        .catch(err => {
+          setErrorMsg('Failed to fetch messages. Check network or console.')
+          addToast(`Failed to load messages`, 'error')
+          setLoadingMsgs(false)
+        })
+    } else {
+      setMessages([])
+      if (selectedProject && !selectedProject.Thread_ID) {
+        setErrorMsg('No Thread ID is attached to this project.')
+      } else {
+        setErrorMsg(null)
+      }
+    }
+  }, [selectedProject])
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !selectedProject?.Thread_ID) return
+    setSending(true)
+    try {
+      const res = await fetch('/api/discord/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: selectedProject.Thread_ID, message: chatInput })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setChatInput('')
+        addToast('Message sent to Discord!', 'success')
+        // Optimistically add message
+        setMessages([...messages, { id: Date.now(), content: chatInput, author: { username: 'Manager (You)', bot: true } }])
+      } else {
+        addToast(`Error: ${data.error}`, 'error')
+      }
+    } catch (err) {
+      addToast('Failed to send message', 'error')
+    }
+    setSending(false)
+  }
+
+  // Helpers to resolve Discord IDs/Usernames to Real Names
+  const resolveUserName = (discordId: string, discordUsername: string) => {
+    if (!discordId && !discordUsername) return 'Unknown'
+    const anim = animators.find(a => 
+      (discordId && a.Discord_ID === discordId) || 
+      (discordUsername && a.Discord_Username && a.Discord_Username.toLowerCase() === discordUsername.toLowerCase())
+    )
+    return anim ? anim.Name : discordUsername
+  }
+
+  const parseMentions = (content: string) => {
+    if (!content) return ''
+    return content.replace(/<@!?(\d+)>/g, (match, id) => {
+      const anim = animators.find(a => a.Discord_ID === id)
+      return anim ? `@${anim.Name}` : match
+    })
+  }
+
+  // Helper to check if a message is a submission
+  const isSubmission = (msg: any) => {
+    if (msg.attachments && msg.attachments.some((a: any) => a.content_type?.includes('video') || a.filename?.endsWith('.mp4'))) return true;
+    if (msg.content?.includes('.mp4') || msg.content?.includes('/draft') || msg.content?.includes('/submit')) return true;
+    return false;
+  }
+
+  return (
+    <div className="p-6 animate-fade-in-up max-w-7xl mx-auto flex gap-6 h-[80vh]">
+      {/* Pane 1: Animators */}
+      <div className="w-1/4 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <h2 className="font-bold text-gray-800">INFI Animators</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {infiAnimators.length === 0 && <p className="text-sm text-gray-400 p-4 text-center">No active INFI projects.</p>}
+          {infiAnimators.map(a => {
+            const hasUnread = activeInfiProjects.some(p => p.Employee_ID === a.Employee_ID && p.Thread_ID && unreadThreads[p.Thread_ID]);
+            return (
+            <button
+              key={a.Employee_ID}
+              onClick={() => { setSelectedAnimator(a.Employee_ID); setSelectedProject(null); }}
+              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedAnimator === a.Employee_ID ? 'bg-indigo-50 border-indigo-200 border text-indigo-700 font-bold' : hasUnread ? 'bg-red-50 border-red-200 border hover:bg-red-100' : 'hover:bg-gray-50 border border-transparent'} flex justify-between items-center`}
+            >
+              <span className={hasUnread ? 'text-red-700 font-bold' : ''}>{a.Name}</span>
+              {hasUnread && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>}
+            </button>
+          )})}
+        </div>
+      </div>
+
+      {/* Pane 2: Projects */}
+      <div className="w-1/4 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
+          <h2 className="font-bold text-gray-800">Projects</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {!selectedAnimator && <p className="text-sm text-gray-400 p-4 text-center">Select an animator first.</p>}
+          {selectedAnimator && selectedAnimatorProjects.map(p => {
+            const isUnread = p.Thread_ID && unreadThreads[p.Thread_ID];
+            return (
+            <button
+              key={p.Project_ID}
+              onClick={() => setSelectedProject(p)}
+              className={`w-full text-left p-3 rounded-xl mb-2 transition-colors ${selectedProject?.Project_ID === p.Project_ID ? 'bg-purple-50 border-purple-200 border text-purple-700 font-bold' : isUnread ? 'bg-red-50 border-red-200 border hover:bg-red-100' : 'hover:bg-gray-50 border border-transparent'} flex justify-between items-center`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm ${isUnread ? 'text-red-700 font-bold' : ''}`}>{p.Project_ID}</div>
+                <div className="text-xs text-gray-500 truncate">{p.Project_title}</div>
+              </div>
+              {isUnread && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ml-2 flex-shrink-0"></span>}
+            </button>
+          )})}
+        </div>
+      </div>
+
+      {/* Pane 3: Chat / Review */}
+      <div className="w-2/4 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+          <h2 className="font-bold text-gray-800">Thread Review {selectedProject ? `(${selectedProject.Project_ID})` : ''}</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50 flex flex-col gap-4">
+          {!selectedProject && <p className="text-sm text-gray-400 text-center m-auto">Select a project to view thread.</p>}
+          {loadingMsgs && <p className="text-sm text-gray-400 text-center m-auto animate-pulse">Loading messages...</p>}
+          
+          {errorMsg && !loadingMsgs && (
+            <div className="m-auto text-center max-w-sm">
+              <div className="text-red-500 text-4xl mb-2">⚠️</div>
+              <p className="text-sm text-red-600 font-semibold">{errorMsg}</p>
+              <p className="text-xs text-gray-500 mt-2">If you see "Discord bot token is missing", ensure DISCORD_BOT_TOKEN is set in your Vercel Environment Variables.</p>
+            </div>
+          )}
+
+          {!errorMsg && !loadingMsgs && messages.length === 0 && selectedProject && selectedProject.Thread_ID && (
+            <p className="text-sm text-gray-400 text-center m-auto">No messages in this thread yet.</p>
+          )}
+
+          {messages.map((msg: any) => {
+            const isSub = isSubmission(msg);
+            const isMe = msg.author.bot && msg.author.username.includes('Manager'); // Hacky check for optimistc ui
+            const realName = resolveUserName(msg.author.id, msg.author.username);
+            return (
+              <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`text-xs text-gray-400 mb-1 ${isMe ? 'mr-1' : 'ml-1'}`}>
+                  {realName} {isSub && '🎥 Submission'}
+                </div>
+                <div className={`p-3 rounded-2xl max-w-[85%] ${isSub ? 'bg-amber-50 border border-amber-200 text-amber-900' : isMe ? 'bg-indigo-500 text-white' : 'bg-white border border-gray-200 text-gray-800'}`}>
+                  {msg.content && <p className="whitespace-pre-wrap text-sm">{parseMentions(msg.content)}</p>}
+                  
+                  {/* Render video attachments if any */}
+                  {msg.attachments?.map((att: any) => (
+                    att.content_type?.includes('video') || att.filename?.endsWith('.mp4') ? (
+                      <video key={att.id} src={att.url} controls className="mt-2 rounded-lg w-full max-h-64 bg-black/5" />
+                    ) : (
+                      <a key={att.id} href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline mt-1 block">
+                        📎 {att.filename}
+                      </a>
+                    )
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        
+        {selectedProject && (
+          <div className="p-3 border-t border-gray-100 bg-white flex gap-2">
+            <input 
+              type="text" 
+              placeholder="Type anonymous reply..." 
+              className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+            />
+            <button 
+              onClick={handleSendMessage}
+              disabled={sending || !chatInput.trim()}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm font-bold shadow-sm"
+            >
+              {sending ? '...' : 'Send'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -7999,7 +11236,11 @@ export default function ManagerDashboard() {
   useEffect(() => {
     const stored = localStorage.getItem('AniBlend_user')
     if (!stored) { router.push('/'); return }
-    setUser(JSON.parse(stored))
+    const parsedUser = JSON.parse(stored)
+    setUser(parsedUser)
+    if (parsedUser.role === 'reviewer') {
+      setActiveTab('infi')
+    }
   }, [router])
 
   const fetchData = useCallback(async () => {
@@ -8049,55 +11290,76 @@ export default function ManagerDashboard() {
   const filteredAnimators = hasFullAccess ? animators : animators.filter(a => leadAnimatorEids.has(a.Employee_ID))
   // managerOnly:true = show ONLY to Head (manager role)
   // leadOnly:true = show ONLY to Lead (head role)
+  const isReviewer = user.role === 'reviewer';
   const TABS = ALL_TABS.filter(t => {
+    if (isReviewer) return t.id === 'infi';
     if (t.managerOnly && !isHead) return false;
     if (t.leadOnly && isHead) return false;
     return true;
   })
   const SidebarContent = () => (
     <>
-      <div className="p-5 border-b border-gray-100">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
+      {/* Sidebar Header with AniBlend Logo */}
+      <div style={{ background: '#2d3038', padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 52, height: 52, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <img
               src="/logo.png"
-              alt="Logo"
-              className="w-full h-full object-contain drop-shadow-md"
+              alt="AniBlend Studio"
+              style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'brightness(1.05)' }}
               onError={(e) => {
-                e.currentTarget.src = 'https://ui-avatars.com/api/?name=AniBlend&background=667eea&color=fff&rounded=true';
+                e.currentTarget.src = 'https://ui-avatars.com/api/?name=AB&background=2d3038&color=fff&rounded=true';
               }}
             />
           </div>
           <div>
-            <p className="font-bold text-gray-800 text-sm">AniBlend Dashboard</p>
-            <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
+            <p style={{ fontWeight: 800, color: '#ffffff', fontSize: 15, lineHeight: 1.2, letterSpacing: '-0.3px' }}>AniBlend</p>
+            <p style={{ fontWeight: 500, color: '#9ca3af', fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 }}>Studio</p>
           </div>
+        </div>
+        <div style={{ marginTop: 12, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.07)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 10 }}>{isHead ? '👑' : '🔧'}</span>
+          <span style={{ fontSize: 11, color: isHead ? '#c084fc' : '#94a3b8', fontWeight: 600 }}>{isHead ? 'Head Access' : 'Manager'}</span>
         </div>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+      <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto', background: '#2d3038' }}>
         {TABS.map(tab => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSidebarOpen(false) }}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-            style={{ backgroundColor: activeTab === tab.id ? (darkMode ? '#312e81' : '#f0f0ff') : 'transparent', color: activeTab === tab.id ? (darkMode ? '#a5b4fc' : '#667eea') : (darkMode ? '#94a3b8' : '#64748b') }}>
-            <span>{tab.icon}</span>
-            {tab.label}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 12px', borderRadius: 10, fontSize: 13, fontWeight: 500,
+              transition: 'all 0.15s', border: 'none', cursor: 'pointer', marginBottom: 2,
+              backgroundColor: activeTab === tab.id ? 'rgba(255,255,255,0.13)' : 'transparent',
+              color: activeTab === tab.id ? '#ffffff' : '#9ca3af',
+              boxShadow: activeTab === tab.id ? 'inset 0 0 0 1px rgba(255,255,255,0.1)' : 'none'
+            }}
+            onMouseEnter={e => { if (activeTab !== tab.id) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#e5e7eb'; }}
+            onMouseLeave={e => { if (activeTab !== tab.id) { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af'; } }}>
+            <span style={{ fontSize: 16 }}>{tab.icon}</span>
+            <span>{tab.label}</span>
           </button>
         ))}
       </nav>
 
-      <div className="p-4 border-t border-gray-100 flex-shrink-0">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-            style={{ background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
+      <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.08)', flexShrink: 0, background: '#2d3038' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff',
+            background: 'linear-gradient(135deg, #667eea, #764ba2)', flexShrink: 0
+          }}>
             {(user.full_name || user.email)[0].toUpperCase()}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-800 truncate">{user.full_name || user.email}</p>
-            <p className="text-xs" style={{ color: isHead ? '#7e22ce' : '#94a3b8' }}>{isHead ? '👑 Head' : 'Manager'}</p>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: '#f3f4f6', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.full_name || user.email}</p>
+            <p style={{ fontSize: 11, color: isHead ? '#c084fc' : '#6b7280' }}>{isHead ? '👑 Head' : 'Manager'}</p>
           </div>
         </div>
-        <button onClick={handleLogout} className="w-full py-2 rounded-lg text-xs font-medium text-red-500 border border-red-200 hover:bg-red-50">Sign out</button>
+        <button onClick={handleLogout}
+          style={{ width: '100%', padding: '7px 0', borderRadius: 8, fontSize: 12, fontWeight: 600, color: '#f87171', border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', cursor: 'pointer' }}>
+          Sign out
+        </button>
       </div>
     </>
   )
@@ -8105,7 +11367,7 @@ export default function ManagerDashboard() {
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: darkMode ? '#0f172a' : '#f8fafc' }}>
       {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex-col bg-white border-r border-gray-100 shadow-sm hidden lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex-col hidden lg:flex" style={{ background: '#2d3038', boxShadow: '4px 0 24px rgba(0,0,0,0.25)' }}>
         <SidebarContent />
       </aside>
 
@@ -8113,11 +11375,14 @@ export default function ManagerDashboard() {
       {sidebarOpen && <div className="fixed inset-0 z-30 bg-black bg-opacity-40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
       {/* Mobile Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex flex-col bg-white border-r border-gray-100 shadow-lg lg:hidden transition-transform"
-        style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <span className="font-bold text-gray-800">AniBlend Dashboard</span>
-          <button onClick={() => setSidebarOpen(false)} className="text-gray-400 text-xl">✕</button>
+      <aside className="fixed inset-y-0 left-0 z-40 w-64 flex flex-col lg:hidden transition-transform"
+        style={{ transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)', background: '#2d3038', boxShadow: '4px 0 24px rgba(0,0,0,0.35)' }}>
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/logo.png" alt="AniBlend" style={{ width: 36, height: 36, objectFit: 'contain' }} />
+            <span style={{ fontWeight: 800, color: '#fff', fontSize: 15 }}>AniBlend Studio</span>
+          </div>
+          <button onClick={() => setSidebarOpen(false)} style={{ color: '#9ca3af', fontSize: 20, background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>
         <SidebarContent />
       </aside>
@@ -8134,7 +11399,6 @@ export default function ManagerDashboard() {
             </button>
             <div>
               <h1 className="font-bold text-gray-800">{TABS.find(t => t.id === activeTab)?.label}</h1>
-              <p className="text-xs text-gray-400">{formatDate()}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -8181,7 +11445,11 @@ export default function ManagerDashboard() {
               {activeTab === 'lead_payments' && <LeadPaymentsTab projects={projects} user={user} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <FinanceWallet key="payout-wallet" initialView="payouts" onRefresh={fetchData} />}
-              {activeTab === 'profit' && <FinanceWallet key="profit-wallet" initialView="profit" onRefresh={fetchData} />}
+              {activeTab === 'wallet' && <FinanceWallet key="profit-wallet" initialView="profit" onRefresh={fetchData} />}
+              {activeTab === 'previous_payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
+              {activeTab === 'profit' && <ErrorBoundary><ProfitTrackerTab projects={projects} animators={animators} onRefresh={fetchData} /></ErrorBoundary>}
+              {activeTab === 'cashouts' && <ErrorBoundary><CashoutReportsTab projects={projects} /></ErrorBoundary>}
+              {activeTab === 'infi' && <InfiReviewTab animators={animators} projects={projects} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
               {activeTab === 'budget' && <BudgetTrackerTab projects={filteredProjects} onRefresh={fetchData} />}
@@ -8193,3 +11461,5 @@ export default function ManagerDashboard() {
     </div>
   )
 }
+
+

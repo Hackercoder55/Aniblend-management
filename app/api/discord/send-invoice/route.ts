@@ -21,10 +21,14 @@ export async function DELETE(request: Request) {
 }
 
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// Create client only inside the handler or check for env vars so build doesn't fail
+const createAdminClient = () => {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co',
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder'
+  );
+};
+
 
 export async function POST(request: Request) {
   try {
@@ -59,6 +63,7 @@ export async function POST(request: Request) {
     let threadId: string | null = null;
 
     if (employeeId) {
+      const supabaseAdmin = createAdminClient()
       const { data: animRow } = await supabaseAdmin
         .from('animators')
         .select('invoice_thread_id')
@@ -145,6 +150,7 @@ export async function POST(request: Request) {
 
     // ─── Step 5: Save thread_id to animators table ──────────────────────────
     if (employeeId && threadId) {
+      const supabaseAdmin = createAdminClient()
       await supabaseAdmin
         .from('animators')
         .update({ invoice_thread_id: threadId })
@@ -244,6 +250,7 @@ export async function POST(request: Request) {
 
     // ─── Step 8: Update invoice status to Sent ───────────────────────────────
     if (invoiceId) {
+      const supabaseAdmin = createAdminClient()
       await supabaseAdmin
         .from('invoices')
         .update({
