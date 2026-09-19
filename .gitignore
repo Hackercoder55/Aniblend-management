@@ -42,3 +42,8 @@ next-env.d.ts
 
 # generated helper scripts
 create_user.js
+# Local browser test screenshots
+/tests/artifacts/
+
+# Private local financial data exports (never commit)
+/.local-backups/

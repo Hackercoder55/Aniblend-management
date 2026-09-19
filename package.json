@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:finance": "node --test tests/finance.test.cjs",
+    "test:finance:db": "node tests/finance-sql.test.cjs",
+    "test:finance:ui": "node tests/finance-ui.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
@@ -20,6 +23,7 @@
     "recharts": "^3.7.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
+import { createSession, SESSION_COOKIE } from '@/lib/finance-session';
 
 export async function POST(request: Request) {
     try {
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
             .eq('id', user.id);
 
         // Return sanitized user object (hide password and sensitive fields if necessary)
-        return NextResponse.json({
+        const response = NextResponse.json({
             user: {
                 id: user.id,
                 email: user.email,
@@ -63,6 +64,8 @@ export async function POST(request: Request) {
                 access_level: user.access_level || null,
             }
         });
+        response.cookies.set(SESSION_COOKIE, createSession(String(user.id)), { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: 12 * 60 * 60 });
+        return response;
 
     } catch (error) {
         console.error('Login error:', error);
