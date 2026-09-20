@@ -11,7 +11,7 @@ const mod = new Module(filename); mod._compile(compiled, filename);
 const f = mod.exports;
 const artists = [{ Employee_ID: 'A01', Name: 'Asha' }, { Employee_ID: 'L01', Name: 'Lalit' }, { Employee_ID: 'M01', Name: 'Meera' }];
 const project = { Project_ID: '001_90_demo', Project_title: 'Sample', Duration: '1 min 30 sec', Status: 'Approved', Employee_ID: 'A01', Animator: 'Asha', Lighting_Artist: 'Lalit', Lead: 'Meera', 'Date Approved': '2026-01-15' };
-function fixture() { const w = f.emptyWallet(); w.settings.clientRate = 10000; f.syncProjects(w, [project], artists); return w; }
+function fixture() { const w = f.emptyWallet(); w.settings.clientRate = 10000; w.settings.animationRate = 3000; w.settings.lightingRate = 2000; f.syncProjects(w, [project], artists); return w; }
 
 test('duration parsing handles mixed units, clocks, decimals and ID fallback', () => { assert.equal(f.duration('1 min 30 sec'), 90); assert.equal(f.duration('1:30'), 90); assert.equal(f.duration('01:02:03'), 3723); assert.equal(f.duration('1.5 min'), 90); assert.equal(f.duration('', '12_80_demo'), 80); assert.equal(f.duration('bad'), 0); });
 test('split animation, lighting and lead costs are independent', () => { const w = fixture(); assert.equal(w.projects[0].revenue, 1500000); assert.deepEqual(w.projects[0].obligations.map(o => o.gross), [450000, 300000, 100000]); });
@@ -30,3 +30,30 @@ test('invalid and negative values are rejected, valid zero is preserved', () => 
 test('prior-month bonuses carry forward and keep their original profit month after cashout', () => { const w=fixture(); w.drafts['2026-01:A01']={bonus:100,others:200,tdsPercent:0,note:'January'}; w.drafts['2026-02:A01']={bonus:50,others:0,tdsPercent:0,note:'February'}; const jan=f.summarize(w,'2026-01').profit, feb=f.summarize(w,'2026-02').profit; const s=f.settle(w,'A01',[w.projects[0].obligations[0].key],'2026-02','r','s'); assert.equal(s.net,485000); assert.equal(Object.keys(w.drafts).length,0); assert.equal(f.summarize(w,'2026-01').profit,jan); assert.equal(f.summarize(w,'2026-02').profit,feb); });
 test('standalone bonus payments persist without inventing a project', () => { const w=f.emptyWallet(); w.drafts['2026-02:A01']={bonus:100,others:50,tdsPercent:10,note:'Reward',employeeName:'Asha'}; const s=f.settle(w,'A01',[],'2026-02','r','s'); assert.equal(s.net,15000); assert.equal(s.name,'Asha'); assert.equal(w.projects.length,0); assert.equal(s.tds,0); });
 test('imported adjustments must be reviewed before payout', () => { const w=f.emptyWallet(); w.drafts['2026-02:A01']={bonus:100,others:0,tdsPercent:0,note:'Old',needsReview:true}; assert.throws(()=>f.settle(w,'A01',[],'2026-02','r','s'),/Review and save/); });
+
+test('fresh defaults match the existing payout calculator; wallets do not share mutable settings', () => {
+  const a=f.emptyWallet(), b=f.emptyWallet(); assert.deepEqual([a.settings.fullRate,a.settings.animationRate,a.settings.lightingRate],[4000,2500,1500]);
+  a.settings.clientFlatRates.hn=6600; a.settings.teamProjectRates.hn=1; assert.equal(b.settings.clientFlatRates.hn,undefined); assert.equal(b.settings.teamProjectRates.hn,3000);
+});
+test('approval cutoff includes September 5 and defers September 6; server rejects later work', () => {
+  const w=fixture(); w.projects[0].date='2025-09-05'; const later=structuredClone(w.projects[0]); later.id='later'; later.date='2025-09-06'; later.obligations= later.obligations.map(o=>({...o,key:'later-'+o.key})); w.projects.push(later);
+  assert.equal(f.pending(w,'2025-09','2025-09-05').length,3);
+  assert.throws(()=>f.settle(w,'A01',[later.obligations[0].key],'2025-09','cutoff-later','invalid','2025-09-05'),/changed or already paid/);
+  const s=f.settle(w,'A01',[w.projects[0].obligations[0].key],'2025-09','cutoff-ok','valid','2025-09-05'); assert.equal(s.cutoff,'2025-09-05'); assert.equal(f.pending(w,'2025-09','2025-09-06').length,5);
+});
+test('Indian approval dates are unambiguous and invalid dates are rejected',()=> { assert.equal(f.dateKey('05/09/2026'),'2026-09-05'); assert.equal(f.dateKey('31/02/2026'),''); });
+test('fixed client and team prices match legacy HN and MRC pricing',()=> {
+  const w=f.emptyWallet(); w.settings.clientFlatRates.hn=6600; w.settings.clientRates.mrc=7000;
+  const hn=f.snapshot({...project,Project_ID:'batch_120_extra_HN',Duration:'120 sec'},artists,w.settings);
+  assert.equal(hn.client,'hn'); assert.equal(hn.revenue,660000); assert.deepEqual(hn.obligations.map(o=>o.gross),[300000,100000]);
+  const mrc=f.snapshot({...project,Project_ID:'1_60_MRC',Duration:'60 sec'},artists,w.settings); assert.deepEqual(mrc.obligations.map(o=>o.gross),[400000,100000]);
+});
+test('paid source marks remove stale unpaid work without changing revenue or recording fake cash',()=> {
+  const w=fixture(), before=f.summarize(w,'all'); f.syncProjects(w,[{...project,Payment_Status:'Paid'}],artists);
+  assert.equal(f.pending(w,'2026-02').length,0); assert.equal(f.summarize(w,'all').revenue,before.revenue); assert.equal(w.settlements.length,0); assert.equal(w.projects[0].legacy,true);
+});
+test('remaining team dues clear per artist; cashout does not reduce earned revenue or profit',()=> {
+  const w=fixture(); w.drafts['2026-02:A01']={bonus:500,others:100,tdsPercent:0,note:''}; const before=f.summarize(w,'all');
+  const s=f.settle(w,'A01',[w.projects[0].obligations[0].key],'2026-02','remaining','remaining'); const after=f.summarize(w,'all');
+  assert.equal(after.unpaidTeamCost,before.unpaidTeamCost-s.net); assert.equal(after.profit,before.profit); assert.equal(after.revenue,before.revenue); assert.equal(after.cash,before.cash-s.net);
+});

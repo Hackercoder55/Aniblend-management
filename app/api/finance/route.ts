@@ -15,6 +15,18 @@ async function rows(db: SupabaseClient, table: string) {
     if (offset >= 999000) throw new Error('Too many records to load safely')
   }
 }
+async function initialWallet(db: SupabaseClient) {
+  const wallet = emptyWallet()
+  const { data, error } = await db.from('client_rates').select('client_code,rate_type,rate_inr')
+  if (error && !['42P01', 'PGRST205'].includes(error.code)) throw error
+  for (const r of data || []) {
+    const code = String(r.client_code || '').trim().toLowerCase(), rate = Number(r.rate_inr)
+    if (!code || !Number.isFinite(rate) || rate < 0) continue
+    if (r.rate_type === 'flat') wallet.settings.clientFlatRates![code] = rate
+    else wallet.settings.clientRates[code] = rate
+  }
+  return wallet
+}
 async function read(db: SupabaseClient) {
   const { data, error } = await db.from('finance_wallet').select('*').eq('id', 1).maybeSingle()
   if (error) throw new Error('WALLET_SETUP_REQUIRED: Run migrations/001_finance_wallet.sql in Supabase first.')
@@ -30,7 +42,7 @@ export async function GET() {
     const { db } = await requireFinanceManager()
     const [saved, projects, artists, payments] = await Promise.all([read(db), rows(db, 'projects'), rows(db, 'animators'), rows(db, 'payments')])
     const legacyPayments = payments.filter(p => ['paid', 'closed'].includes(String(p.Payment_Status).toLowerCase()) && !String(p['Project ID']).startsWith('Wallet: ')).map(p => ({ id: String(p.id), date: dateKey(p.paid_date || p.Timestamp || ''), name: p.Name || p['Employee ID'], reference: p['Project ID'] || '', gross: paise(Number(p.gross) || 0), bonus: paise(Number(p.bonus) || 0), others: paise(Number(p.others_amount) || 0), net: paise(Number(p.net_paid) || 0), note: p.bonus_note || '' }))
-    return NextResponse.json({ wallet: saved?.data || emptyWallet(), revision: saved?.revision ?? 0, projects, artists, legacyPayments }, { headers: { 'Cache-Control': 'no-store' } })
+    return NextResponse.json({ wallet: saved?.data || await initialWallet(db), revision: saved?.revision ?? 0, projects, artists, legacyPayments }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) { return failure(e) }
 }
 export async function POST(request: Request) {
@@ -42,7 +54,7 @@ export async function POST(request: Request) {
     if (!/^[a-zA-Z0-9-]{20,80}$/.test(requestId)) throw new Error('Invalid request identifier')
     let saved = await read(db)
     if (!saved) {
-      const { error } = await db.from('finance_wallet').upsert({ id: 1, revision: 0, data: emptyWallet() }, { onConflict: 'id', ignoreDuplicates: true })
+      const { error } = await db.from('finance_wallet').upsert({ id: 1, revision: 0, data: await initialWallet(db) }, { onConflict: 'id', ignoreDuplicates: true })
       if (error) throw error
       saved = await read(db)
     }
@@ -60,7 +72,7 @@ export async function POST(request: Request) {
         break
       }
       case 'sync': {
-        if (wallet.settings.clientRate <= 0 && !Object.keys(wallet.settings.clientRates).length) throw new Error('Set client rates before importing revenue')
+        if (wallet.settings.clientRate <= 0 && !Object.keys(wallet.settings.clientRates).length && !Object.keys(wallet.settings.clientFlatRates || {}).length) throw new Error('Set client rates before importing revenue')
         const [projects, artists] = await Promise.all([rows(db, 'projects'), rows(db, 'animators')])
         const added = syncProjects(wallet, projects as SourceProject[], artists as Artist[])
         if (!wallet.legacyImported) {
@@ -127,7 +139,7 @@ export async function POST(request: Request) {
           if (!source || !['Approved', 'Paid', 'Closed'].includes(source.Status)) throw new Error(`Project ${p.id} is no longer approved; reconcile first`)
           if (['Paid', 'Closed'].includes(source.Payment_Status) && !p.obligations.some(o => o.settlementId)) throw new Error(`Project ${p.id} was paid outside the wallet; reconcile first`)
         }
-        payment = settle(wallet, String(body.employeeId), body.keys, body.month, requestId, randomUUID())
+        payment = settle(wallet, String(body.employeeId), body.keys, body.month, requestId, randomUUID(), body.cutoff)
         closed = wallet.projects.filter(p => !p.legacy && p.obligations.length && p.obligations.every(o => o.settlementId) && payment!.lines.some(l => l.projectId === p.id)).map(p => p.id)
         detail = `${payment.name}: recorded ₹${(payment.net / 100).toFixed(2)} paid, ${payment.lines.length} work items; reference ${payment.id}`
         break
