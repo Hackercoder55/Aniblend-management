@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'node:crypto'
 import { requireFinanceManager } from '@/lib/finance-session'
-import { amount, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
+import { amount, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -14,6 +14,11 @@ async function rows(db: SupabaseClient, table: string) {
     if (data.length < 1000) return result
     if (offset >= 999000) throw new Error('Too many records to load safely')
   }
+}
+async function financeArtists(db: SupabaseClient) {
+  const [artists, leads] = await Promise.all([rows(db, 'animators'), db.from('leads').select('Head_Name,Discord_ID,Employee_ID')])
+  if (leads.error && !['42P01', 'PGRST205'].includes(leads.error.code)) throw leads.error
+  return artists.map(a => ({ ...a, aliases: (leads.data || []).filter(l => l.Employee_ID && l.Employee_ID === a.Employee_ID || l.Discord_ID && l.Discord_ID === a.Discord_ID).map(l => l.Head_Name).filter(Boolean) }))
 }
 async function initialWallet(db: SupabaseClient) {
   const wallet = emptyWallet()
@@ -40,8 +45,8 @@ function failure(error: unknown) {
 export async function GET() {
   try {
     const { db } = await requireFinanceManager()
-    const [saved, projects, artists, payments] = await Promise.all([read(db), rows(db, 'projects'), rows(db, 'animators'), rows(db, 'payments')])
-    const legacyPayments = payments.filter(p => ['paid', 'closed'].includes(String(p.Payment_Status).toLowerCase()) && !String(p['Project ID']).startsWith('Wallet: ')).map(p => ({ id: String(p.id), date: dateKey(p.paid_date || p.Timestamp || ''), name: p.Name || p['Employee ID'], reference: p['Project ID'] || '', gross: paise(Number(p.gross) || 0), bonus: paise(Number(p.bonus) || 0), others: paise(Number(p.others_amount) || 0), net: paise(Number(p.net_paid) || 0), note: p.bonus_note || '' }))
+    const [saved, projects, artists, payments] = await Promise.all([read(db), rows(db, 'projects'), financeArtists(db), rows(db, 'payments')])
+    const legacyPayments = payments.filter(p => ['paid', 'closed'].includes(String(p.Payment_Status).toLowerCase()) && !String(p['Project ID']).startsWith('Wallet: ')).map(p => ({ kind: ['SHARE_', 'MISC_', 'EXTRAREV_'].some(prefix => String(p['Employee ID'] || '').startsWith(prefix)) ? 'adjustment' : 'team', id: String(p.id), date: dateKey(p.paid_date || p.Timestamp || ''), name: p.Name || p['Employee ID'], reference: p['Project ID'] || '', gross: paise(Number(p.gross) || 0), bonus: paise(Number(p.bonus) || 0), others: paise(Number(p.others_amount) || 0), net: paise(Number(p.net_paid) || 0), note: p.bonus_note || '' }))
     return NextResponse.json({ wallet: saved?.data || await initialWallet(db), revision: saved?.revision ?? 0, projects, artists, legacyPayments }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) { return failure(e) }
 }
@@ -73,7 +78,7 @@ export async function POST(request: Request) {
       }
       case 'sync': {
         if (wallet.settings.clientRate <= 0 && !Object.keys(wallet.settings.clientRates).length && !Object.keys(wallet.settings.clientFlatRates || {}).length) throw new Error('Set client rates before importing revenue')
-        const [projects, artists] = await Promise.all([rows(db, 'projects'), rows(db, 'animators')])
+        const [projects, artists] = await Promise.all([rows(db, 'projects'), financeArtists(db)])
         const added = syncProjects(wallet, projects as SourceProject[], artists as Artist[])
         if (!wallet.legacyImported) {
           const payments = await rows(db, 'payments')
@@ -89,7 +94,7 @@ export async function POST(request: Request) {
         break
       }
       case 'reprice': {
-        const [projects, artists] = await Promise.all([rows(db, 'projects'), rows(db, 'animators')])
+        const [projects, artists] = await Promise.all([rows(db, 'projects'), financeArtists(db)])
         let count = 0
         wallet.projects = wallet.projects.map(p => {
           if (p.legacy || p.obligations.some(o => o.settlementId)) return p
@@ -107,6 +112,7 @@ export async function POST(request: Request) {
       case 'project': {
         const p = wallet.projects.find(p => p.id === body.projectId)
         if (!p) throw new Error('Project not found')
+        if (p.cycleId) throw new Error('Cashed-out project amounts are locked in history')
         if (p.obligations.some(o => o.settlementId && o.settlementId !== 'legacy')) throw new Error('Settled project rates are locked')
         const date = dateKey(String(body.date || ''))
         if (!date || date > today()) throw new Error('Choose a valid recognition date')
@@ -122,7 +128,7 @@ export async function POST(request: Request) {
       }
       case 'draft': {
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(body.month)) throw new Error('Invalid month')
-        const artists = await rows(db, 'animators')
+        const artists = await financeArtists(db)
         const artist = artists.find(a => a.Employee_ID === body.employeeId)
         if (!artist) throw new Error('Unknown team member')
         const draft: Draft = { bonus: amount(body.draft.bonus), others: amount(body.draft.others), tdsPercent: amount(body.draft.tdsPercent, 'TDS', 100), note: String(body.draft.note || '').slice(0, 1000), employeeName: artist.Name }
@@ -130,7 +136,7 @@ export async function POST(request: Request) {
         detail = `Payout draft ${body.month} / ${body.employeeId}: ${JSON.stringify(draft)}`
         break
       }
-      case 'cashout': {
+      case 'mark_paid': {
         if (!Array.isArray(body.keys) || body.keys.length > 10000) throw new Error('Invalid project selection')
         // Source status may have changed in the legacy app or bot since import.
         const projects = await rows(db, 'projects')
@@ -142,6 +148,19 @@ export async function POST(request: Request) {
         payment = settle(wallet, String(body.employeeId), body.keys, body.month, requestId, randomUUID(), body.cutoff)
         closed = wallet.projects.filter(p => !p.legacy && p.obligations.length && p.obligations.every(o => o.settlementId) && payment!.lines.some(l => l.projectId === p.id)).map(p => p.id)
         detail = `${payment.name}: recorded ₹${(payment.net / 100).toFixed(2)} paid, ${payment.lines.length} work items; reference ${payment.id}`
+        break
+      }
+      case 'cashout': {
+        if (!Array.isArray(body.projectIds) || body.projectIds.length > 10000) throw new Error('Refresh the dashboard and select paid projects for cycle cashout')
+        const cycle = closeCycle(wallet, body.projectIds, String(body.cutoff || ''), requestId, randomUUID())
+        detail = 'Cycle cashout: ' + cycle.projects.length + ' fully paid projects archived; revenue, receipts and payment amounts unchanged'
+        break
+      }
+      case 'reconcile_legacy': {
+        const [projects, artists, payments, rates] = await Promise.all([rows(db, 'projects'), financeArtists(db), rows(db, 'payments'), rows(db, 'client_rates')])
+        const beforeSettings = wallet.settings
+        const result = reconcileLegacy(wallet, projects as SourceProject[], artists as Artist[], rates as any, payments, String(body.cycleStart || ''))
+        detail = 'Initialized existing accounts: ' + JSON.stringify(result) + '; previous settings preserved here: ' + JSON.stringify(beforeSettings)
         break
       }
       case 'entry': {

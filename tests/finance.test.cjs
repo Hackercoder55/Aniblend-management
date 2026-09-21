@@ -57,3 +57,33 @@ test('remaining team dues clear per artist; cashout does not reduce earned reven
   const s=f.settle(w,'A01',[w.projects[0].obligations[0].key],'2026-02','remaining','remaining'); const after=f.summarize(w,'all');
   assert.equal(after.unpaidTeamCost,before.unpaidTeamCost-s.net); assert.equal(after.profit,before.profit); assert.equal(after.revenue,before.revenue); assert.equal(after.cash,before.cash-s.net);
 });
+
+test('Mark Paid and Cashout are independent; unpaid projects survive every cycle close',()=> {
+ const w=fixture(), second=structuredClone(w.projects[0]); second.id='unpaid';second.obligations=second.obligations.map(o=>({...o,key:'unpaid-'+o.key}));w.projects.push(second);
+ const originalRevenue=f.summarize(w,'all').revenue;
+ for(const role of w.projects[0].obligations) f.settle(w,role.employeeId,[role.key],'2026-02','pay-'+role.key,'paid-'+role.key);
+ assert.equal(f.currentCycleProjects(w).length,2,'Mark Paid must not archive');assert.equal(f.teamPaid(w.projects[0]),true);assert.equal(f.teamPaid(second),false);
+ const before=structuredClone(w), totals=f.summarize(w,'all');
+ assert.throws(()=>f.closeCycle(w,[second.id],f.today(),'bad','bad'),/Only fully paid/);assert.deepEqual(w,before);
+ const cycle=f.closeCycle(w,[w.projects[0].id],f.today(),'cycle-request','cycle-1');
+ assert.deepEqual(f.currentCycleProjects(w).map(p=>p.id),['unpaid']); assert.equal(w.projects.length,2);assert.equal(w.settlements.length,before.settlements.length);assert.deepEqual(f.summarize(w,'all'),totals);assert.equal(totals.revenue,originalRevenue);
+ assert.equal(f.closeCycle(w,[w.projects[0].id],f.today(),'cycle-request','ignored'),cycle);assert.equal(w.cycles.length,1);
+ assert.throws(()=>f.closeCycle(w,[w.projects[0].id],f.today(),'new-request','new-cycle'),/Only fully paid/);
+ const next=structuredClone(second);next.id='next';next.obligations=next.obligations.map(o=>({...o,key:'next-'+o.key}));w.projects.push(next);assert.deepEqual(f.currentCycleProjects(w).map(p=>p.id),['unpaid','next']);
+});
+test('partly paid projects cannot be cashed out; mixed selections are atomic',()=> {
+ const w=fixture();f.settle(w,'A01',[w.projects[0].obligations[0].key],'2026-02','partial','partial');const before=structuredClone(w);
+ assert.throws(()=>f.closeCycle(w,[w.projects[0].id],f.today(),'close','close'),/Only fully paid/);assert.deepEqual(w,before);
+});
+test('September reconciliation ignores broken cashout markers on unpaid work and preserves source records',()=> {
+ const sources=[{...project,Project_ID:'recent_60_her','Date Approved':'05 Sep 2026',client_paid_date:'null___SHARE_OLD___SHARE_AGAIN',Payment_Status:'Pending'}, {...project,Project_ID:'recent-paid_60_her','Date Approved':'06 Sep 2026',Status:'Closed',Payment_Status:'Closed'}, {...project,Project_ID:'old-paid_60_her','Date Approved':'04 Sep 2026',Status:'Closed',Payment_Status:'Closed'}, {...project,Project_ID:'old-unpaid_60_her','Date Approved':'04 Sep 2026',Payment_Status:'Pending'}, {...project,Project_ID:'new_60_PT','Date Approved':'07 Sep 2026',Payment_Status:'Pending'}];
+ const original=structuredClone(sources),w=f.emptyWallet();const info=f.reconcileLegacy(w,sources,artists,[{client_code:'HER',rate_inr:6000,rate_type:'per_minute'}],[],'2026-09-05');
+ assert.equal(info.current,4);assert.equal(info.ready,1);assert.equal(info.unpaid,3);assert.equal(w.projects.length,5);assert.equal(w.settlements.length,0);assert.equal(w.cycles.length,1);assert.deepEqual(sources,original);assert.deepEqual(info.missingRates,['new_60_PT']);
+ assert.throws(()=>f.reconcileLegacy(w,sources,artists,[],[],'2026-09-05'),/not empty/);
+});
+
+test('Discord contributor IDs and lead aliases map to existing employees without duplicate costs',()=> {
+ const roster=[{Employee_ID:'A01',Name:'Artist',Discord_ID:'111'},{Employee_ID:'M01',Name:'Bidyut Das',Discord_ID:'222',aliases:['Bidyut']}];
+ const p={...project,Employee_ID:'111',Animator:'Artist',Lighting_Artist:'',Lead:'Bidyut',output_history:[{empId:'111',seconds:90}]};
+ const w=f.emptyWallet();w.settings.clientRate=6000;f.syncProjects(w,[p],roster);assert.deepEqual(w.projects[0].obligations.map(o=>o.employeeId),['A01','M01']);assert.deepEqual(w.projects[0].issues,[]);
+});

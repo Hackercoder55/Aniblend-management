@@ -10371,7 +10371,7 @@ export default function ManagerDashboard() {
               {activeTab === 'wallet' && <FinanceWallet key="profit-wallet" initialView="profit" onRefresh={fetchData} />}
               {activeTab === 'previous_payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
               {activeTab === 'profit' && <FinanceWallet key="profit-tracker" initialView="profit" onRefresh={fetchData} />}
-              {activeTab === 'cashouts' && <ErrorBoundary><CashoutReportsTab projects={projects} /></ErrorBoundary>}
+              {activeTab === 'cashouts' && <ErrorBoundary><FinanceWallet key="cashout-history" initialView="history" onRefresh={fetchData} /><details className="mt-6 rounded-xl border p-4"><summary>Earlier profit-share reports</summary><CashoutReportsTab projects={projects} /></details></ErrorBoundary>}
               {activeTab === 'infi' && <InfiReviewTab animators={animators} projects={projects} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}

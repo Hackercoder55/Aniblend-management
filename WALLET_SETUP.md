@@ -11,8 +11,8 @@ Before running the migration, verify a restorable Supabase backup. A local JSON 
 
 ## Daily use
 
-- **Team payouts:** saved draft bonuses, other amounts, withholding and notes are shared with profit. Untick work to defer it. Select **Review cashout → Record cashout** only after making the actual payment. The dashboard records payment; it does not transfer money.
-- Each animator, lighting artist and lead has their own obligation. Paying one person leaves other team members payable. The project is marked paid only after all its wallet obligations are settled.
+- **Team payouts:** saved draft bonuses, other amounts, withholding and notes are shared with profit. Untick work to defer it. Select **Review payment → Mark Paid** only after making the actual payment. The dashboard records payment; it does not transfer money.
+- Mark Paid records the artist transfer. Paid projects stay in Current cycle until Cashout paid projects is confirmed. Each animator, lighting artist and lead has their own obligation. Paying one person leaves other team members payable. The project is marked paid only after all its wallet obligations are settled.
 - Cashout writes the wallet receipt, legacy payments row, paid invoice, employee total earnings and eligible project statuses in one database transaction. Revision checks prevent simultaneous edits from overwriting each other. Retries of the same request do not duplicate a payout.
 - **Bonus-only payout:** add an adjustment for a team member even when they have no current project work.
 - **Profit overview:** earned project revenue stays present after cashout. Team cost includes gross pay (including withheld tax), project extras, saved bonuses and other pay. Cash is shown separately from operating profit.
@@ -47,9 +47,22 @@ Migration safety check: the revised SQL contains no DROP TRIGGER statements. It 
 
 Profit Tracker and Payout Calculator now open the same wallet ledger. Profit & Wallet remains an alias. The superseded Profit Tracker owner-split cashout has been removed from the UI; artists are paid from Team payouts. Previous Payouts and historical Cashout Reports remain accessible. No old project, payment or cashout record is deleted.
 
-- Profit Tracker defaults to Pending team payment; fully settled projects appear under Paid / history or All projects. A partially paid shared project stays pending until its other obligations are settled.
+- Profit Tracker defaults to Current cycle, containing both approved and paid work. Fully settled projects appear as Paid · ready for cashout; only explicit Cashout moves them to Cashed out / history. A partially paid shared project stays pending until its other obligations are settled.
 - Approved through is an inclusive date cutoff (e.g. 2026-09-05). Team payout confirmation enforces this cutoff on the server and stores it with the receipt. Future work stays pending.
 - Lifetime revenue stays visible independently of pending-list filters. Already paid, still owed and cash after remaining team dues are shown separately. The latter uses only recorded wallet cash and excludes any separate unpaid tax liability; opening balances and legacy reconciliation still matter.
 - Client flat prices and fixed production fees can be saved in Rates & settings. Fresh fixed fees match the old calculator: HN ₹3,000, WN ₹4,000, INFI ₹5,000; lead fee is separate. MRC uses the full-production rate; GLEE defaults to its client revenue unless overridden. Existing saved settings and settled snapshots are preserved.
 - Source projects marked paid outside the wallet are excluded from new payouts on sync when no wallet settlement exists. They remain historical estimates, without invented cash receipts or payout transactions.
 - This update uses the existing 001 migration. No additional SQL or production data migration is required.
+
+## Two-step cycle close and September reconciliation
+
+- Mark Paid records an artist payment and invoice. It does not close the cycle. Other artists on a shared project remain payable.
+- Cashout paid projects previews only fully paid, unarchived projects through the chosen date. Confirm cashout saves a cycle receipt with project IDs, revenue and costs. It creates no payment, expense, revenue subtraction or bank transfer. Revenue/profit/cash totals are unchanged. Approved and partly paid work remain current.
+- Cycle history is available in Wallet history and Cashout Reports. The original profit-share reports remain under Earlier profit-share reports.
+- For an empty wallet, Load existing accounts uses existing client rates and a chosen cycle start. Paid projects approved before that date are classified as historical; all unpaid work remains current regardless of old SHARE markers. Original source rows are not changed. Repeat reconciliation is rejected once accounts exist.
+- The read-only September 22 inspection found 36 projects approved on/after September 5: 25 pending and 11 closed/paid-marked. 24 pending projects had erroneous old cashout markers. The reviewed reconciliation keeps all 36 current and makes only the 11 paid projects eligible for Cashout.
+- Employee IDs appearing as Discord IDs and abbreviated lead names are resolved using existing animator/lead identity mappings, never fuzzy name guesses.
+- Earlier aggregate artist transfers remain visible as original records; no project allocation or historical bank balance is invented. Imported project costs remain estimates. The current PT project lacks a saved client rate and is explicitly flagged; revenue/profit are incomplete until corrected.
+- The maintenance script defaults to read-only preview: node scripts/reconcile-profit-wallet.cjs --cycle-start=2026-09-05. --apply uses the wallet revision check, refuses a non-empty wallet and verifies source projects and payment fields remain unchanged. No new SQL migration is required.
+
+September 22 execution: applied the reviewed reconciliation to wallet revision 0 and verified the saved result. 160 projects were imported; 36 remain current (11 paid, 25 pending) and 124 earlier paid projects are classified in history. Every original project field and the selected payment fields compared equal before/after the save. No source project status, receipt, payment, invoice or bank transfer was changed by this operation. PT client pricing remains unresolved and visibly flagged.

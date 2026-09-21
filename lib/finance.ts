@@ -1,14 +1,15 @@
 // All money is stored as integer paise. Settlements never remove earned revenue.
 export type SourceProject = { Project_ID: string; Project_title?: string; Duration?: string; Status?: string; Payment_Status?: string; Employee_ID?: string; Animator?: string; Lighting_Artist?: string; Lead?: string; Bonus?: number; Other_Payment?: number; 'Date Approved'?: string; Approved_Date?: string; client_paid_date?: string; output_history?: { empId: string; seconds: number }[] }
-export type Artist = { Employee_ID: string; Name: string; others_amount?: number | string }
+export type Artist = { Employee_ID: string; Name: string; Discord_ID?: string; aliases?: string[]; others_amount?: number | string }
 export type Settings = { clientRate: number; fullRate: number; animationRate: number; lightingRate: number; leadFee: number; tdsPercent: number; rounding: number; clientRates: Record<string, number>; employeeRates: Record<string, number>; clientFlatRates?: Record<string, number>; teamProjectRates?: Record<string, number> }
 export type Obligation = { key: string; employeeId: string; name: string; role: string; seconds: number; rate: number; gross: number; extra: number; settlementId?: string }
-export type FinanceProject = { id: string; title: string; client: string; date: string; seconds: number; clientRate: number; revenue: number; obligations: Obligation[]; legacy: boolean; issues: string[] }
+export type FinanceProject = { id: string; title: string; client: string; date: string; seconds: number; clientRate: number; revenue: number; obligations: Obligation[]; legacy: boolean; issues: string[]; cycleId?: string }
 export type Draft = { bonus: number; others: number; tdsPercent: number; note: string; employeeName?: string; needsReview?: boolean }
 export type Settlement = { id: string; requestId: string; date: string; month: string; cutoff?: string; employeeId: string; name: string; gross: number; bonus: number; others: number; tds: number; net: number; note: string; adjustments?: { month: string; bonus: number; others: number }[]; lines: { projectId: string; title: string; key: string; role: string; gross: number; extra: number; seconds: number; rate: number }[] }
 export type Entry = { id: string; requestId: string; kind: 'receipt' | 'client_bonus' | 'expense' | 'capital' | 'withdrawal'; date: string; amount: number; note: string; projectId: string; reverses?: string }
 export type Audit = { id: string; date: string; actor: string; action: string; detail: string }
-export type Wallet = { version: 1; legacyImported?: boolean; settings: Settings; projects: FinanceProject[]; settlements: Settlement[]; entries: Entry[]; drafts: Record<string, Draft>; audit: Audit[] }
+export type CashoutCycle = { id: string; requestId: string; date: string; cutoff: string; note: string; imported?: boolean; projects: { id: string; title: string; revenue: number; teamCost: number }[] }
+export type Wallet = { version: 1; cycleStart?: string; cycles?: CashoutCycle[]; legacyImported?: boolean; settings: Settings; projects: FinanceProject[]; settlements: Settlement[]; entries: Entry[]; drafts: Record<string, Draft>; audit: Audit[] }
 export const defaults: Settings = { clientRate: 0, fullRate: 4000, animationRate: 2500, lightingRate: 1500, leadFee: 1000, tdsPercent: 10, rounding: 100, clientRates: {}, employeeRates: {}, clientFlatRates: {}, teamProjectRates: { hn: 3000, wn: 4000, infi: 5000 } }
 export function emptyWallet(): Wallet { return { version: 1, settings: { ...defaults, clientRates: {}, employeeRates: {}, clientFlatRates: {}, teamProjectRates: { ...defaults.teamProjectRates } }, projects: [], settlements: [], entries: [], drafts: {}, audit: [] } }
 export function amount(value: unknown, label = 'Amount', max = 100000000): number {
@@ -59,13 +60,14 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
   if (!date) issues.push('Approval date missing; choose a recognition date')
   if (!seconds) issues.push('Duration missing')
   const obligations: Obligation[] = []
-  const find = (name: string) => artists.find(a => norm(a.Name) === norm(name))
+  const find = (name: string) => artists.find(a => norm(a.Name) === norm(name) || a.aliases?.some(alias => norm(alias) === norm(name)))
+  const employeeId = (raw: string) => artists.find(a => a.Employee_ID === raw || a.Discord_ID === raw)?.Employee_ID || raw
   const ids = new Set<string>()
-  if (p.Employee_ID) ids.add(p.Employee_ID)
+  if (p.Employee_ID) ids.add(employeeId(p.Employee_ID))
   for (const name of String(p.Animator || '').split(',').filter(s => s.trim())) { const a = find(name); if (a) ids.add(a.Employee_ID); else issues.push(`Unknown animator: ${name}`) }
   const history = Array.isArray(p.output_history) ? p.output_history : []
   const shares = new Map<string, number>()
-  for (const h of history) { if (h.empId && Number(h.seconds) > 0) shares.set(h.empId, (shares.get(h.empId) || 0) + Number(h.seconds)) }
+  for (const h of history) { if (h.empId && Number(h.seconds) > 0) shares.set(employeeId(h.empId), (shares.get(employeeId(h.empId)) || 0) + Number(h.seconds)) }
   if (shares.size) { ids.clear(); for (const id of shares.keys()) ids.add(id) }
   const add = (id: string, name: string, role: string, sec: number, rate: number, fixed?: number) => {
     const rupees = fixed ?? sec * rate / 60
@@ -84,7 +86,7 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
   if (p.Lead) { const a = find(p.Lead); if (a) add(a.Employee_ID, a.Name, 'Lead', 0, settings.leadFee, settings.leadFee); else issues.push(`Unknown lead: ${p.Lead}`) }
   if (!obligations.length) issues.push('No payable team member found')
   const extra = paise((Number(p.Bonus) || 0) + (Number(p.Other_Payment) || 0))
-  const recipient = obligations.find(o => o.employeeId === p.Employee_ID && o.role === 'Animation') || obligations.find(o => o.role === 'Animation')
+  const recipient = obligations.find(o => o.employeeId === employeeId(p.Employee_ID || '') && o.role === 'Animation') || obligations.find(o => o.role === 'Animation')
   if (recipient) recipient.extra = extra
   return { id: p.Project_ID, title: p.Project_title || p.Project_ID, client, date: date || today(), seconds, clientRate, revenue: paise(seconds * clientRate / 60), obligations, legacy, issues }
 }
@@ -146,4 +148,61 @@ export function summarize(wallet: Wallet, month: string) {
   const bonus = sum('client_bonus'), expenses = sum('expense'), receipts = sum('receipt')
   const unpaidTeamCost = wallet.projects.filter(p => !p.legacy).reduce((n, p) => n + p.obligations.filter(o => !o.settlementId).reduce((v, o) => v + o.gross + o.extra, 0), 0) + Object.values(wallet.drafts).reduce((n, d) => n + paise(d.bonus + d.others), 0)
   return { unpaidTeamCost, revenue, bonus, expenses, teamCost: baseCost + additions, profit: revenue + bonus - baseCost - additions - expenses, receipts, cashPaid, tds, cash: receipts + bonus + sum('capital') - cashPaid - expenses - sum('withdrawal'), outstanding: revenue - receipts }
+}
+
+// Artist payment and cycle close are separate events. Neither deletes a project.
+export function teamPaid(p: FinanceProject) {
+  return p.obligations.length > 0 && p.obligations.every(o => !!o.settlementId)
+}
+export function currentCycleProjects(wallet: Wallet, cutoff = today()) {
+  return wallet.projects.filter(p => !p.cycleId && p.date <= cutoff)
+}
+export function closeCycle(wallet: Wallet, ids: string[], cutoff: string, requestId: string, id: string): CashoutCycle {
+  const previous = wallet.cycles?.find(c => c.requestId === requestId)
+  if (previous) return previous
+  if (!cutoff || dateKey(cutoff) !== cutoff || cutoff > today()) throw new Error('Choose a valid cashout cutoff')
+  if (!Array.isArray(ids) || !ids.length || ids.length !== new Set(ids).size) throw new Error('Select paid projects to cash out')
+  const selected = ids.map(id => wallet.projects.find(p => p.id === id))
+  if (selected.some(p => !p || p.cycleId || !teamPaid(p) || p.date > cutoff)) throw new Error('Only fully paid, unarchived projects through the cutoff can be cashed out. Refresh and review.')
+  const cycle: CashoutCycle = { id, requestId, date: today(), cutoff, note: 'Paid projects closed into history. No additional payment or revenue adjustment.', projects: selected.map(p => ({ id: p!.id, title: p!.title, revenue: p!.revenue, teamCost: p!.obligations.reduce((n, o) => n + o.gross + o.extra, 0) })) }
+  wallet.cycles ??= []; wallet.cycles.push(cycle)
+  for (const p of selected) p!.cycleId = id
+  return cycle
+}
+export function reconcileLegacy(wallet: Wallet, sources: SourceProject[], artists: Artist[], rates: { client_code: string; rate_type: string; rate_inr: number }[], payments: Record<string, any>[], cycleStart: string) {
+  if (wallet.projects.length || wallet.settlements.length || wallet.entries.length || wallet.cycles?.length) throw new Error('Existing wallet is not empty. Reconciliation cannot replace saved accounts.')
+  if (!cycleStart || dateKey(cycleStart) !== cycleStart || cycleStart > today()) throw new Error('Choose a valid cycle start')
+  // Preserve the previous configuration in the audit; seed only the explicitly reviewed empty ledger.
+  wallet.settings = emptyWallet().settings
+  for (const r of rates) {
+    const key = r.client_code.trim().toLowerCase(), value = amount(r.rate_inr, 'Client rate')
+    if (r.rate_type === 'flat') wallet.settings.clientFlatRates![key] = value
+    else wallet.settings.clientRates[key] = value
+  }
+  syncProjects(wallet, sources, artists)
+  wallet.cycleStart = cycleStart; wallet.cycles = []
+  const historical: CashoutCycle = { id: 'legacy-before-' + cycleStart, requestId: 'legacy-opening-' + cycleStart, date: today(), cutoff: cycleStart, imported: true, note: 'Previously paid work approved before the selected current cycle. Imported classification, not a new payment or cashout.', projects: [] }
+  for (const p of wallet.projects) {
+    const source = sources.find(s => s.Project_ID === p.id)!
+    const parts = String(source.client_paid_date || '').split('___')
+    // Preserve an explicit saved project price; SHARE markers never count as payment evidence.
+    const custom = parts[2] && !parts[2].startsWith('SHARE_') ? Number(parts[2]) : NaN
+    if (Number.isFinite(custom) && custom >= 0) { p.revenue = paise(custom); p.clientRate = p.seconds > 0 ? custom * 60 / p.seconds : 0; p.issues = p.issues.filter(i => !i.startsWith('Client rate')) }
+    if (parts[1] === 'COMPENSATE') p.revenue = 0
+    if (p.date < cycleStart && teamPaid(p)) {
+      p.cycleId = historical.id
+      historical.projects.push({ id: p.id, title: p.title, revenue: p.revenue, teamCost: p.obligations.reduce((n, o) => n + o.gross + o.extra, 0) })
+    }
+  }
+  if (historical.projects.length) wallet.cycles.push(historical)
+  // Only explicit business adjustments are imported. Old aggregate artist transfers
+  // remain available as original payment records, without fabricated project allocations.
+  for (const p of payments) {
+    const eid = String(p['Employee ID'] || ''), date = dateKey(String(p.Timestamp || ''))
+    const kind = eid.startsWith('MISC_') ? 'expense' : eid.startsWith('EXTRAREV_') ? 'client_bonus' : null
+    if (!kind || !date || Number(p.net_paid) <= 0) continue
+    wallet.entries.push({ id: 'legacy-payment-' + p.id, requestId: 'legacy-payment-' + p.id, kind, date, amount: paise(amount(p.net_paid)), note: String(p.Name || 'Imported business adjustment'), projectId: '' })
+  }
+  wallet.legacyImported = true // Old aggregate drafts must not be silently charged a second time.
+  return { projects: wallet.projects.length, current: currentCycleProjects(wallet).length, ready: currentCycleProjects(wallet).filter(teamPaid).length, unpaid: currentCycleProjects(wallet).filter(p => !teamPaid(p)).length, missingRates: wallet.projects.filter(p => p.issues.some(i => i.startsWith('Client rate'))).map(p => p.id) }
 }
