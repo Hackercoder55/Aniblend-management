@@ -1,15 +1,16 @@
 // All money is stored as integer paise. Settlements never remove earned revenue.
 export type SourceProject = { Project_ID: string; Project_title?: string; Duration?: string; Status?: string; Payment_Status?: string; Employee_ID?: string; Animator?: string; Lighting_Artist?: string; Lead?: string; Bonus?: number; Other_Payment?: number; 'Date Approved'?: string; Approved_Date?: string; client_paid_date?: string; output_history?: { empId: string; seconds: number }[] }
 export type Artist = { Employee_ID: string; Name: string; Discord_ID?: string; aliases?: string[]; others_amount?: number | string }
-export type Settings = { clientRate: number; fullRate: number; animationRate: number; lightingRate: number; leadFee: number; tdsPercent: number; rounding: number; clientRates: Record<string, number>; employeeRates: Record<string, number>; clientFlatRates?: Record<string, number>; teamProjectRates?: Record<string, number>; partnerNames?: [string, string]; partnerOnePercent?: number; notifyPayments?: boolean }
-export type Obligation = { key: string; employeeId: string; name: string; role: string; seconds: number; rate: number; gross: number; extra: number; settlementId?: string }
-export type FinanceProject = { id: string; title: string; client: string; date: string; seconds: number; clientRate: number; revenue: number; obligations: Obligation[]; legacy: boolean; issues: string[]; cycleId?: string }
+export type Settings = { clientRate: number; fullRate: number; animationRate: number; lightingRate: number; leadFee: number; tdsPercent: number; rounding: number; clientRates: Record<string, number>; employeeRates: Record<string, number>; clientFlatRates?: Record<string, number>; teamProjectRates?: Record<string, number>; partnerNames?: [string, string]; partnerOnePercent?: number; notifyPayments?: boolean; leadRates?: Record<string, number> }
+export type Obligation = { key: string; employeeId: string; name: string; role: string; seconds: number; rate: number; gross: number; extra: number; settlementId?: string; manualPrice?: boolean }
+export type FinanceProject = { id: string; title: string; client: string; date: string; seconds: number; clientRate: number; revenue: number; obligations: Obligation[]; legacy: boolean; issues: string[]; cycleId?: string; manualRevenue?: boolean }
 export type Draft = { bonus: number; others: number; tdsPercent: number; note: string; employeeName?: string; needsReview?: boolean }
 export type Settlement = { id: string; requestId: string; date: string; month: string; cutoff?: string; employeeId: string; name: string; gross: number; bonus: number; others: number; tds: number; net: number; note: string; adjustments?: { month: string; bonus: number; others: number }[]; lines: { projectId: string; title: string; key: string; role: string; gross: number; extra: number; seconds: number; rate: number }[] }
-export type Entry = { id: string; requestId: string; kind: 'receipt' | 'client_bonus' | 'expense' | 'capital' | 'withdrawal'; date: string; amount: number; note: string; projectId: string; reverses?: string }
+export type Entry = { id: string; requestId: string; kind: 'receipt' | 'client_bonus' | 'expense' | 'capital' | 'withdrawal'; date: string; amount: number; note: string; projectId: string; reverses?: string; recurringKey?: string }
 export type Audit = { id: string; date: string; actor: string; action: string; detail: string }
 export type CashoutCycle = { id: string; requestId: string; date: string; cutoff: string; note: string; imported?: boolean; projects: { id: string; title: string; revenue: number; teamCost: number }[] }
-export type Wallet = { version: 1; cycleStart?: string; cycles?: CashoutCycle[]; legacyImported?: boolean; settings: Settings; projects: FinanceProject[]; settlements: Settlement[]; entries: Entry[]; drafts: Record<string, Draft>; audit: Audit[] }
+export type RecurringExpense = { id: string; name: string; startMonth: string; versions: { from: string; amount: number; active: boolean }[] }
+export type Wallet = { version: 1; recurringExpenses?: RecurringExpense[]; cycleStart?: string; cycles?: CashoutCycle[]; legacyImported?: boolean; settings: Settings; projects: FinanceProject[]; settlements: Settlement[]; entries: Entry[]; drafts: Record<string, Draft>; audit: Audit[] }
 export const defaults: Settings = { clientRate: 0, fullRate: 4000, animationRate: 2500, lightingRate: 1500, leadFee: 1000, tdsPercent: 10, rounding: 100, clientRates: {}, employeeRates: {}, clientFlatRates: {}, teamProjectRates: { hn: 3000, wn: 4000, infi: 5000 } }
 export function emptyWallet(): Wallet { return { version: 1, settings: { ...defaults, clientRates: {}, employeeRates: {}, clientFlatRates: {}, teamProjectRates: { ...defaults.teamProjectRates } }, projects: [], settlements: [], entries: [], drafts: {}, audit: [] } }
 export function amount(value: unknown, label = 'Amount', max = 100000000): number {
@@ -38,13 +39,13 @@ export function duration(raw: string, id = ''): number {
 }
 const norm = (s: string) => s.trim().toLowerCase()
 export function validateSettings(input: Settings): Settings {
-  const result = { ...defaults, clientRates: {}, employeeRates: {} } as Settings
+  const result = { ...defaults, clientRates: {}, employeeRates: {}, leadRates: {} } as Settings
   for (const key of ['clientRate', 'fullRate', 'animationRate', 'lightingRate', 'leadFee', 'rounding', 'tdsPercent'] as const) result[key] = amount(input[key], key, key === 'tdsPercent' ? 100 : 1000000)
-  for (const key of ['clientRates', 'employeeRates', 'clientFlatRates', 'teamProjectRates'] as const) {
-    if (input[key] === undefined && ['clientFlatRates', 'teamProjectRates'].includes(key)) continue
+  for (const key of ['clientRates', 'employeeRates', 'clientFlatRates', 'teamProjectRates', 'leadRates'] as const) {
+    if (input[key] === undefined && ['clientFlatRates', 'teamProjectRates', 'leadRates'].includes(key)) continue
     result[key] = {}
     if (!input[key] || typeof input[key] !== 'object' || Array.isArray(input[key])) throw new Error('Invalid rate overrides')
-    for (const [id, rate] of Object.entries(input[key]!)) { if (!id.trim() || id.length > 200) throw new Error('Invalid rate name'); result[key]![key === 'employeeRates' ? id.trim() : id.trim().toLowerCase()] = amount(rate, 'Rate', 1000000) }
+    for (const [id, rate] of Object.entries(input[key]!)) { if (!id.trim() || id.length > 200) throw new Error('Invalid rate name'); result[key]![['employeeRates','leadRates'].includes(key) ? id.trim() : id.trim().toLowerCase()] = amount(rate, 'Rate', 1000000) }
   }
   result.partnerNames = [String(input.partnerNames?.[0] || 'Partner 1').trim().slice(0,80), String(input.partnerNames?.[1] || 'Partner 2').trim().slice(0,80)]
   result.partnerOnePercent = amount(input.partnerOnePercent ?? 50, 'Partner share', 100)
@@ -93,7 +94,7 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
     add(id, a?.Name || id, 'Animation', shares.size ? shares.get(id)! : seconds / ids.size, rate, fixedTotal === undefined ? undefined : fixedTotal * share)
   }
   if (p.Lighting_Artist && settings.teamProjectRates?.[client] === undefined && !['glee', 'mrc'].includes(client)) { const a = find(p.Lighting_Artist); if (a) add(a.Employee_ID, a.Name, 'Lighting', seconds, settings.employeeRates[a.Employee_ID] ?? settings.lightingRate); else issues.push(`Unknown lighting artist: ${p.Lighting_Artist}`) }
-  if (p.Lead) { const a = find(p.Lead); if (a) add(a.Employee_ID, a.Name, 'Lead', 0, settings.leadFee, settings.leadFee); else issues.push(`Unknown lead: ${p.Lead}`) }
+  if (p.Lead) { const a = find(p.Lead); if (a) add(a.Employee_ID, a.Name, 'Lead', 0, settings.leadRates?.[a.Employee_ID] ?? settings.leadFee, settings.leadRates?.[a.Employee_ID] ?? settings.leadFee); else issues.push(`Unknown lead: ${p.Lead}`) }
   if (!obligations.length) issues.push('No payable team member found')
   const extra = paise((Number(p.Bonus) || 0) + (Number(p.Other_Payment) || 0))
   const recipient = obligations.find(o => o.employeeId === employeeId(p.Employee_ID || '') && o.role === 'Animation') || obligations.find(o => o.role === 'Animation')
@@ -115,7 +116,7 @@ export function syncProjects(wallet: Wallet, projects: SourceProject[], artists:
   return added
 }
 export function pending(wallet: Wallet, month: string, cutoff?: string) {
-  return wallet.projects.filter(p => p.date.slice(0, 7) <= month && (!cutoff || p.date <= cutoff) && !p.legacy).flatMap(p => p.obligations.filter(o => !o.settlementId).map(o => ({ ...o, projectId: p.id, title: p.title, date: p.date, issues: p.issues })))
+  return wallet.projects.filter(p => p.date.slice(0, 7) <= month && (!cutoff || p.date <= cutoff) && !p.legacy && !p.cycleId).flatMap(p => p.obligations.filter(o => !o.settlementId).map(o => ({ ...o, projectId: p.id, title: p.title, date: p.date, issues: p.issues })))
 }
 export function adjustments(drafts: Record<string, Draft>, employeeId: string, month: string) {
   return Object.entries(drafts).filter(([key]) => key.slice(8) === employeeId && key.slice(0, 7) <= month).map(([key, d]) => ({ month: key.slice(0, 7), bonus: paise(amount(d.bonus)), others: paise(amount(d.others)) }))
@@ -155,9 +156,10 @@ export function summarize(wallet: Wallet, month: string) {
     + Object.entries(wallet.drafts).filter(([key]) => month === 'all' || key.startsWith(`${month}:`)).reduce((n, [, draft]) => n + paise(draft.bonus + draft.others), 0)
   const cashPaid = wallet.settlements.filter(s => inMonth(s.date)).reduce((n, s) => n + s.net, 0)
   const tds = wallet.settlements.filter(s => inMonth(s.date)).reduce((n, s) => n + s.tds, 0)
-  const bonus = sum('client_bonus'), expenses = sum('expense'), receipts = sum('receipt')
+  const recurring = recurringCharges(wallet).filter(c => month === 'all' || c.month === month).reduce((n,c) => n+c.amount,0)
+  const bonus = sum('client_bonus'), expenses = sum('expense') + recurring, receipts = sum('receipt')
   const unpaidTeamCost = wallet.projects.filter(p => !p.legacy).reduce((n, p) => n + p.obligations.filter(o => !o.settlementId).reduce((v, o) => v + o.gross + o.extra, 0), 0) + Object.values(wallet.drafts).reduce((n, d) => n + paise(d.bonus + d.others), 0)
-  return { unpaidTeamCost, revenue, bonus, expenses, teamCost: baseCost + additions, profit: revenue + bonus - baseCost - additions - expenses, receipts, cashPaid, tds, cash: receipts + bonus + sum('capital') - cashPaid - expenses - sum('withdrawal'), outstanding: revenue - receipts }
+  return { recurring, unpaidTeamCost, revenue, bonus, expenses, teamCost: baseCost + additions, profit: revenue + bonus - baseCost - additions - expenses, receipts, cashPaid, tds, cash: receipts + bonus + sum('capital') - cashPaid - sum('expense') - sum('withdrawal'), outstanding: revenue - receipts }
 }
 
 // Artist payment and cycle close are separate events. Neither deletes a project.
@@ -215,4 +217,73 @@ export function reconcileLegacy(wallet: Wallet, sources: SourceProject[], artist
   }
   wallet.legacyImported = true // Old aggregate drafts must not be silently charged a second time.
   return { projects: wallet.projects.length, current: currentCycleProjects(wallet).length, ready: currentCycleProjects(wallet).filter(teamPaid).length, unpaid: currentCycleProjects(wallet).filter(p => !teamPaid(p)).length, missingRates: wallet.projects.filter(p => p.issues.some(i => i.startsWith('Client rate'))).map(p => p.id) }
+}
+
+// Apply saved rates to existing unpaid obligations, never to a settled receipt.
+export function repriceUnpaid(wallet: Wallet, sources: SourceProject[], artists: Artist[]) {
+  let changed=0
+  for(const p of wallet.projects) {
+    if(p.legacy || p.cycleId) continue
+    const source=sources.find(s=>s.Project_ID===p.id)
+    if(!source || !['Approved','Paid','Closed'].includes(source.Status||'')) continue
+    const fresh=snapshot(source,artists,wallet.settings)
+    if(fresh.legacy && !p.obligations.some(o=>o.settlementId)) continue
+    let touched=false
+    for(const o of p.obligations) {
+      if(o.settlementId || o.manualPrice) continue
+      const next=fresh.obligations.find(n=>n.key===o.key)
+      if(!next) continue
+      // Preserve stored contribution/time and extras; only the pricing changes.
+      const gross=next.seconds && o.seconds!==next.seconds ? paise((next.gross/100)*o.seconds/next.seconds) : next.gross
+      if(o.gross!==gross || o.rate!==next.rate) {o.gross=gross;o.rate=next.rate;touched=true}
+    }
+    if(!p.manualRevenue && !p.obligations.some(o=>o.settlementId)) {
+      const revenue=paise(p.seconds*fresh.clientRate/60)
+      const received=wallet.entries.filter(e=>e.kind==='receipt'&&e.projectId===p.id).reduce((n,e)=>n+e.amount,0)
+      if(received>revenue) throw new Error('Project '+p.id+': rate is below an existing recorded receipt. Review that receipt first.')
+      if(p.revenue!==revenue) touched=true
+      p.clientRate=fresh.clientRate;p.revenue=revenue
+      p.issues=p.issues.filter(i=>!i.startsWith('Client rate')&&!i.startsWith('Team cost depends'))
+      p.issues.push(...fresh.issues.filter(i=>i.startsWith('Client rate')||i.startsWith('Team cost depends')))
+    }
+    if(touched) changed++
+  }
+  return changed
+}
+export function editUnpaidPrice(wallet: Wallet, key: string, value: unknown, mode: 'rate'|'gross') {
+  const p=wallet.projects.find(p=>p.obligations.some(o=>o.key===key)),o=p?.obligations.find(o=>o.key===key)
+  if(!p||!o||p.legacy||p.cycleId||o.settlementId) throw new Error('Only unpaid work can be repriced')
+  const price=amount(value,'Price',1000000)
+  if(mode==='rate') { if(!o.seconds)throw new Error('Use a fixed fee for this work');o.rate=price;o.gross=paise(o.seconds*price/60) }
+  else {o.gross=paise(price);o.rate=o.seconds?price*60/o.seconds:price}
+  o.manualPrice=true
+  return o
+}
+export function recurringCharges(wallet: Wallet, through=today().slice(0,7)) {
+  const charges:{key:string;ruleId:string;name:string;month:string;amount:number;paid:boolean}[]=[]
+  for(const rule of wallet.recurringExpenses||[]) {
+    const versions=[...rule.versions].sort((a,b)=>a.from.localeCompare(b.from))
+    for(let m=rule.startMonth,count=0;m<=through && count<1200;count++) {
+      const version=versions.filter(v=>v.from<=m).at(-1)
+      const key=rule.id+':'+m
+      if(version?.active) charges.push({key,ruleId:rule.id,name:rule.name,month:m,amount:version.amount,paid:wallet.entries.filter(e=>e.recurringKey===key).reduce((n,e)=>n+e.amount,0)>=version.amount})
+      const [y,mo]=m.split('-').map(Number);m=mo===12?(y+1)+'-01':y+'-'+String(mo+1).padStart(2,'0')
+    }
+  }
+  return charges
+}
+export function saveRecurring(wallet: Wallet, input: { id?: string; name: string; amount: unknown; from: string; active?: boolean }, newId: string, current=today().slice(0,7)) {
+  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(input.from))throw new Error('Choose a valid effective month')
+  const name=String(input.name||'').trim().slice(0,120);if(!name)throw new Error('Expense name is required')
+  const cost=paise(amount(input.amount,'Monthly expense'))
+  const rule=wallet.recurringExpenses?.find(r=>r.id===input.id)
+  if(input.id&&!rule)throw new Error('Recurring expense not found')
+  if(rule&&input.from<current)throw new Error('Past months are locked; change this month or a future month')
+  if(!rule&&input.from<current)throw new Error('Start this month or later; record earlier expenses separately')
+  if(rule&&input.from<rule.startMonth)throw new Error('Effective month is before the schedule starts')
+  if((wallet.recurringExpenses||[]).some(r=>r.id!==input.id&&r.name.toLowerCase()===name.toLowerCase()))throw new Error('A recurring expense with this name already exists; edit that schedule')
+  if(rule&&recurringCharges(wallet,current).some(c=>c.ruleId===rule.id&&c.month>=input.from&&c.paid))throw new Error('An affected month is already paid; change from next month')
+  const version={from:input.from,amount:cost,active:input.active!==false}
+  if(rule) {if(rule.name!==name)throw new Error('Create a separate schedule to change the expense name');rule.versions=[...rule.versions.filter(v=>v.from!==input.from),version].sort((a,b)=>a.from.localeCompare(b.from))}
+  else {wallet.recurringExpenses??=[];wallet.recurringExpenses.push({id:newId,name,startMonth:input.from,versions:[version]})}
 }

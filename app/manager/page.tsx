@@ -1845,21 +1845,6 @@ We will notify you here once the payment has been sent. Thank you for your excel
     setIsUpdating(false)
   }
 
-  const handleMarkClientPaid = async (project: Project) => {
-    setIsUpdating(true)
-    const { error } = await apiClient.from('projects').update({
-      client_paid_date: new Date().toISOString()
-    }).eq('Project_ID', project.Project_ID)
-
-    if (!error) {
-      addToast(`✅ Marked ${project.Project_ID} as Paid by Client`)
-      onRefresh()
-    } else {
-      addToast(`❌ Failed to mark as paid: ${error.message}`, 'error')
-    }
-    setIsUpdating(false)
-  }
-
   const statuses = ['All', 'Ongoing', 'Pending', 'Active', 'Review', 'Changes Requested', 'Ready to Render', 'Render QA', 'Approved', 'Paid', 'Closed']
 
   return (
@@ -2088,15 +2073,7 @@ We will notify you here once the payment has been sent. Thank you for your excel
                               {approving === p.Project_ID ? '...' : 'Approve'}
                             </button>
                           )}
-                          {!p.client_paid_date ? (
-                            <button onClick={() => handleMarkClientPaid(p)} disabled={isUpdating} className="px-3 py-1 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-medium border border-green-200 transition-colors whitespace-nowrap">
-                              💰 Mark Client Paid
-                            </button>
-                          ) : (
-                            <span className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-xs font-medium border border-green-200 whitespace-nowrap">
-                              ✅ Client Paid
-                            </span>
-                          )}
+
                         </>
                       )}
                     </div>
@@ -3296,7 +3273,7 @@ function PaidProjectsModal({ animator, projects, onClose, inline }: {
             <div className="text-center py-12 text-gray-400">
               <p className="text-4xl mb-3">💳</p>
               <p className="font-semibold">No paid projects yet.</p>
-              <p className="text-xs mt-1 text-gray-300">Projects will appear here once marked as Client Paid.</p>
+              <p className="text-xs mt-1 text-gray-300">Approved projects are recognised in Profit Tracker automatically.</p>
             </div>
           ) : sortedMonths.map(([month, grp]) => {
             const netAmountToDisplay = grp.totalNetTable || (grp.totalGrossFromProjects + grp.totalBonus);
@@ -5467,24 +5444,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
     return list.reduce((total, p) => total + parseDurationSec(p.Duration, p.Project_ID), 0)
   }
 
-  // ── Mark as Paid ──
-  const handleMarkPaid = async (project: Project) => {
-    setMarkingId(project.Project_ID)
-    const today = formatDate()
-    const { error } = await apiClient
-      .from('projects')
-      .update({ Payment_Status: 'Client Paid', Status: 'Paid', client_paid_date: today })
-      .eq('Project_ID', project.Project_ID)
-    if (error) {
-      toast('Failed to mark as paid: ' + error.message, 'error')
-    } else {
-      toast(`${project.Project_ID} marked as Paid ✅`, 'success')
-      await onRefresh()
-    }
-    setMarkingId(null)
-  }
-
-  const ProjectCard = ({ project, showMarkPaid = false, showRemoveSTL = false }: { project: Project; showMarkPaid?: boolean; showRemoveSTL?: boolean }) => {
+  const ProjectCard = ({ project, showRemoveSTL = false }: { project: Project; showRemoveSTL?: boolean }) => {
     const durStr = formatSec(parseDurationSec(project.Duration, project.Project_ID))
     
     const statusDateStr = getDateForStage(project, project.Status)
@@ -5527,15 +5487,7 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
           {project.Status === 'Approved' && project['Date Approved'] && <p>✅ Approved: {project['Date Approved']}</p>}
           {project.Status === 'Paid' && project.client_paid_date && <p>💰 Paid: {project.client_paid_date}</p>}
         </div>
-        {showMarkPaid && (
-          <button
-            onClick={() => handleMarkPaid(project)}
-            disabled={markingId === project.Project_ID}
-            className="mt-3 w-full py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-opacity"
-            style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-            {markingId === project.Project_ID ? 'Marking…' : '💳 Mark as Paid'}
-          </button>
-        )}
+
       </div>
     )
   }
@@ -5753,7 +5705,6 @@ function BudgetTrackerTab({ projects, onRefresh }: { projects: Project[]; onRefr
                   <ProjectCard
                     key={p.Project_ID}
                     project={p}
-                    showMarkPaid={stage === 'Approved'}
                   />
                 ))}
               </div>

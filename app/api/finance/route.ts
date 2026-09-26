@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { paymentNotices, dispatchNotice } from '@/lib/finance-notifications'
 import { randomUUID } from 'node:crypto'
 import { requireFinanceManager } from '@/lib/finance-session'
-import { amount, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
+import { amount, repriceUnpaid, editUnpaidPrice, saveRecurring, recurringCharges, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -77,13 +77,17 @@ export async function POST(request: Request) {
     switch (body.action) {
       case 'settings': {
         wallet.settings = validateSettings(body.settings)
-        detail = `Rates/settings saved: ${JSON.stringify(wallet.settings)}`
+        const [sources, artists] = await Promise.all([rows(db,'projects'), financeArtists(db)])
+        syncProjects(wallet,sources as SourceProject[],artists as Artist[])
+        const count = repriceUnpaid(wallet,sources as SourceProject[],artists as Artist[])
+        detail = `Rates saved and ${count} unpaid project amounts updated: ${JSON.stringify(wallet.settings)}`
         break
       }
       case 'sync': {
         if (wallet.settings.clientRate <= 0 && !Object.keys(wallet.settings.clientRates).length && !Object.keys(wallet.settings.clientFlatRates || {}).length) throw new Error('Set client rates before importing revenue')
         const [projects, artists] = await Promise.all([rows(db, 'projects'), financeArtists(db)])
         const added = syncProjects(wallet, projects as SourceProject[], artists as Artist[])
+        repriceUnpaid(wallet,projects as SourceProject[],artists as Artist[])
         if (!wallet.legacyImported) {
           const payments = await rows(db, 'payments')
           const latest = payments.filter(p => String(p.Payment_Status).toLowerCase() === 'pending' && String(p['Project ID']).startsWith('Month: ')).sort((a, b) => String(b.Timestamp).localeCompare(String(a.Timestamp)))
@@ -98,19 +102,43 @@ export async function POST(request: Request) {
         break
       }
       case 'reprice': {
-        const [projects, artists] = await Promise.all([rows(db, 'projects'), financeArtists(db)])
-        let count = 0
-        wallet.projects = wallet.projects.map(p => {
-          if (p.legacy || p.obligations.some(o => o.settlementId)) return p
-          const source = projects.find(s => s.Project_ID === p.id)
-          if (!source) return p
-          const updated = snapshot(source as SourceProject, artists as Artist[], wallet.settings)
-          const received = wallet.entries.filter(e => e.kind === 'receipt' && e.projectId === p.id).reduce((n, e) => n + e.amount, 0)
-          if (received > updated.revenue) throw new Error(`Project ${p.id}: new revenue would be lower than recorded receipts. Correct the receipt first.`)
-          if (updated.legacy) throw new Error(`Project ${p.id} was paid outside the wallet. Reconcile before repricing.`)
-          count++; return updated
-        })
-        detail = `Recalculated ${count} unpaid projects using current source details and saved rates`
+        const [sources,artists]=await Promise.all([rows(db,'projects'),financeArtists(db)])
+        syncProjects(wallet,sources as SourceProject[],artists as Artist[])
+        const count=repriceUnpaid(wallet,sources as SourceProject[],artists as Artist[])
+        detail='Updated '+count+' unpaid projects; settled receipts and manual prices preserved'
+        break
+      }
+      case 'payout_details': {
+        if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(body.month)||body.month>today().slice(0,7))throw new Error('Invalid payout month')
+        if(!Array.isArray(body.rows)||!body.rows.length||body.rows.length>500)throw new Error('Invalid payout details')
+        const artists=await financeArtists(db)
+        const seen=new Set<string>()
+        for(const row of body.rows) {
+          const artist=artists.find(a=>a.Employee_ID===row.employeeId)
+          if(!artist||seen.has(row.employeeId))throw new Error('Invalid or duplicate employee')
+          seen.add(row.employeeId)
+          const d=row.draft||{}
+          wallet.drafts[body.month+':'+row.employeeId]={bonus:amount(d.bonus),others:amount(d.others),tdsPercent:amount(d.tdsPercent,'TDS',100),note:String(d.note||'').slice(0,1000),employeeName:artist.Name}
+          if(!Array.isArray(row.prices)||row.prices.length>10000)throw new Error('Invalid work prices')
+          for(const price of row.prices) {
+            const project=wallet.projects.find(p=>p.obligations.some(o=>o.key===price.key&&o.employeeId===row.employeeId))
+            if(!project)throw new Error('Price does not belong to this employee')
+            editUnpaidPrice(wallet,String(price.key),price.amount,'gross')
+          }
+        }
+        detail='Saved payout details and unpaid work prices for '+[...seen].join(', ')
+        break
+      }
+      case 'recurring': {
+        saveRecurring(wallet,body.rule,randomUUID())
+        detail='Monthly expense schedule: '+JSON.stringify(body.rule)
+        break
+      }
+      case 'pay_recurring': {
+        const charge=recurringCharges(wallet).find(c=>c.key===body.key)
+        if(!charge||charge.paid)throw new Error('This monthly expense is missing or already paid')
+        wallet.entries.push({id:randomUUID(),requestId,kind:'withdrawal',date:today(),amount:charge.amount,note:charge.name+' / '+charge.month+' (monthly cost already included in profit)',projectId:'',recurringKey:charge.key})
+        detail='Recorded monthly expense paid: '+charge.name+' / '+charge.month
         break
       }
       case 'project': {
@@ -122,11 +150,11 @@ export async function POST(request: Request) {
         const date = dateKey(String(body.date || ''))
         if (!date || date > today()) throw new Error('Choose a valid recognition date')
         const previous = { date: p.date, clientRate: p.clientRate, revenue: p.revenue, obligations: p.obligations }
-        p.date = date; p.clientRate = amount(body.clientRate, 'Client rate'); p.revenue = paise(p.seconds * p.clientRate / 60)
+        p.manualRevenue = true; p.date = date; p.clientRate = amount(body.clientRate, 'Client rate'); p.revenue = paise(p.seconds * p.clientRate / 60)
         const received = wallet.entries.filter(e => e.kind === 'receipt' && e.projectId === p.id).reduce((n, e) => n + e.amount, 0)
         if (received > p.revenue) throw new Error('Revenue cannot be lower than recorded client receipts. Correct the receipt first.')
         if (!Array.isArray(body.costs) || body.costs.length !== p.obligations.length) throw new Error('All project costs are required')
-        p.obligations = p.obligations.map(o => { const c = body.costs.find((c: { key: string }) => c.key === o.key); if (!c) throw new Error('Invalid cost line'); if (settled && (paise(amount(c.gross)) !== o.gross || paise(amount(c.extra)) !== o.extra)) throw new Error('Paid team costs are locked; only client pricing may change'); return { ...o, gross: paise(amount(c.gross, 'Project cost')), extra: paise(amount(c.extra, 'Project bonus/extra')) } })
+        p.obligations = p.obligations.map(o => { const c = body.costs.find((c: { key: string }) => c.key === o.key); if (!c) throw new Error('Invalid cost line'); if (settled && (paise(amount(c.gross)) !== o.gross || paise(amount(c.extra)) !== o.extra)) throw new Error('Paid team costs are locked; only client pricing may change'); return { ...o, manualPrice: o.manualPrice || paise(amount(c.gross)) !== o.gross, gross: paise(amount(c.gross, 'Project cost')), extra: paise(amount(c.extra, 'Project bonus/extra')) } })
         p.issues = p.issues.filter(issue => !issue.startsWith('Approval date') && !issue.startsWith('Client rate'))
         detail = `Project ${p.id} edited. Before: ${JSON.stringify(previous)}. After: ${JSON.stringify(p)}`
         break
@@ -185,8 +213,8 @@ export async function POST(request: Request) {
         if (!note) throw new Error('Add a description/reference')
         const projectId = String(body.projectId || '')
         if (projectId && !wallet.projects.some(p => p.id === projectId)) throw new Error('Unknown project')
-        if (body.kind === 'receipt') {
-          if (!projectId) throw new Error('Select the project whose payment was received')
+        if (body.kind === 'receipt' && projectId) {
+          // Client receipts may be recorded as a combined amount without video matching.
           const project = wallet.projects.find(p => p.id === projectId)!
           const received = wallet.entries.filter(e => e.kind === 'receipt' && e.projectId === projectId).reduce((n, e) => n + e.amount, 0)
           if (received + value > project.revenue) throw new Error('Receipt exceeds project revenue. Record extra client money as a client bonus.')
