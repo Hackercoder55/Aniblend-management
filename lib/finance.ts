@@ -1,7 +1,7 @@
 // All money is stored as integer paise. Settlements never remove earned revenue.
 export type SourceProject = { Project_ID: string; Project_title?: string; Duration?: string; Status?: string; Payment_Status?: string; Employee_ID?: string; Animator?: string; Lighting_Artist?: string; Lead?: string; Bonus?: number; Other_Payment?: number; 'Date Approved'?: string; Approved_Date?: string; client_paid_date?: string; output_history?: { empId: string; seconds: number }[] }
 export type Artist = { Employee_ID: string; Name: string; Discord_ID?: string; aliases?: string[]; others_amount?: number | string }
-export type Settings = { clientRate: number; fullRate: number; animationRate: number; lightingRate: number; leadFee: number; tdsPercent: number; rounding: number; clientRates: Record<string, number>; employeeRates: Record<string, number>; clientFlatRates?: Record<string, number>; teamProjectRates?: Record<string, number> }
+export type Settings = { clientRate: number; fullRate: number; animationRate: number; lightingRate: number; leadFee: number; tdsPercent: number; rounding: number; clientRates: Record<string, number>; employeeRates: Record<string, number>; clientFlatRates?: Record<string, number>; teamProjectRates?: Record<string, number>; partnerNames?: [string, string]; partnerOnePercent?: number; notifyPayments?: boolean }
 export type Obligation = { key: string; employeeId: string; name: string; role: string; seconds: number; rate: number; gross: number; extra: number; settlementId?: string }
 export type FinanceProject = { id: string; title: string; client: string; date: string; seconds: number; clientRate: number; revenue: number; obligations: Obligation[]; legacy: boolean; issues: string[]; cycleId?: string }
 export type Draft = { bonus: number; others: number; tdsPercent: number; note: string; employeeName?: string; needsReview?: boolean }
@@ -46,8 +46,17 @@ export function validateSettings(input: Settings): Settings {
     if (!input[key] || typeof input[key] !== 'object' || Array.isArray(input[key])) throw new Error('Invalid rate overrides')
     for (const [id, rate] of Object.entries(input[key]!)) { if (!id.trim() || id.length > 200) throw new Error('Invalid rate name'); result[key]![key === 'employeeRates' ? id.trim() : id.trim().toLowerCase()] = amount(rate, 'Rate', 1000000) }
   }
+  result.partnerNames = [String(input.partnerNames?.[0] || 'Partner 1').trim().slice(0,80), String(input.partnerNames?.[1] || 'Partner 2').trim().slice(0,80)]
+  result.partnerOnePercent = amount(input.partnerOnePercent ?? 50, 'Partner share', 100)
+  result.notifyPayments = input.notifyPayments !== false
   return result
 }
+export function profitSplit(profit: number, settings: Settings) {
+  const percent = settings.partnerOnePercent ?? 50
+  const first = Math.round(profit * percent / 100)
+  return [{ name: settings.partnerNames?.[0] || 'Partner 1', percent, amount: first }, { name: settings.partnerNames?.[1] || 'Partner 2', percent: 100-percent, amount: profit-first }]
+}
+export function payoutIssues(issues: string[]) { return issues.filter(issue => !issue.startsWith('Client rate')) }
 export function snapshot(p: SourceProject, artists: Artist[], settings: Settings): FinanceProject {
   const issues: string[] = []
   const seconds = duration(p.Duration || '', p.Project_ID)
@@ -59,6 +68,7 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
   const date = dateKey(p['Date Approved'] || '') || dateKey(p.Approved_Date || '')
   if (!date) issues.push('Approval date missing; choose a recognition date')
   if (!seconds) issues.push('Duration missing')
+  if (client === 'glee' && !clientRate && settings.teamProjectRates?.[client] === undefined && flat === undefined && settings.clientRates[client] === undefined) issues.push('Team cost depends on the missing GLEE client rate')
   const obligations: Obligation[] = []
   const find = (name: string) => artists.find(a => norm(a.Name) === norm(name) || a.aliases?.some(alias => norm(alias) === norm(name)))
   const employeeId = (raw: string) => artists.find(a => a.Employee_ID === raw || a.Discord_ID === raw)?.Employee_ID || raw
@@ -118,7 +128,7 @@ export function settle(wallet: Wallet, employeeId: string, keys: string[], month
   const selected = new Set(keys)
   const lines = pending(wallet, month, cutoff).filter(o => o.employeeId === employeeId && selected.has(o.key))
   if (lines.length !== selected.size) throw new Error('Projects changed or already paid. Refresh and review the payout.')
-  if (lines.some(l => l.issues.length)) throw new Error('Resolve project data issues before cashout')
+  if (lines.some(l => payoutIssues(l.issues).length)) throw new Error('Resolve project data issues before cashout')
   const draftKey = `${month}:${employeeId}`
   const draft = wallet.drafts[draftKey] || { bonus: 0, others: 0, tdsPercent: wallet.settings.tdsPercent, note: '' }
   const gross = lines.reduce((n, l) => n + l.gross, 0)

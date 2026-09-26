@@ -87,3 +87,18 @@ test('Discord contributor IDs and lead aliases map to existing employees without
  const p={...project,Employee_ID:'111',Animator:'Artist',Lighting_Artist:'',Lead:'Bidyut',output_history:[{empId:'111',seconds:90}]};
  const w=f.emptyWallet();w.settings.clientRate=6000;f.syncProjects(w,[p],roster);assert.deepEqual(w.projects[0].obligations.map(o=>o.employeeId),['A01','M01']);assert.deepEqual(w.projects[0].issues,[]);
 });
+
+test('editable partner shares split profit and losses without losing paise',()=>{
+ const w=fixture();assert.deepEqual(f.profitSplit(101,w.settings).map(p=>p.amount),[51,50]);
+ const settings=f.validateSettings({...w.settings,partnerNames:['First','Second'],partnerOnePercent:60,notifyPayments:false});
+ assert.deepEqual(f.profitSplit(10001,settings).map(p=>p.amount),[6001,4000]);assert.equal(f.profitSplit(-101,settings).reduce((n,p)=>n+p.amount,0),-101);assert.equal(settings.notifyPayments,false);
+ assert.throws(()=>f.validateSettings({...settings,partnerOnePercent:101}),/Partner share/);
+});
+test('client bonus increases partner shares; artist bonus and expenses reduce them once',()=>{
+ const w=fixture();const before=f.summarize(w,'all').profit;w.drafts['2026-02:A01']={bonus:100,others:50,tdsPercent:0,note:''};
+ w.entries.push({id:'bonus',requestId:'bonus',kind:'client_bonus',date:'2026-02-01',amount:30000,note:'',projectId:''},{id:'expense',requestId:'expense',kind:'expense',date:'2026-02-01',amount:10000,note:'',projectId:''});
+ const profit=f.summarize(w,'all').profit;assert.equal(profit,before+5000);assert.equal(f.profitSplit(profit,w.settings).reduce((n,p)=>n+p.amount,0),profit);
+ f.settle(w,'A01',[w.projects[0].obligations[0].key],'2026-02','bonus-paid','bonus-paid');assert.equal(f.summarize(w,'all').profit,profit);
+});
+
+test('missing client revenue does not block known artist cost; revenue-based GLEE cost must be resolved',()=>{const w=f.emptyWallet();f.syncProjects(w,[{...project,Project_ID:'001_90_pt'}],artists);assert.ok(w.projects[0].issues.some(i=>i.startsWith('Client rate')));assert.doesNotThrow(()=>f.settle(w,'A01',[w.projects[0].obligations[0].key],'2026-02','r','s'));const g=f.emptyWallet();f.syncProjects(g,[{...project,Project_ID:'002_90_glee'}],artists);assert.throws(()=>f.settle(g,'A01',[g.projects[0].obligations[0].key],'2026-02','r','s'),/Resolve project data/);const fixed=f.emptyWallet();fixed.settings.teamProjectRates.glee=2000;f.syncProjects(fixed,[{...project,Project_ID:'003_90_glee'}],artists);assert.doesNotThrow(()=>f.settle(fixed,'A01',[fixed.projects[0].obligations[0].key],'2026-02','r','s'));});

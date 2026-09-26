@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:finance": "node --test tests/finance.test.cjs",
     "test:finance:db": "node tests/finance-sql.test.cjs",
-    "test:finance:ui": "node tests/finance-ui.cjs"
+    "test:finance:ui": "node tests/finance-ui.cjs",
+    "test:finance:notifications": "node --test tests/finance-notifications.test.cjs && node tests/finance-notifications-sql.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",

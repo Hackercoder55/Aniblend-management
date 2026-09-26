@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
+import { paymentNotices, dispatchNotice } from '@/lib/finance-notifications'
 import { randomUUID } from 'node:crypto'
 import { requireFinanceManager } from '@/lib/finance-session'
 import { amount, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 async function rows(db: SupabaseClient, table: string) {
   const result = []
   for (let offset = 0; ; offset += 1000) {
@@ -46,8 +48,9 @@ export async function GET() {
   try {
     const { db } = await requireFinanceManager()
     const [saved, projects, artists, payments] = await Promise.all([read(db), rows(db, 'projects'), financeArtists(db), rows(db, 'payments')])
+    const notifications = await db.from('finance_notifications').select('id,settlement_id,employee_id,project_id,channel_id,status,message_id,last_error,attempted_at').order('created_at', { ascending: false }).limit(1000)
     const legacyPayments = payments.filter(p => ['paid', 'closed'].includes(String(p.Payment_Status).toLowerCase()) && !String(p['Project ID']).startsWith('Wallet: ')).map(p => ({ kind: ['SHARE_', 'MISC_', 'EXTRAREV_'].some(prefix => String(p['Employee ID'] || '').startsWith(prefix)) ? 'adjustment' : 'team', id: String(p.id), date: dateKey(p.paid_date || p.Timestamp || ''), name: p.Name || p['Employee ID'], reference: p['Project ID'] || '', gross: paise(Number(p.gross) || 0), bonus: paise(Number(p.bonus) || 0), others: paise(Number(p.others_amount) || 0), net: paise(Number(p.net_paid) || 0), note: p.bonus_note || '' }))
-    return NextResponse.json({ wallet: saved?.data || await initialWallet(db), revision: saved?.revision ?? 0, projects, artists, legacyPayments }, { headers: { 'Cache-Control': 'no-store' } })
+    return NextResponse.json({ wallet: saved?.data || await initialWallet(db), revision: saved?.revision ?? 0, projects, artists, legacyPayments, notifications: notifications.data || [], notificationSetupRequired: !!notifications.error }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) { return failure(e) }
 }
 export async function POST(request: Request) {
@@ -68,6 +71,7 @@ export async function POST(request: Request) {
     if (wallet.audit.some(e => e.id === requestId)) return NextResponse.json({ wallet, revision: saved.revision, replayed: true })
     if (body.revision !== saved.revision) throw new Error('WALLET_CONFLICT: Another change was saved. Refresh and review before trying again.')
     let payment: Settlement | null = null
+    let notifications: ReturnType<typeof paymentNotices> = []
     let closed: string[] = []
     let detail = ''
     switch (body.action) {
@@ -113,7 +117,8 @@ export async function POST(request: Request) {
         const p = wallet.projects.find(p => p.id === body.projectId)
         if (!p) throw new Error('Project not found')
         if (p.cycleId) throw new Error('Cashed-out project amounts are locked in history')
-        if (p.obligations.some(o => o.settlementId && o.settlementId !== 'legacy')) throw new Error('Settled project rates are locked')
+        const settled = p.obligations.some(o => o.settlementId && o.settlementId !== 'legacy')
+        if (settled && body.date !== p.date) throw new Error('Recognition date is locked after artist payment')
         const date = dateKey(String(body.date || ''))
         if (!date || date > today()) throw new Error('Choose a valid recognition date')
         const previous = { date: p.date, clientRate: p.clientRate, revenue: p.revenue, obligations: p.obligations }
@@ -121,7 +126,7 @@ export async function POST(request: Request) {
         const received = wallet.entries.filter(e => e.kind === 'receipt' && e.projectId === p.id).reduce((n, e) => n + e.amount, 0)
         if (received > p.revenue) throw new Error('Revenue cannot be lower than recorded client receipts. Correct the receipt first.')
         if (!Array.isArray(body.costs) || body.costs.length !== p.obligations.length) throw new Error('All project costs are required')
-        p.obligations = p.obligations.map(o => { const c = body.costs.find((c: { key: string }) => c.key === o.key); if (!c) throw new Error('Invalid cost line'); return { ...o, gross: paise(amount(c.gross, 'Project cost')), extra: paise(amount(c.extra, 'Project bonus/extra')) } })
+        p.obligations = p.obligations.map(o => { const c = body.costs.find((c: { key: string }) => c.key === o.key); if (!c) throw new Error('Invalid cost line'); if (settled && (paise(amount(c.gross)) !== o.gross || paise(amount(c.extra)) !== o.extra)) throw new Error('Paid team costs are locked; only client pricing may change'); return { ...o, gross: paise(amount(c.gross, 'Project cost')), extra: paise(amount(c.extra, 'Project bonus/extra')) } })
         p.issues = p.issues.filter(issue => !issue.startsWith('Approval date') && !issue.startsWith('Client rate'))
         detail = `Project ${p.id} edited. Before: ${JSON.stringify(previous)}. After: ${JSON.stringify(p)}`
         break
@@ -137,6 +142,8 @@ export async function POST(request: Request) {
         break
       }
       case 'mark_paid': {
+        const setup = await db.from('finance_notifications').select('id').limit(1)
+        if (setup.error) throw new Error('Payment messaging setup required: run migrations/002_payment_notifications.sql before Mark Paid.')
         if (!Array.isArray(body.keys) || body.keys.length > 10000) throw new Error('Invalid project selection')
         // Source status may have changed in the legacy app or bot since import.
         const projects = await rows(db, 'projects')
@@ -146,6 +153,10 @@ export async function POST(request: Request) {
           if (['Paid', 'Closed'].includes(source.Payment_Status) && !p.obligations.some(o => o.settlementId)) throw new Error(`Project ${p.id} was paid outside the wallet; reconcile first`)
         }
         payment = settle(wallet, String(body.employeeId), body.keys, body.month, requestId, randomUUID(), body.cutoff)
+        if (wallet.settings.notifyPayments !== false) {
+          const artists = await financeArtists(db)
+          notifications = paymentNotices(payment, projects, artists.find(a => a.Employee_ID === payment!.employeeId))
+        }
         closed = wallet.projects.filter(p => !p.legacy && p.obligations.length && p.obligations.every(o => o.settlementId) && payment!.lines.some(l => l.projectId === p.id)).map(p => p.id)
         detail = `${payment.name}: recorded ₹${(payment.net / 100).toFixed(2)} paid, ${payment.lines.length} work items; reference ${payment.id}`
         break
@@ -196,8 +207,11 @@ export async function POST(request: Request) {
       default: throw new Error('Unknown wallet action')
     }
     wallet.audit.push({ id: requestId, date: new Date().toISOString(), actor, action: body.action, detail })
-    const { data: revision, error } = await db.rpc('commit_finance_wallet', { expected_revision: saved.revision, wallet_data: wallet, payment_data: payment, closed_project_ids: closed })
+    const { data: revision, error } = await db.rpc('commit_finance_wallet', { expected_revision: saved.revision, wallet_data: wallet, payment_data: payment ? { ...payment, notifications } : null, closed_project_ids: closed })
     if (error) throw error
-    return NextResponse.json({ wallet, revision })
+    // A message failure never changes the saved payment into a failed payment.
+    const delivery = await Promise.allSettled(notifications.slice(0, 3).map(n => dispatchNotice(db, n.id)))
+    const noticeRows = await db.from('finance_notifications').select('id,settlement_id,employee_id,project_id,channel_id,status,message_id,last_error,attempted_at').order('created_at', { ascending: false }).limit(1000).then(result => result, () => ({ data: null, error: { message: 'Delivery status unavailable' } }))
+    return NextResponse.json({ wallet, revision, notifications: noticeRows.data || [], notificationSetupRequired: !!noticeRows.error, deliveryWarning: delivery.some(r => r.status === 'rejected') ? 'Payment saved. Refresh message delivery status before retrying.' : undefined })
   } catch (e) { return failure(e) }
 }

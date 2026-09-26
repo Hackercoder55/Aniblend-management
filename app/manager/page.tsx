@@ -10166,9 +10166,9 @@ export default function ManagerDashboard() {
     }
   }, [router])
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (background = false) => {
     if (!user) return
-    setLoading(true)
+    if (!background) setLoading(true)
     try {
       // Fetch up to 2000 projects safely to bypass the 1000 row limit, without using while loop that could freeze
       // IMPORTANT: Pagination requires deterministic sorting, otherwise Postgres can return overlapping ranges
@@ -10185,7 +10185,7 @@ export default function ManagerDashboard() {
     } catch (err) {
       console.error(err)
     }
-    setLoading(false)
+    if (!background) setLoading(false)
   }, [user])
 
   useEffect(() => { if (user) fetchData() }, [user, fetchData])
@@ -10334,7 +10334,7 @@ export default function ManagerDashboard() {
               }}>
               {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
             </button>
-          <button onClick={fetchData} className="p-2 rounded-lg hover:bg-gray-100 transition-colors shadow-sm border border-gray-200" title="Refresh">
+          <button onClick={() => fetchData()} className="p-2 rounded-lg hover:bg-gray-100 transition-colors shadow-sm border border-gray-200" title="Refresh">
             <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
@@ -10367,11 +10367,11 @@ export default function ManagerDashboard() {
               {activeTab === 'analytics' && <AnalyticsTab projects={filteredProjects} animators={filteredAnimators} />}
               {activeTab === 'lead_payments' && <LeadPaymentsTab projects={projects} user={user} />}
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
-              {activeTab === 'payouts' && <FinanceWallet key="payout-wallet" initialView="payouts" onRefresh={fetchData} />}
-              {activeTab === 'wallet' && <FinanceWallet key="profit-wallet" initialView="profit" onRefresh={fetchData} />}
+              {activeTab === 'payouts' && <FinanceWallet key="payout-wallet" initialView="payouts" onRefresh={() => { void fetchData(true) }} />}
+              {activeTab === 'wallet' && <FinanceWallet key="profit-wallet" initialView="profit" onRefresh={() => { void fetchData(true) }} />}
               {activeTab === 'previous_payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
-              {activeTab === 'profit' && <FinanceWallet key="profit-tracker" initialView="profit" onRefresh={fetchData} />}
-              {activeTab === 'cashouts' && <ErrorBoundary><FinanceWallet key="cashout-history" initialView="history" onRefresh={fetchData} /><details className="mt-6 rounded-xl border p-4"><summary>Earlier profit-share reports</summary><CashoutReportsTab projects={projects} /></details></ErrorBoundary>}
+              {activeTab === 'profit' && <FinanceWallet key="profit-tracker" initialView="profit" onRefresh={() => { void fetchData(true) }} />}
+              {activeTab === 'cashouts' && <ErrorBoundary><FinanceWallet key="cashout-history" initialView="history" onRefresh={() => { void fetchData(true) }} /><details className="mt-6 rounded-xl border p-4"><summary>Earlier profit-share reports</summary><CashoutReportsTab projects={projects} /></details></ErrorBoundary>}
               {activeTab === 'infi' && <InfiReviewTab animators={animators} projects={projects} />}
               {activeTab === 'invoices' && <InvoicesTab animators={animators} projects={projects} />}
               {activeTab === 'notes' && <NotesTab user={user} />}
