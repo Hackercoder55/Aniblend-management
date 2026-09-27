@@ -181,7 +181,7 @@ export async function POST(request: Request) {
           if (['Paid', 'Closed'].includes(source.Payment_Status) && !p.obligations.some(o => o.settlementId)) throw new Error(`Project ${p.id} was paid outside the wallet; reconcile first`)
         }
         payment = settle(wallet, String(body.employeeId), body.keys, body.month, requestId, randomUUID(), body.cutoff)
-        if (wallet.settings.notifyPayments !== false) {
+        if (wallet.settings.notifyPayments !== false && body.notify !== false) {
           const artists = await financeArtists(db)
           notifications = paymentNotices(payment, projects, artists.find(a => a.Employee_ID === payment!.employeeId))
         }

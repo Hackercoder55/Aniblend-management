@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import FinanceWallet from './components/FinanceWallet'
+import FinancePayoutHistory from './components/FinancePayoutHistory'
+import { approvalDate, indiaToday, projectActivity } from '@/lib/project-activity'
 
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -569,25 +571,16 @@ function InteractiveRatingPicker({ value, onChange }: { value: number; onChange:
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({ projects, animators }: { projects: Project[]; animators: Animator[] }) {
-  const today = formatDate()
+  const today = indiaToday()
+  const [activityPeriod,setActivityPeriod]=useState(30)
   const [activePanel, setActivePanel] = useState<string | null>(null)
 
   const activeProjectsList = projects.filter(p => ['Active', 'Review', 'Changes Requested'].includes(p.Status))
-  const approvedTodayList = projects.filter(p => p['Date Approved'] === today)
+  const approvedTodayList = projects.filter(p => approvalDate(p) === today)
   const workingAnimatorsList = animators.filter(a => (a['Current video'] || 0) > 0)
   const pendingProjectsList = projects.filter(p => p.Status === 'Pending')
 
-  const days: { label: string; assigned: number; approved: number }[] = []
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i)
-    const full = formatDate(d)
-    const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-    days.push({
-      label,
-      assigned: projects.filter(p => p['Date Assigned'] === full).length,
-      approved: projects.filter(p => p['Date Approved'] === full).length,
-    })
-  }
+  const days = projectActivity(projects,activityPeriod)
 
   const recent = [...projects]
     .filter(p => p['Date Assigned'])
@@ -689,15 +682,16 @@ function OverviewTab({ projects, animators }: { projects: Project[]; animators: 
       )}
 
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4">Project Activity (Last 14 Days)</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h3 className="text-lg font-semibold text-gray-800">Project Activity (Last {activityPeriod} Days)</h3><p className="text-xs text-gray-500 mt-1" data-testid="activity-totals">{days.reduce((n,d)=>n+d.assigned,0)} assigned · {days.reduce((n,d)=>n+d.approved,0)} approved · India dates</p></div><label className="text-sm text-gray-600">Period <select aria-label="Activity period" className="ml-2 border rounded-lg px-3 py-2" value={activityPeriod} onChange={e=>setActivityPeriod(Number(e.target.value))}><option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select></label></div>
+        {!days.some(d=>d.assigned||d.approved)&&<p className="text-sm text-gray-500 mb-3">No dated assignments or approvals in this period.</p>}
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={days} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
             <Tooltip /><Legend />
-            <Bar dataKey="assigned" name="Assigned" fill="#667eea" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="approved" name="Approved" fill="#10b981" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="assigned" name="Assigned" fill="#667eea" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="approved" name="Approved" fill="#10b981" radius={[4, 4, 0, 0]} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -10320,7 +10314,7 @@ export default function ManagerDashboard() {
               {activeTab === 'payments' && <PaymentsTab animators={animators} projects={projects} />}
               {activeTab === 'payouts' && <FinanceWallet key="payout-wallet" initialView="payouts" onRefresh={() => { void fetchData(true) }} />}
               {activeTab === 'wallet' && <FinanceWallet key="profit-wallet" initialView="profit" onRefresh={() => { void fetchData(true) }} />}
-              {activeTab === 'previous_payouts' && <PayoutCalculatorTab animators={animators} projects={projects} />}
+              {activeTab === 'previous_payouts' && <FinancePayoutHistory />}
               {activeTab === 'profit' && <FinanceWallet key="profit-tracker" initialView="profit" onRefresh={() => { void fetchData(true) }} />}
               {activeTab === 'cashouts' && <ErrorBoundary><FinanceWallet key="cashout-history" initialView="history" onRefresh={() => { void fetchData(true) }} /><details className="mt-6 rounded-xl border p-4"><summary>Earlier profit-share reports</summary><CashoutReportsTab projects={projects} /></details></ErrorBoundary>}
               {activeTab === 'infi' && <InfiReviewTab animators={animators} projects={projects} />}
