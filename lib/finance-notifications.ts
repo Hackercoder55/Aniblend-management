@@ -8,23 +8,27 @@ const rupees = (n: number) => (n / 100).toLocaleString('en-IN', { minimumFractio
 const safe = (s: string) => s.replace(/[@*_`~<>]/g, '').slice(0, 150)
 export function paymentNotices(payment: Settlement, projects: DestinationProject[], artist?: DestinationArtist) {
  const ids = [...new Set(payment.lines.map(l => l.projectId))]
- const targets = ids.length ? ids.map(id => ({ projectId: id, channelId: projects.find(p => p.Project_ID === id)?.Thread_ID || '' })) : [{ projectId: '', channelId: artist?.invoice_thread_id || artist?.Channel_ID || '' }]
+ const targets = ids.map(id => ({ projectId: id, channelId: String(projects.find(p => p.Project_ID === id)?.Thread_ID || '').trim() }))
+ const personal = [artist?.invoice_thread_id, artist?.Channel_ID].map(id=>String(id||'').trim()).find(id=>/^\d{15,22}$/.test(id)) || ''
+ if ((!ids.length || personal) && !targets.some(t=>t.channelId===personal)) targets.push({projectId:'',channelId:personal})
  return targets.map(target => {
    const lines = payment.lines.filter(l => l.projectId === target.projectId)
-   const key = payment.id + ':' + (target.projectId || 'bonus')
+   const key = payment.id + ':' + (target.projectId || (ids.length ? 'summary' : 'bonus'))
    const reference = 'PAY-' + createHash('sha256').update(key).digest('hex').slice(0,20)
    return { id: reference, projectId: target.projectId, channelId: target.channelId,
      content: '**ARTIST PAYMENT RECORDED**\nArtist: ' + safe(payment.name) + '\n' + (target.projectId ? 'Project: ' + safe(target.projectId) + '\nWork: ' + lines.map(l => safe(l.role)).join(', ') + '\nThis project: ₹' + rupees(lines.reduce((n,l) => n+l.gross+l.extra,0)) + '\n\n' : '') +
-       '**Payment receipt (whole batch: ' + ids.length + ' projects)**\nGross: ₹' + rupees(payment.gross) + '\nBonus: ₹' + rupees(payment.bonus) + '\nOther pay / project extras: ₹' + rupees(payment.others) + '\nTDS withheld: ₹' + rupees(payment.tds) + '\n**Net recorded paid: ₹' + rupees(payment.net) + '**\nDate: ' + payment.date + '\nReference: ' + reference + '\nReceipt: ' + payment.id + '\nThis receipt covers this artist only; other team members may still be unpaid.' }
+       (!target.projectId && ids.length ? 'Projects: ' + ids.map(safe).join(', ').slice(0,500) + '\n\n' : '') + '**Payment receipt (whole batch: ' + ids.length + ' projects)**\nGross: ₹' + rupees(payment.gross) + '\nBonus: ₹' + rupees(payment.bonus) + '\nOther pay / project extras: ₹' + rupees(payment.others) + '\nTDS withheld: ₹' + rupees(payment.tds) + '\n**Net recorded paid: ₹' + rupees(payment.net) + '**\nDate: ' + payment.date + '\nReference: ' + reference + '\nReceipt: ' + payment.id + '\nThis receipt covers this artist only; other team members may still be unpaid.' }
  })
 }
 export async function dispatchNotice(db: any, id: string, options: { token?: string; fetcher?: typeof fetch } = {}) {
+ const token = options.token ?? process.env.DISCORD_BOT_TOKEN
+ // Keep the durable job pending for ANIBLEND.py when this host has no bot token.
+ if (!token) return
  const { data: claimed, error } = await db.rpc('claim_finance_notification', { notice_id: id })
  if (error) throw new Error(error.message)
  const job = claimed?.[0] as Notice | undefined
  if (!job) return
  const save = async (values: Record<string, unknown>) => { const result = await db.from('finance_notifications').update({ ...values, updated_at: new Date().toISOString() }).eq('id',id); if(result.error) throw new Error(result.error.message) }
- const token = options.token ?? process.env.DISCORD_BOT_TOKEN ?? process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN
  if (!token || !/^\d{15,22}$/.test(job.channel_id)) { await save({ status:'failed', last_error: !token ? 'Bot token is not configured on the server.' : 'Destination thread is missing. Update the artist/project Discord destination and retry.' }); return }
  const fetcher = options.fetcher || fetch
  let response: Response
@@ -44,7 +48,7 @@ export async function dispatchNotice(db: any, id: string, options: { token?: str
 }
 // Recover a response lost after Discord accepted the message. No new message is sent here.
 export async function verifyNotice(db: any, job: Notice, options: { token?: string; fetcher?: typeof fetch } = {}) {
- const token=options.token ?? process.env.DISCORD_BOT_TOKEN ?? process.env.NEXT_PUBLIC_DISCORD_BOT_TOKEN
+ const token=options.token ?? process.env.DISCORD_BOT_TOKEN
  const fetcher=options.fetcher || fetch
  if (!token || !/^\d{15,22}$/.test(job.channel_id)) throw new Error('Valid Discord destination and bot token required')
  if (job.status==='sending' && Date.now()-new Date(job.attempted_at||'').getTime()<60000) throw new Error('Message is still being sent. Refresh shortly.')

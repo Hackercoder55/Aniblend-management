@@ -109,3 +109,25 @@ test('repricing updates client revenue without requiring client paid flags or in
 test('monthly salary counts once, preserves past rates and pauses future months',()=>{const w=f.emptyWallet();f.saveRecurring(w,{name:'Arun salary',amount:15000,from:'2026-01'},'arun','2026-01');assert.equal(f.recurringCharges(w,'2026-02').length,2);f.saveRecurring(w,{id:'arun',name:'Arun salary',amount:18000,from:'2026-03'},'unused','2026-03');assert.deepEqual(f.recurringCharges(w,'2026-03').map(c=>c.amount),[1500000,1500000,1800000]);f.saveRecurring(w,{id:'arun',name:'Arun salary',amount:18000,from:'2026-04',active:false},'unused','2026-04');assert.equal(f.recurringCharges(w,'2026-05').length,3);assert.throws(()=>f.saveRecurring(w,{id:'arun',name:'Arun salary',amount:2,from:'2026-02'},'unused','2026-04'),/Past months/);});
 test('recurring costs reduce profit but cash moves only on payment, with no double charge',()=>{const w=f.emptyWallet(),month=f.today().slice(0,7);f.saveRecurring(w,{name:'Salary',amount:15000,from:month},'s');const c=f.recurringCharges(w)[0],before=f.summarize(w,'all');assert.equal(before.expenses,1500000);assert.equal(before.cash,0);w.entries.push({id:'p',kind:'withdrawal',date:f.today(),amount:c.amount,recurringKey:c.key});assert.equal(f.summarize(w,'all').profit,before.profit);assert.equal(f.summarize(w,'all').cash,-1500000);assert.equal(f.recurringCharges(w)[0].paid,true);assert.throws(()=>f.saveRecurring(w,{id:'s',name:'Salary',amount:20000,from:month},'unused'),/already paid/);w.entries.push({id:'reverse',kind:'withdrawal',date:f.today(),amount:-c.amount,recurringKey:c.key,reverses:'p'});assert.equal(f.recurringCharges(w)[0].paid,false);assert.equal(f.summarize(w,'all').cash,0);});
 test('monthly schedule rejects duplicate names and past starts',()=>{const w=f.emptyWallet(),month=f.today().slice(0,7);f.saveRecurring(w,{name:'Arun salary',amount:15000,from:month},'s');assert.throws(()=>f.saveRecurring(w,{name:'Arun salary',amount:15000,from:month},'s2'),/already exists/);assert.throws(()=>f.saveRecurring(w,{name:'New salary',amount:15000,from:'2020-01'},'s3'),/Start this month/);});
+
+test('resolved lead aliases repair blocked unpaid work once and preserve manual prices and revenue',()=>{
+ const source={...project,Lead:'Bidyut'},roster=[...artists,{Employee_ID:'M02',Name:'Bidyut Das',aliases:['Bidyut']}];
+ const w=f.emptyWallet();w.settings.clientRate=10000;f.syncProjects(w,[source],artists);
+ const p=w.projects[0],key=p.obligations[0].key;f.editUnpaidPrice(w,key,3150,'gross');const revenue=p.revenue;
+ assert.ok(p.issues.includes('Unknown lead: Bidyut'));assert.equal(f.repriceUnpaid(w,[source],roster),1);
+ assert.equal(p.obligations.find(o=>o.key===key).gross,315000);assert.equal(p.revenue,revenue);
+ assert.equal(p.obligations.filter(o=>o.role==='Lead').length,1);assert.equal(p.obligations.at(-1).employeeId,'M02');
+ assert.deepEqual(f.payoutIssues(p.issues),[]);assert.equal(f.repriceUnpaid(w,[source],roster),0);
+ w.drafts['2026-01:A01']={bonus:1550,others:0,tdsPercent:0,note:'Old bonus'};
+ w.drafts['2026-02:A01']={bonus:0,others:0,tdsPercent:0,note:''};
+ assert.equal(f.settle(w,'A01',[key],'2026-02','resolved-lead','resolved-lead').net,470000);
+});
+test('lead repair never changes paid history or guesses ambiguous identities',()=>{
+ const source={...project,Lead:'Bidyut'},roster=[...artists,{Employee_ID:'M02',Name:'Bidyut Das',aliases:['Bidyut']}];
+ for(const freeze of ['legacy','cycle','settled']){
+  const w=f.emptyWallet();f.syncProjects(w,[source],artists);const p=w.projects[0];
+  if(freeze==='legacy')p.legacy=true;if(freeze==='cycle')p.cycleId='old';if(freeze==='settled')p.obligations[0].settlementId='old';
+  const obligations=structuredClone(p.obligations);f.repriceUnpaid(w,[source],roster);assert.deepEqual(p.obligations,obligations);assert.ok(p.issues.includes('Unknown lead: Bidyut'));
+ }
+ const w=f.emptyWallet();f.syncProjects(w,[source],artists);f.repriceUnpaid(w,[source],[...roster,{Employee_ID:'M03',Name:'Another',aliases:['Bidyut']}]);assert.ok(w.projects[0].issues.includes('Unknown lead: Bidyut'));assert.equal(w.projects[0].obligations.filter(o=>o.role==='Lead').length,0);
+});

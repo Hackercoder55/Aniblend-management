@@ -10,3 +10,14 @@ test('uncertain network failure is never blindly resent',async()=>{const m=mock(
 test('Discord rate limit stores retry deadline',async()=>{const m=mock();await f.dispatchNotice(m.db,m.job.id,{token:'fake',fetcher:async()=>new Response(JSON.stringify({retry_after:30}),{status:429})});assert.equal(m.job.status,'failed');assert.ok(new Date(m.job.next_attempt_at)>new Date());});
 
 test('delivery verification matches this bot and the exact saved receipt without posting',async()=>{const m=mock('unknown');let posts=0;const fetcher=async(url,options)=>{if(options.method==='POST')posts++;return new Response(JSON.stringify(url.endsWith('/users/@me')?{id:'our-bot'}:[{id:'wrong',author:{id:'other-bot',bot:true},content:m.job.content},{id:'right',author:{id:'our-bot',bot:true},content:m.job.content}]),{status:200})};await f.verifyNotice(m.db,m.job,{token:'fake',fetcher});assert.equal(posts,0);assert.equal(m.job.message_id,'right');assert.equal(m.job.status,'sent');});
+
+test('project payout also gets one artist summary at invoice thread or workspace',()=>{
+ const artist={Employee_ID:'A1',invoice_thread_id:'987654321012345678',Channel_ID:'111111111111111111'};
+ const n=f.paymentNotices(payment,destination,artist);assert.equal(n.length,2);assert.equal(n[1].projectId,'');assert.equal(n[1].channelId,artist.invoice_thread_id);assert.match(n[1].content,/Projects: P1/);assert.match(n[1].content,/1,300.00/);
+ assert.equal(f.paymentNotices(payment,destination,{...artist,invoice_thread_id:'null'})[1].channelId,artist.Channel_ID);
+ assert.equal(f.paymentNotices(payment,destination,{...artist,invoice_thread_id:destination[0].Thread_ID}).length,1);
+ assert.equal(f.paymentNotices(payment,destination)[0].id,n[0].id,'Existing project receipt identity stays stable');
+});
+test('a host without a bot token leaves the message pending for the Python worker',async()=>{
+ const m=mock();let sends=0;await f.dispatchNotice(m.db,m.job.id,{token:'',fetcher:async()=>{sends++;throw Error('must not send')}});assert.equal(m.claims,0);assert.equal(m.job.status,'pending');assert.equal(sends,0);
+});

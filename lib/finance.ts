@@ -71,7 +71,7 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
   if (!seconds) issues.push('Duration missing')
   if (client === 'glee' && !clientRate && settings.teamProjectRates?.[client] === undefined && flat === undefined && settings.clientRates[client] === undefined) issues.push('Team cost depends on the missing GLEE client rate')
   const obligations: Obligation[] = []
-  const find = (name: string) => artists.find(a => norm(a.Name) === norm(name) || a.aliases?.some(alias => norm(alias) === norm(name)))
+  const find = (name: string) => { const matches=artists.filter(a => norm(a.Name) === norm(name) || a.aliases?.some(alias => norm(alias) === norm(name)));return matches.length===1?matches[0]:undefined }
   const employeeId = (raw: string) => artists.find(a => a.Employee_ID === raw || a.Discord_ID === raw)?.Employee_ID || raw
   const ids = new Set<string>()
   if (p.Employee_ID) ids.add(employeeId(p.Employee_ID))
@@ -129,7 +129,7 @@ export function settle(wallet: Wallet, employeeId: string, keys: string[], month
   const selected = new Set(keys)
   const lines = pending(wallet, month, cutoff).filter(o => o.employeeId === employeeId && selected.has(o.key))
   if (lines.length !== selected.size) throw new Error('Projects changed or already paid. Refresh and review the payout.')
-  if (lines.some(l => payoutIssues(l.issues).length)) throw new Error('Resolve project data issues before cashout')
+  if (lines.some(l => payoutIssues(l.issues).length)) throw new Error('Resolve project data issues before Mark Paid: ' + [...new Set(lines.flatMap(l => payoutIssues(l.issues)))].join('; '))
   const draftKey = `${month}:${employeeId}`
   const draft = wallet.drafts[draftKey] || { bonus: 0, others: 0, tdsPercent: wallet.settings.tdsPercent, note: '' }
   const gross = lines.reduce((n, l) => n + l.gross, 0)
@@ -229,6 +229,18 @@ export function repriceUnpaid(wallet: Wallet, sources: SourceProject[], artists:
     const fresh=snapshot(source,artists,wallet.settings)
     if(fresh.legacy && !p.obligations.some(o=>o.settlementId)) continue
     let touched=false
+    // Repair a previously unresolved lead only when the same source name now maps
+    // to one known employee. Never replace work, manual prices or paid history.
+    const leadIssue = 'Unknown lead: ' + source.Lead
+    const nextLead = fresh.obligations.find(o => o.role === 'Lead')
+    const existingLead = p.obligations.find(o => o.role === 'Lead')
+    if (!fresh.legacy && !p.obligations.some(o => o.settlementId) &&
+        p.issues.includes(leadIssue) && !fresh.issues.includes(leadIssue) && nextLead &&
+        (!existingLead || existingLead.key === nextLead.key)) {
+      if (!existingLead) p.obligations.push({ ...nextLead })
+      p.issues = p.issues.filter(issue => issue !== leadIssue)
+      touched = true
+    }
     for(const o of p.obligations) {
       if(o.settlementId || o.manualPrice) continue
       const next=fresh.obligations.find(n=>n.key===o.key)

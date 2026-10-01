@@ -240,6 +240,6 @@ export async function POST(request: Request) {
     // A message failure never changes the saved payment into a failed payment.
     const delivery = await Promise.allSettled(notifications.slice(0, 3).map(n => dispatchNotice(db, n.id)))
     const noticeRows = await db.from('finance_notifications').select('id,settlement_id,employee_id,project_id,channel_id,status,message_id,last_error,attempted_at').order('created_at', { ascending: false }).limit(1000).then(result => result, () => ({ data: null, error: { message: 'Delivery status unavailable' } }))
-    return NextResponse.json({ wallet, revision, notifications: noticeRows.data || [], notificationSetupRequired: !!noticeRows.error, deliveryWarning: delivery.some(r => r.status === 'rejected') ? 'Payment saved. Refresh message delivery status before retrying.' : undefined })
+    return NextResponse.json({ wallet, revision, notifications: noticeRows.data || [], notificationSetupRequired: !!noticeRows.error, deliveryWarning: payment && notifications.length ? (delivery.some(r => r.status === 'rejected') || noticeRows.error ? 'Payment saved. Refresh message delivery status before retrying.' : (noticeRows.data || []).some((n: { settlement_id: string; status: string }) => n.settlement_id === payment!.id && n.status !== 'sent') ? 'Payment saved; some receipt messages are queued or need attention. Check Discord payment receipts below.' : undefined) : undefined })
   } catch (e) { return failure(e) }
 }

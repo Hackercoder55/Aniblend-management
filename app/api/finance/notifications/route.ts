@@ -22,7 +22,7 @@ export async function POST(request: Request) {
    const {data:jobs,error}=await db.from('finance_notifications').select('id').eq('status','pending').order('created_at').limit(3)
    if(error)throw error
    await Promise.allSettled((jobs||[]).map(j=>dispatchNotice(db,j.id)))
-  } else throw new Error('Invalid message action')
+  } else if (body.action !== 'status') throw new Error('Invalid message action')
   const {data,error}=await db.from('finance_notifications').select('id,settlement_id,employee_id,project_id,channel_id,status,message_id,last_error,attempted_at').order('created_at',{ascending:false}).limit(1000)
   if(error)throw error
   return NextResponse.json({notifications:data})
