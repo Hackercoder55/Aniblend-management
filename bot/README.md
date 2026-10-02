@@ -1,33 +1,11 @@
-# Wallet receipt worker
+# Single-file Vultr deployment
 
-The local ANIBLEND.py has been wired to check_finance_receipts every 30 seconds. Its previous file is preserved as ANIBLEND.before-wallet-receipts.py.bak beside it. Do not publish either bot file: they may contain private configuration.
+Only upload the updated private ANIBLEND.py to the existing bot location on Vultr, then restart that existing process once. No second Python file, new bot instance, new Python package or additional SQL is needed for this update. Existing Discord/Supabase configuration stays in that private file.
 
-Deploy aniblend_finance_worker.py beside ANIBLEND.py on the machine running the bot, and deploy the updated ANIBLEND.py there. Restart the existing bot process once. Do not run a second bot instance. This code was tested with fake Discord and database responses, not by starting the production bot.
+The local file at D:/aniblend automation/ANIBLEND.py already contains FinanceReceiptWorker and its 30-second loop. There is no import of aniblend_finance_worker. The previous version is preserved beside it as ANIBLEND.before-single-file.py.bak. Do not commit the private bot or its backup to GitHub: they contain private configuration.
 
-The bot must use the same Supabase project and server service-role access as the dashboard. Migration 002 must be installed (read-only inspection on October 1 confirmed the queue exists). No additional migration is needed. This module uses only the Python standard library.
+The files in this folder are development/test sources. embed_finance_worker.py embeds the worker into an existing private bot, checks syntax, preserves a backup and does not start it. It is idempotent. These development files do not need to be uploaded to Vultr.
 
-Both senders claim the same job with claim_finance_notification, so only one sends it. The worker sends the exact saved receipt, never guesses the latest payment, changes project status, archives threads, or marks anyone paid. Missing dashboard tokens leave jobs pending for the bot. Definite failures require Retry message; uncertain delivery requires Check delivery. Existing sent messages are never sent again.
+The dashboard and bot share claim_finance_notification, so one sender claims each receipt. The worker sends the exact saved amount and changes only notification state. It never changes payments, project status or existing sent messages. If the dashboard has no private bot token, pending jobs wait for the running bot. Definite delivery failures use Retry message; uncertain delivery uses Check delivery to avoid duplicates.
 
-For an independently hosted ANIBLEND.py, the integration added before on_ready is:
-
-```python
-# Dashboard wallet receipts use a shared atomic queue; legacy loops stay intact.
-@tasks.loop(seconds=30)
-async def check_finance_receipts():
-    try:
-        from aniblend_finance_worker import FinanceReceiptWorker
-        worker = FinanceReceiptWorker(supabase, bot.http.token, log)
-        await worker.drain()
-    except Exception as error:
-        # Do not stop existing project/invoice loops if setup is unavailable.
-        log("⚠️", "Wallet receipt queue unavailable (" + type(error).__name__ + "). Check database access and migrations/002_payment_notifications.sql.")
-
-
-@check_finance_receipts.before_loop
-async def _before_finance_receipts():
-    await bot.wait_until_ready()
-
-
-```
-
-Add (check_finance_receipts, "check_finance_receipts") to the existing on_ready loop startup list.
+Deployment has not been performed on Vultr from this workspace. Local verification uses fake database and Discord responses, and never starts ANIBLEND.py or sends real receipts.

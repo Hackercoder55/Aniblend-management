@@ -111,3 +111,7 @@ Validation uses synthetic database data and mocked Discord/browser requests. No 
 - New payments queue an artist summary at their saved invoice thread (workspace fallback), plus project receipts. Identical summary/project destinations are not repeated. Existing sent receipts are not backfilled or resent. Failure or queued delivery is stated separately from a successful saved payment.
 - The dashboard and ANIBLEND.py now share the same atomic receipt claim. If the dashboard has no private bot token, it leaves messages queued for the bot instead of claiming and failing them. The worker sends saved amounts, never recalculates the latest payment or changes money/project status. See bot/README.md for deployment and the guarded 30-second integration. Local ANIBLEND.py was backed up before editing. It was syntax checked but not executed or restarted.
 - No new SQL is required: the existing 002 queue was present during the October 1 inspection. The bot's existing Supabase connection must have service-role access to that private queue. No real Discord messages were sent in verification.
+
+## October 3: single-file bot deployment
+
+The receipt worker is now embedded directly in the private local ANIBLEND.py. Upload only that file to the existing Vultr bot location and restart the existing process. No helper-file upload, additional package or SQL migration is needed. The earlier two-file instructions are superseded. A local before-single-file backup is preserved; no bot was started during packaging. See bot/README.md for the development packaging tool.
