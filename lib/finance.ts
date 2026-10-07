@@ -10,7 +10,8 @@ export type Entry = { id: string; requestId: string; kind: 'receipt' | 'client_b
 export type Audit = { id: string; date: string; actor: string; action: string; detail: string }
 export type CashoutCycle = { id: string; requestId: string; date: string; cutoff: string; note: string; imported?: boolean; projects: { id: string; title: string; revenue: number; teamCost: number }[] }
 export type RecurringExpense = { id: string; name: string; startMonth: string; versions: { from: string; amount: number; active: boolean }[] }
-export type Wallet = { version: 1; recurringExpenses?: RecurringExpense[]; cycleStart?: string; cycles?: CashoutCycle[]; legacyImported?: boolean; settings: Settings; projects: FinanceProject[]; settlements: Settlement[]; entries: Entry[]; drafts: Record<string, Draft>; audit: Audit[] }
+export type RevenueCorrection = { id: string; requestId: string; date: string; projectId: string; cycleId: string; from: number; to: number; basis: 'minute' | 'video'; rate: number }
+export type Wallet = { version: 1; revenueCorrections?: RevenueCorrection[]; recurringExpenses?: RecurringExpense[]; cycleStart?: string; cycles?: CashoutCycle[]; legacyImported?: boolean; settings: Settings; projects: FinanceProject[]; settlements: Settlement[]; entries: Entry[]; drafts: Record<string, Draft>; audit: Audit[] }
 export const defaults: Settings = { clientRate: 0, fullRate: 4000, animationRate: 2500, lightingRate: 1500, leadFee: 1000, tdsPercent: 10, rounding: 100, clientRates: {}, employeeRates: {}, clientFlatRates: {}, teamProjectRates: { hn: 3000, wn: 4000, infi: 5000 } }
 export function emptyWallet(): Wallet { return { version: 1, settings: { ...defaults, clientRates: {}, employeeRates: {}, clientFlatRates: {}, teamProjectRates: { ...defaults.teamProjectRates } }, projects: [], settlements: [], entries: [], drafts: {}, audit: [] } }
 export function amount(value: unknown, label = 'Amount', max = 100000000): number {
@@ -99,7 +100,7 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
   const extra = paise((Number(p.Bonus) || 0) + (Number(p.Other_Payment) || 0))
   const recipient = obligations.find(o => o.employeeId === employeeId(p.Employee_ID || '') && o.role === 'Animation') || obligations.find(o => o.role === 'Animation')
   if (recipient) recipient.extra = extra
-  return { id: p.Project_ID, title: p.Project_title || p.Project_ID, client, date: date || today(), seconds, clientRate, revenue: paise(seconds * clientRate / 60), obligations, legacy, issues }
+  return { id: p.Project_ID, title: p.Project_title || p.Project_ID, client, date: date || today(), seconds, clientRate, revenue: flat === undefined ? paise(seconds * clientRate / 60) : paise(flat), obligations, legacy, issues }
 }
 export function syncProjects(wallet: Wallet, projects: SourceProject[], artists: Artist[]) {
   const seen = new Set(wallet.projects.map(p => p.id))
@@ -145,12 +146,15 @@ export function settle(wallet: Wallet, employeeId: string, keys: string[], month
   for (const d of extras) delete wallet.drafts[`${d.month}:${employeeId}`]
   return result
 }
+export function projectRevenue(wallet: Wallet, p: FinanceProject) {
+  return p.revenue + (wallet.revenueCorrections || []).filter(c=>c.projectId===p.id).reduce((sum,c)=>sum+c.to-c.from,0)
+}
 export function summarize(wallet: Wallet, month: string) {
   const inMonth = (date: string) => month === 'all' || date.slice(0, 7) === month
   const projects = wallet.projects.filter(p => inMonth(p.date))
   const entries = wallet.entries.filter(e => inMonth(e.date))
   const sum = (kind: Entry['kind']) => entries.filter(e => e.kind === kind).reduce((n, e) => n + e.amount, 0)
-  const revenue = projects.reduce((n, p) => n + p.revenue, 0)
+  const revenue = projects.reduce((n, p) => n + projectRevenue(wallet,p), 0)
   const baseCost = projects.reduce((n, p) => n + p.obligations.reduce((v, o) => v + o.gross + o.extra, 0), 0)
   const additions = wallet.settlements.reduce((n, s) => n + (s.adjustments || [{ month: s.month, bonus: s.bonus, others: s.others - s.lines.reduce((v, l) => v + l.extra, 0) }]).filter(a => month === 'all' || a.month === month).reduce((v, a) => v + a.bonus + a.others, 0), 0)
     + Object.entries(wallet.drafts).filter(([key]) => month === 'all' || key.startsWith(`${month}:`)).reduce((n, [, draft]) => n + paise(draft.bonus + draft.others), 0)
@@ -250,7 +254,8 @@ export function repriceUnpaid(wallet: Wallet, sources: SourceProject[], artists:
       if(o.gross!==gross || o.rate!==next.rate) {o.gross=gross;o.rate=next.rate;touched=true}
     }
     if(!p.manualRevenue && !p.obligations.some(o=>o.settlementId)) {
-      const revenue=paise(p.seconds*fresh.clientRate/60)
+      const flat=wallet.settings.clientFlatRates?.[p.client]
+      const revenue=flat===undefined?paise(p.seconds*fresh.clientRate/60):paise(flat)
       const received=wallet.entries.filter(e=>e.kind==='receipt'&&e.projectId===p.id).reduce((n,e)=>n+e.amount,0)
       if(received>revenue) throw new Error('Project '+p.id+': rate is below an existing recorded receipt. Review that receipt first.')
       if(p.revenue!==revenue) touched=true

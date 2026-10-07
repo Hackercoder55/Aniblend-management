@@ -1,8 +1,9 @@
+import { applyClientRevenue } from '@/lib/client-revenue'
 import { NextResponse } from 'next/server'
 import { paymentNotices, dispatchNotice } from '@/lib/finance-notifications'
 import { randomUUID } from 'node:crypto'
 import { requireFinanceManager } from '@/lib/finance-session'
-import { amount, repriceUnpaid, editUnpaidPrice, saveRecurring, recurringCharges, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
+import { projectRevenue, amount, repriceUnpaid, editUnpaidPrice, saveRecurring, recurringCharges, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -75,6 +76,11 @@ export async function POST(request: Request) {
     let closed: string[] = []
     let detail = ''
     switch (body.action) {
+      case 'client_revenue': {
+        const result=applyClientRevenue(wallet,body.rules,String(body.scope||''),requestId)
+        detail='Client revenue rates saved: '+JSON.stringify({scope:body.scope,rules:body.rules,...result})+'; artist payouts and original cashout snapshots preserved'
+        break
+      }
       case 'settings': {
         wallet.settings = validateSettings(body.settings)
         const [sources, artists] = await Promise.all([rows(db,'projects'), financeArtists(db)])
@@ -217,7 +223,7 @@ export async function POST(request: Request) {
           // Client receipts may be recorded as a combined amount without video matching.
           const project = wallet.projects.find(p => p.id === projectId)!
           const received = wallet.entries.filter(e => e.kind === 'receipt' && e.projectId === projectId).reduce((n, e) => n + e.amount, 0)
-          if (received + value > project.revenue) throw new Error('Receipt exceeds project revenue. Record extra client money as a client bonus.')
+          if (received + value > projectRevenue(wallet, project)) throw new Error('Receipt exceeds project revenue. Record extra client money as a client bonus.')
         }
         wallet.entries.push({ id: randomUUID(), requestId, kind: body.kind, date, amount: value, note, projectId })
         detail = `${body.kind}: ₹${value / 100}; ${note}`

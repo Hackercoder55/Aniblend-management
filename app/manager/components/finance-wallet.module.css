@@ -8,3 +8,5 @@
 .classicPayout .payoutTable>thead>tr>th:first-child,.classicPayout .payoutTable>tbody>tr>td:not([colspan]):first-child{position:sticky;left:0;z-index:2;background:#fff;box-shadow:1px 0 0 #e5e7eb}.classicPayout .payoutTable>thead>tr>th:first-child{background:#f6f8f6;z-index:3}
 
 .payActions small{max-width:230px;white-space:normal;line-height:1.5}.modal .error{margin-bottom:16px}
+
+.clientRevenueTable{min-width:950px}.clientRevenueTable input{max-width:130px}.clientRevenueTable select{min-width:135px}.clientRevenueTable+div{margin:16px 0}
