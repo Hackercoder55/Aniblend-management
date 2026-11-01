@@ -131,3 +131,44 @@ test('lead repair never changes paid history or guesses ambiguous identities',()
  }
  const w=f.emptyWallet();f.syncProjects(w,[source],artists);f.repriceUnpaid(w,[source],[...roster,{Employee_ID:'M03',Name:'Another',aliases:['Bidyut']}]);assert.ok(w.projects[0].issues.includes('Unknown lead: Bidyut'));assert.equal(w.projects[0].obligations.filter(o=>o.role==='Lead').length,0);
 });
+
+
+test('unverified lighting reserves cost but does not block known animator and lead payments',()=>{
+ const source={...project,Lighting_Artist:'Shiv',Lighting_Discord_ID:'999'};
+ const w=f.emptyWallet();w.settings.clientRate=10000;f.syncProjects(w,[source],artists);
+ const p=w.projects[0],held=p.obligations.find(o=>o.unverified),before=f.summarize(w,'all');
+ assert.ok(held);assert.equal(f.pending(w,'2026-02').some(o=>o.unverified),false);
+ for(const line of f.pending(w,'2026-02'))f.settle(w,line.employeeId,[line.key],'2026-02','r'+line.key,'s'+line.key);
+ assert.equal(f.teamPaid(p),false);assert.equal(f.summarize(w,'all').unpaidTeamCost,held.gross);
+ assert.equal(f.summarize(w,'all').profit,before.profit);assert.equal(f.summarize(w,'all').revenue,before.revenue);
+ assert.throws(()=>f.closeCycle(w,[p.id],'2026-02-01','close','cycle'),/fully paid/);
+ assert.throws(()=>f.settle(w,held.employeeId,[held.key],'2026-02','bad','bad'),/changed or already paid/);
+});
+test('lighting matches exact Discord identity despite short name and never guesses a conflicting name',()=>{
+ const people=[...artists,{Employee_ID:'D01',Name:'Deepak Singh',Discord_ID:'123'}];
+ const p=f.snapshot({...project,Lighting_Artist:'Deepak',Lighting_Discord_ID:'123'},people,f.defaults);
+ assert.equal(p.obligations.find(o=>o.role==='Lighting').employeeId,'D01');
+ for(const candidates of [artists,[...people,{Employee_ID:'D02',Name:'Other',Discord_ID:'123'}]]){
+  const p=f.snapshot({...project,Lighting_Artist:'Lalit',Lighting_Discord_ID:'123'},candidates,f.defaults);
+  assert.equal(p.obligations.find(o=>o.role==='Lighting').unverified,true);
+ }
+});
+test('old omitted lighting repairs once and verification preserves partial receipts and held manual price',()=>{
+ const source={...project,Lighting_Artist:'Shiv',Lighting_Discord_ID:'999'};
+ const w=f.emptyWallet();f.syncProjects(w,[source],artists);
+ w.projects[0].obligations=w.projects[0].obligations.filter(o=>o.role!=='Lighting');
+ assert.equal(f.refreshLightingAssignments(w,[source],artists),1);assert.equal(f.refreshLightingAssignments(w,[source],artists),0);
+ const animation=f.pending(w,'2026-02').find(o=>o.role==='Animation');f.settle(w,animation.employeeId,[animation.key],'2026-02','pay','paid');
+ const receipts=JSON.stringify(w.settlements),held=w.projects[0].obligations.find(o=>o.unverified);held.gross=123456;held.manualPrice=true;
+ const known=[...artists,{Employee_ID:'S01',Name:'Shiv Kumar',Discord_ID:'999'}];
+ assert.equal(f.refreshLightingAssignments(w,[source],known),1);assert.equal(f.refreshLightingAssignments(w,[source],known),0);
+ const lighting=f.pending(w,'2026-02').find(o=>o.role==='Lighting');assert.equal(lighting.employeeId,'S01');assert.equal(lighting.gross,123456);
+ assert.equal(JSON.stringify(w.settlements),receipts);assert.equal(w.projects[0].issues.some(i=>i.startsWith('Unknown lighting')),false);
+});
+test('lighting repair leaves legacy and cashout history untouched and cannot bypass unrelated data issues',()=>{
+ const w=fixture();w.projects[0].legacy=true;const closed=structuredClone(w.projects[0]);closed.id='closed';closed.legacy=false;closed.cycleId='history';w.projects.push(closed);
+ const before=JSON.stringify(w);assert.equal(f.refreshLightingAssignments(w,[project,{...project,Project_ID:'closed'}],artists),0);assert.equal(JSON.stringify(w),before);
+ assert.deepEqual(f.payoutIssues(['Unknown lighting artist: Shiv','Duration missing','Unknown lead: X'],'Animation'),['Duration missing','Unknown lead: X']);
+});
+
+test('already paid legacy projects remain closable despite historical missing identity',()=>{const w=f.emptyWallet();f.syncProjects(w,[{...project,Lighting_Artist:'Old unverified person',Payment_Status:'Paid'}],artists);assert.equal(f.teamPaid(w.projects[0]),true);assert.equal(f.pending(w,'2026-02').length,0);});

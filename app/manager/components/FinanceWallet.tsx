@@ -119,7 +119,7 @@ export default function FinanceWallet({ initialView = 'profit', onRefresh }: { i
     const ids = (data.projects || []).filter(p => ['Approved', 'Paid', 'Closed'].includes(p.Status || '') && (!data.wallet.projects.some(s => s.id === p.Project_ID) || ['paid', 'closed'].includes((p.Payment_Status || '').toLowerCase()) && data.wallet.projects.some(s => s.id === p.Project_ID && !s.legacy && !s.obligations.some(o => o.settlementId)))).map(p => p.Project_ID).sort().join('|')
     let rateUpdates=0
     try {rateUpdates=repriceUnpaid(structuredClone(data.wallet),data.projects||[],data.artists||[])}catch{return}
-    const signature=ids+'|'+(rateUpdates?JSON.stringify(data.wallet.settings):'')
+    const signature=ids+'|'+(rateUpdates?JSON.stringify([data.revision,data.wallet.settings,data.artists]):'')
     if ((!ids&&!rateUpdates) || autoSyncRef.current === signature) return
     autoSyncRef.current = signature
     void mutate({ action: 'sync' }, 'Approved projects and unpaid pricing updated from your saved rates.')

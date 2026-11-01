@@ -47,3 +47,7 @@ create_user.js
 
 # Private local financial data exports (never commit)
 /.local-backups/
+
+# Python verification caches
+__pycache__/
+*.pyc

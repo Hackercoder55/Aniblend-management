@@ -1,8 +1,8 @@
 // All money is stored as integer paise. Settlements never remove earned revenue.
-export type SourceProject = { Project_ID: string; Project_title?: string; Duration?: string; Status?: string; Payment_Status?: string; Employee_ID?: string; Animator?: string; Lighting_Artist?: string; Lead?: string; Bonus?: number; Other_Payment?: number; 'Date Approved'?: string; Approved_Date?: string; client_paid_date?: string; output_history?: { empId: string; seconds: number }[] }
+export type SourceProject = { Project_ID: string; Project_title?: string; Duration?: string; Status?: string; Payment_Status?: string; Employee_ID?: string; Animator?: string; Lighting_Artist?: string; Lighting_Discord_ID?: string; Lead?: string; Bonus?: number; Other_Payment?: number; 'Date Approved'?: string; Approved_Date?: string; client_paid_date?: string; output_history?: { empId: string; seconds: number }[] }
 export type Artist = { Employee_ID: string; Name: string; Discord_ID?: string; aliases?: string[]; others_amount?: number | string }
 export type Settings = { clientRate: number; fullRate: number; animationRate: number; lightingRate: number; leadFee: number; tdsPercent: number; rounding: number; clientRates: Record<string, number>; employeeRates: Record<string, number>; clientFlatRates?: Record<string, number>; teamProjectRates?: Record<string, number>; partnerNames?: [string, string]; partnerOnePercent?: number; notifyPayments?: boolean; leadRates?: Record<string, number> }
-export type Obligation = { key: string; employeeId: string; name: string; role: string; seconds: number; rate: number; gross: number; extra: number; settlementId?: string; manualPrice?: boolean }
+export type Obligation = { key: string; employeeId: string; name: string; role: string; seconds: number; rate: number; gross: number; extra: number; settlementId?: string; manualPrice?: boolean; unverified?: boolean; identityDiscordId?: string }
 export type FinanceProject = { id: string; title: string; client: string; date: string; seconds: number; clientRate: number; revenue: number; obligations: Obligation[]; legacy: boolean; issues: string[]; cycleId?: string; manualRevenue?: boolean }
 export type Draft = { bonus: number; others: number; tdsPercent: number; note: string; employeeName?: string; needsReview?: boolean }
 export type Settlement = { id: string; requestId: string; date: string; month: string; cutoff?: string; employeeId: string; name: string; gross: number; bonus: number; others: number; tds: number; net: number; note: string; adjustments?: { month: string; bonus: number; others: number }[]; lines: { projectId: string; title: string; key: string; role: string; gross: number; extra: number; seconds: number; rate: number }[] }
@@ -58,7 +58,7 @@ export function profitSplit(profit: number, settings: Settings) {
   const first = Math.round(profit * percent / 100)
   return [{ name: settings.partnerNames?.[0] || 'Partner 1', percent, amount: first }, { name: settings.partnerNames?.[1] || 'Partner 2', percent: 100-percent, amount: profit-first }]
 }
-export function payoutIssues(issues: string[]) { return issues.filter(issue => !issue.startsWith('Client rate')) }
+export function payoutIssues(issues: string[], role?: string) { return issues.filter(issue => !issue.startsWith('Client rate') && !(role && role !== 'Lighting' && issue.startsWith('Unknown lighting artist:'))) }
 export function snapshot(p: SourceProject, artists: Artist[], settings: Settings): FinanceProject {
   const issues: string[] = []
   const seconds = duration(p.Duration || '', p.Project_ID)
@@ -94,7 +94,17 @@ export function snapshot(p: SourceProject, artists: Artist[], settings: Settings
     const share = shares.size ? shares.get(id)! / [...shares.values()].reduce((n, sec) => n + sec, 0) : 1 / ids.size
     add(id, a?.Name || id, 'Animation', shares.size ? shares.get(id)! : seconds / ids.size, rate, fixedTotal === undefined ? undefined : fixedTotal * share)
   }
-  if (p.Lighting_Artist && settings.teamProjectRates?.[client] === undefined && !['glee', 'mrc'].includes(client)) { const a = find(p.Lighting_Artist); if (a) add(a.Employee_ID, a.Name, 'Lighting', seconds, settings.employeeRates[a.Employee_ID] ?? settings.lightingRate); else issues.push(`Unknown lighting artist: ${p.Lighting_Artist}`) }
+  if (p.Lighting_Artist && settings.teamProjectRates?.[client] === undefined && !['glee', 'mrc'].includes(client)) {
+    const discordId = String(p.Lighting_Discord_ID || '').trim()
+    const matches = discordId ? artists.filter(a => String(a.Discord_ID || '') === discordId) : []
+    const a = discordId ? (matches.length === 1 ? matches[0] : undefined) : find(p.Lighting_Artist)
+    if (a) add(a.Employee_ID, a.Name, 'Lighting', seconds, settings.employeeRates[a.Employee_ID] ?? settings.lightingRate)
+    else {
+      issues.push(`Unknown lighting artist: ${p.Lighting_Artist}`)
+      add('unverified:Lighting:' + (discordId || norm(p.Lighting_Artist)), p.Lighting_Artist, 'Lighting', seconds, settings.lightingRate)
+      Object.assign(obligations[obligations.length - 1], { unverified: true, identityDiscordId: discordId })
+    }
+  }
   if (p.Lead) { const a = find(p.Lead); if (a) add(a.Employee_ID, a.Name, 'Lead', 0, settings.leadRates?.[a.Employee_ID] ?? settings.leadFee, settings.leadRates?.[a.Employee_ID] ?? settings.leadFee); else issues.push(`Unknown lead: ${p.Lead}`) }
   if (!obligations.length) issues.push('No payable team member found')
   const extra = paise((Number(p.Bonus) || 0) + (Number(p.Other_Payment) || 0))
@@ -117,7 +127,7 @@ export function syncProjects(wallet: Wallet, projects: SourceProject[], artists:
   return added
 }
 export function pending(wallet: Wallet, month: string, cutoff?: string) {
-  return wallet.projects.filter(p => p.date.slice(0, 7) <= month && (!cutoff || p.date <= cutoff) && !p.legacy && !p.cycleId).flatMap(p => p.obligations.filter(o => !o.settlementId).map(o => ({ ...o, projectId: p.id, title: p.title, date: p.date, issues: p.issues })))
+  return wallet.projects.filter(p => p.date.slice(0, 7) <= month && (!cutoff || p.date <= cutoff) && !p.legacy && !p.cycleId).flatMap(p => p.obligations.filter(o => !o.settlementId && !o.unverified).map(o => ({ ...o, projectId: p.id, title: p.title, date: p.date, issues: p.issues })))
 }
 export function adjustments(drafts: Record<string, Draft>, employeeId: string, month: string) {
   return Object.entries(drafts).filter(([key]) => key.slice(8) === employeeId && key.slice(0, 7) <= month).map(([key, d]) => ({ month: key.slice(0, 7), bonus: paise(amount(d.bonus)), others: paise(amount(d.others)) }))
@@ -130,7 +140,7 @@ export function settle(wallet: Wallet, employeeId: string, keys: string[], month
   const selected = new Set(keys)
   const lines = pending(wallet, month, cutoff).filter(o => o.employeeId === employeeId && selected.has(o.key))
   if (lines.length !== selected.size) throw new Error('Projects changed or already paid. Refresh and review the payout.')
-  if (lines.some(l => payoutIssues(l.issues).length)) throw new Error('Resolve project data issues before Mark Paid: ' + [...new Set(lines.flatMap(l => payoutIssues(l.issues)))].join('; '))
+  if (lines.some(l => payoutIssues(l.issues, l.role).length)) throw new Error('Resolve project data issues before Mark Paid: ' + [...new Set(lines.flatMap(l => payoutIssues(l.issues, l.role)))].join('; '))
   const draftKey = `${month}:${employeeId}`
   const draft = wallet.drafts[draftKey] || { bonus: 0, others: 0, tdsPercent: wallet.settings.tdsPercent, note: '' }
   const gross = lines.reduce((n, l) => n + l.gross, 0)
@@ -168,7 +178,7 @@ export function summarize(wallet: Wallet, month: string) {
 
 // Artist payment and cycle close are separate events. Neither deletes a project.
 export function teamPaid(p: FinanceProject) {
-  return p.obligations.length > 0 && p.obligations.every(o => !!o.settlementId)
+  return p.obligations.length > 0 && p.obligations.every(o => !!o.settlementId) && (p.legacy || !p.obligations.some(o => o.unverified) && !p.issues.some(i => i.startsWith('Unknown ')))
 }
 export function currentCycleProjects(wallet: Wallet, cutoff = today()) {
   return wallet.projects.filter(p => !p.cycleId && p.date <= cutoff)
@@ -224,8 +234,36 @@ export function reconcileLegacy(wallet: Wallet, sources: SourceProject[], artist
 }
 
 // Apply saved rates to existing unpaid obligations, never to a settled receipt.
+// Add omitted lighting dues and resolve verified identities without rewriting receipts.
+export function refreshLightingAssignments(wallet: Wallet, sources: SourceProject[], artists: Artist[]) {
+  let changed = 0
+  for (const p of wallet.projects) {
+    if (p.legacy || p.cycleId) continue
+    const source = sources.find(s => s.Project_ID === p.id)
+    if (!source || !['approved', 'paid', 'closed'].includes(norm(source.Status || ''))) continue
+    const fresh = snapshot(source, artists, wallet.settings)
+    if (fresh.legacy) continue
+    const next = fresh.obligations.find(o => o.role === 'Lighting')
+    const existing = p.obligations.find(o => o.role === 'Lighting')
+    if (!next || existing?.settlementId) continue
+    const before = JSON.stringify(p)
+    if (!existing) p.obligations.push({ ...next })
+    else if (existing.unverified && !next.unverified &&
+      (existing.identityDiscordId ? existing.identityDiscordId === String(source.Lighting_Discord_ID || '') : norm(existing.name) === norm(source.Lighting_Artist || ''))) {
+      // Keep the held amount, contribution and any deliberate price override.
+      Object.assign(existing, { key: next.key, employeeId: next.employeeId, name: next.name, unverified: false, identityDiscordId: String(source.Lighting_Discord_ID || '') })
+    }
+    const current = p.obligations.find(o => o.role === 'Lighting')!
+    if (current.key === next.key) {
+      p.issues = p.issues.filter(i => !i.startsWith('Unknown lighting artist:'))
+      p.issues.push(...fresh.issues.filter(i => i.startsWith('Unknown lighting artist:')))
+    }
+    if (JSON.stringify(p) !== before) changed++
+  }
+  return changed
+}
 export function repriceUnpaid(wallet: Wallet, sources: SourceProject[], artists: Artist[]) {
-  let changed=0
+  let changed=refreshLightingAssignments(wallet, sources, artists)
   for(const p of wallet.projects) {
     if(p.legacy || p.cycleId) continue
     const source=sources.find(s=>s.Project_ID===p.id)

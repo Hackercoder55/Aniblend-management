@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { paymentNotices, dispatchNotice } from '@/lib/finance-notifications'
 import { randomUUID } from 'node:crypto'
 import { requireFinanceManager } from '@/lib/finance-session'
-import { projectRevenue, amount, repriceUnpaid, editUnpaidPrice, saveRecurring, recurringCharges, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
+import { teamPaid, refreshLightingAssignments, projectRevenue, amount, repriceUnpaid, editUnpaidPrice, saveRecurring, recurringCharges, closeCycle, reconcileLegacy, dateKey, emptyWallet, paise, settle, snapshot, syncProjects, today, validateSettings, type Artist, type Draft, type Entry, type Settlement, type SourceProject, type Wallet } from '@/lib/finance'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
@@ -186,12 +186,13 @@ export async function POST(request: Request) {
           if (!source || !['Approved', 'Paid', 'Closed'].includes(source.Status)) throw new Error(`Project ${p.id} is no longer approved; reconcile first`)
           if (['Paid', 'Closed'].includes(source.Payment_Status) && !p.obligations.some(o => o.settlementId)) throw new Error(`Project ${p.id} was paid outside the wallet; reconcile first`)
         }
+        refreshLightingAssignments(wallet, projects as SourceProject[], await financeArtists(db))
         payment = settle(wallet, String(body.employeeId), body.keys, body.month, requestId, randomUUID(), body.cutoff)
         if (wallet.settings.notifyPayments !== false && body.notify !== false) {
           const artists = await financeArtists(db)
           notifications = paymentNotices(payment, projects, artists.find(a => a.Employee_ID === payment!.employeeId))
         }
-        closed = wallet.projects.filter(p => !p.legacy && p.obligations.length && p.obligations.every(o => o.settlementId) && payment!.lines.some(l => l.projectId === p.id)).map(p => p.id)
+        closed = wallet.projects.filter(p => !p.legacy && teamPaid(p) && payment!.lines.some(l => l.projectId === p.id)).map(p => p.id)
         detail = `${payment.name}: recorded ₹${(payment.net / 100).toFixed(2)} paid, ${payment.lines.length} work items; reference ${payment.id}`
         break
       }
